@@ -7,11 +7,12 @@ name = "palettekit"
 description = "Read a website's color palette out of its stylesheets and render it as an interactive page."
 readme = "README.md"
 
-# Verified floor, not a nominal one: the suite passes on 3.10, 3.11, 3.12, 3.13
-# and 3.14, and 3.10 produces byte-identical JSON to 3.14 for the reference
-# fixture. Raised from 3.9 because `tinycss2`/`cssselect2` — the migration in
-# PLAN.md — require 3.10, and 3.9 is end-of-life as of October 2025.
-requires-python = ">=3.10"
+# Verified floor, not a nominal one: the suite passes on 3.11, 3.12, 3.13 and
+# 3.14, and 3.11 produces byte-identical JSON to 3.14 for the reference
+# fixture. Raised from 3.10 on 2026-07-26 (owner decision, PLAN.md T2) because
+# 3.10 reaches end-of-life in October 2026; nothing in the codebase needs
+# 3.11+ itself.
+requires-python = ">=3.11"
 
 # Single source of truth is palettekit/__init__.py; see [tool.hatch.version].
 dynamic = ["version"]
@@ -25,7 +26,6 @@ classifiers = [
   "Environment :: Console",
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3 :: Only",
-  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
@@ -98,7 +98,7 @@ include = [
 # mostly written to ~79; tightening to 79 would flag roughly 40 existing lines,
 # so do that as a deliberate pass rather than letting the linter nag from day one.
 line-length = 88
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = [

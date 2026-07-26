@@ -8,14 +8,15 @@ what makes the output exact rather than approximate.
 **Work directly on `main`, set by the owner 2026-07-26.** No feature branches
 for task completion — commit to `main` as work lands.
 
-**Python 3.10+, verified** — the suite passes on 3.10, 3.11, 3.12, 3.13 and
-3.14, and 3.10 produces byte-identical JSON to 3.14 on the reference fixture.
-Raised from a nominal, never-tested 3.9 because `tinycss2`/`cssselect2`
-(`PLAN.md`) need 3.10 and 3.9 went end-of-life in October 2025. Re-run the
-matrix rather than trusting this line:
+**Python 3.11+, verified** — the suite passes on 3.11, 3.12, 3.13 and 3.14, and
+3.11 produces byte-identical JSON to 3.14 on the reference fixture. Raised from
+a verified 3.10 on 2026-07-26 (owner decision, `PLAN.md` T2) because 3.10
+reaches end-of-life in October 2026 — a calendar decision, not a technical one;
+nothing in the codebase needs 3.11+ itself. Re-run the matrix rather than
+trusting this line:
 
 ```bash
-for v in 3.10 3.11 3.12 3.13 3.14; do
+for v in 3.11 3.12 3.13 3.14; do
   uv run --python "$v" --with tinycss2 --with cssselect2 --no-project \
     python test_palettekit.py
 done

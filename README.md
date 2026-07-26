@@ -7,7 +7,7 @@ Values are **read from the site's stylesheets**, not sampled from a screenshot,
 so they are the exact declared colors rather than pixels that have been through
 antialiasing and JPEG compression.
 
-Python 3.10+ (tested on 3.10 through 3.14). The core takes two pure-Python
+Python 3.11+ (tested on 3.11 through 3.14). The core takes two pure-Python
 dependencies — `tinycss2` to tokenise the CSS and `cssselect2` to match and
 weigh selectors — which are installed for you. Pillow and numpy are extra, and
 only if you use `--images`.

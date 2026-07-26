@@ -16,5 +16,5 @@ Programmatic use, if you want the data rather than the files:
         print(c["name"], c["hex"], c["status"], c["contrastOnGround"])
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 __all__ = ["color", "cssparse", "sources", "extract", "emit", "images"]

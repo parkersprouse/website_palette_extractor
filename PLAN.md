@@ -98,6 +98,15 @@ The old floor was 3.9 — never tested, and end-of-life since October 2025.
 > above describes the 3.10 floor **as currently shipped**; it stays as written
 > until the bump lands, at which point every claim in it moves. See
 > **T2** in [Outstanding work](#outstanding-work) for the seven edits.
+>
+> **T2 landed 2026-07-26.** Every claim above now reads 3.11, not 3.10: floor
+> is `>=3.11`, ruff `target-version = "py311"`, trove classifiers 3.11–3.14,
+> suite re-verified on 3.11/3.12/3.13/3.14 (95 tests, all pass), and JSON is
+> byte-identical between 3.11 and 3.14 on the reference fixture. Left the
+> section above as written rather than rewritten in place — same reasoning as
+> phase 3's invariant corrections: a struck-through prediction next to what
+> actually happened is more useful to the next reader than a silently updated
+> past.
 
 ## Baseline to measure against
 
@@ -617,7 +626,7 @@ materially wrong on real sites.
 
 - [x] Decide the Python floor — **3.10, verified across 3.10–3.14**.
       Superseded: the owner raised it to **3.11** on 2026-07-26; shipping that
-      is **T2**
+      is **T2**, now landed
 - [x] Phase 1 — `tinycss2` swap behind the `Declaration` seam
 - [x] Update or retire the zipapp build for a vendored dependency —
       **updated**; `uv pip install --target` vendors `tinycss2` +
@@ -641,10 +650,14 @@ Decided by the owner 2026-07-26, ready to build:
 
 - [ ] **T1** — rebuild the zipapp (vendored deps + a `sys.version_info` guard),
       and make rebuilding it part of finishing a session. Needs **T12** first
-- [ ] **T2** — raise the Python floor to 3.11. Seven edits across four files,
-      enumerated in the task; sub-decision on bumping `__version__`
-- [ ] **T3** — `to_document` as a *versioned* public API. Already public; the
-      work is a `schemaVersion` key and a written compatibility promise
+- [x] **T2** — raise the Python floor to 3.11 — **landed 2026-07-26**. All
+      seven edits made; suite re-verified on 3.11–3.14 (95 tests) and JSON
+      byte-identical to 3.14 on the reference fixture. `__version__` bumped to
+      `1.1.0` — see the note at T2 below for why a minor bump and not a major
+      one
+- [x] **T3** — `to_document` as a *versioned* public API — **landed
+      2026-07-26**. Added top-level `schemaVersion: 1`; compatibility promise
+      written in `README.md`'s Output section; shape asserted by a new test
 
 Accuracy gaps left by phases 1–4:
 
@@ -787,6 +800,27 @@ together.
 **Diff level:** none — this changes no behaviour. Re-run the matrix over
 3.11–3.14 and confirm byte-identical JSON to 3.14 on the reference fixture,
 which is what the old floor's claim rested on.
+
+> **Landed 2026-07-26.** All seven edits made as listed. Matrix re-run on
+> 3.11/3.12/3.13/3.14: 95 tests pass on each, `ruff` clean under
+> `target-version = "py311"` (no new `UP` findings — the codebase already used
+> nothing older), and JSON is byte-identical between 3.11 and 3.14 on the
+> reference fixture (`#151515`, 20 tokens, 1 theme, no warnings, `generated`
+> dropped before comparing).
+>
+> **The version-bump sub-decision: `1.0.0` → `1.1.0`, not `2.0.0`.** The
+> "breaking change for anyone installed on 3.10" cost named above is honest but
+> currently theoretical — `pyproject.toml` still carries
+> `# TODO(migration): decide a licence`, and CLAUDE.md is explicit that
+> "nothing about publishing moves until a licence is chosen." The package has
+> never been published, so nobody is installed from PyPI on any version to
+> break. A major bump would signal a compatibility break to consumers who do
+> not exist yet; a minor bump records the change honestly without overstating
+> its current blast radius. Revisit this reasoning if the package is published
+> before the next floor bump — an EOL-driven floor raise on a *published*
+> package is a different cost calculus. `schemaVersion` (T3) stays at `1`
+> regardless, since it is that document's first stamp and moves on its own
+> schedule — see T3.
 
 ### T3 — Make `to_document`'s dict a versioned public API
 

@@ -457,6 +457,16 @@ def _anonymous_layer(sheet: Stylesheet, parent: str) -> str:
     position in it. The NUL keeps it from colliding with anything an author
     could write, and carries no dot, so `_register_layer` still splits the
     qualified name on parentage correctly.
+
+    **The counter skips values, and that is not a bug.** It counts every
+    registered name carrying a NUL, which includes a *named* layer nested in an
+    anonymous one — `@layer { @layer x {} }` registers `\\x000-0.x`. Uniqueness
+    only needs the count to rise between two calls, and it does: creating an
+    anonymous layer always registers at least one new NUL-bearing name. Making
+    it a true count of anonymous layers would be no more correct and one more
+    thing to keep in step. No corpus site uses an anonymous layer at all, so
+    `test_anonymous_layers_stay_distinct_when_nested` is the only thing holding
+    this.
     """
     n = sum(1 for name in sheet.layers if "\x00" in name)
     return _qualify(parent, f"\x00{sheet.sheet_order}-{n}")

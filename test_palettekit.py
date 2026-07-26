@@ -27,6 +27,7 @@ from palettekit.cssparse import (
     theme_scope,
 )
 from palettekit.dom import matches_page_element, page_elements
+from palettekit.extract import layer_order
 
 
 class TestParsing(unittest.TestCase):
@@ -757,7 +758,7 @@ class TestCascade(unittest.TestCase):
         """`a.x` belongs between `a` and `b`, however late it is mentioned."""
         sheet = parse_stylesheet(
             "@layer a, b; @layer a.x { body { color: #111 } }", "s")
-        order = extract.layer_order([sheet])
+        order = layer_order([sheet])
         self.assertEqual(sorted(order, key=order.get), ["a", "a.x", "b"])
 
     def test_two_anonymous_layers_are_two_layers(self):
@@ -767,6 +768,35 @@ class TestCascade(unittest.TestCase):
             "s")
         self.assertEqual(len(set(sheet.layers)), 2)
         self.assertEqual(len({d.layer for d in sheet.declarations}), 2)
+
+    def test_anonymous_layers_stay_distinct_when_nested(self):
+        """The one construct here with a hand-rolled uniqueness scheme.
+
+        No corpus site uses an anonymous layer, so nothing else exercises
+        `_anonymous_layer`'s counter — and a collision would not raise, it
+        would silently merge two layers and mis-order a palette on the first
+        site that used them. Checked at two depths, and in the combinations
+        that make the counter skip a value: a *named* layer inside an
+        anonymous one registers a NUL-bearing qualified name too.
+
+        Every ancestor must also be registered. `layer_order`'s `path()` falls
+        back to "sorts last" for a name it cannot place, which would mask
+        exactly this.
+        """
+        for css in (
+            "@layer { body{color:#111} } @layer a { @layer { body{color:#222} } }",
+            "@layer { @layer { body{color:#111} } body{color:#222} }",
+            "@layer { @layer x { body{color:#111} } } @layer { body{color:#222} }",
+            "@layer {body{color:#111}} @layer a.b {body{color:#222}} "
+            "@layer {body{color:#333}}",
+        ):
+            sheet = parse_stylesheet(css, "s")
+            order = layer_order([sheet])
+            self.assertEqual(len(sheet.layers), len(set(sheet.layers)), css)
+            for name in sheet.layers:
+                parts = name.split(".")
+                for i in range(len(parts)):
+                    self.assertIn(".".join(parts[:i + 1]), order, css)
 
     def test_a_media_theme_loses_to_specificity_but_beats_order(self):
         """Where the theme term sits, and why it sits there.

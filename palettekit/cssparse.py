@@ -1,14 +1,26 @@
-"""A small CSS reader, scoped to the job of finding colors.
+"""A CSS reader, scoped to the job of finding colors.
 
-This is deliberately not a general CSS parser. It needs to do three things
-correctly: never read a color out of a comment or a string, keep track of which
-selector and property each color came from, and follow var() chains. Everything
-else about CSS it is happy to ignore.
+Tokenising is `tinycss2`'s job — it implements the CSS Syntax grammar, and this
+module only decides which of the declarations it hands back are worth keeping,
+which selector and at-rule context they carry, and which theme scopes them.
+
+The split matters because the previous hand-rolled brace walker was an
+*approximation* of the grammar, and every new site revealed a new corner of it:
+an escaped quote in a Tailwind selector masked past the following `{`; a
+statement `@charset` got glued onto the next rule's selector and cost Bootstrap
+its whole `:root` block; a comma inside `:where()` split one selector into two
+broken ones. Those looked like separate bugs and were one — see `PLAN.md` — and
+the fix for a class rather than its instances is to stop approximating.
+
+What is still this module's own is everything above the token stream: theme
+scopes, selector weighting, `var()` resolution, the page element.
 """
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+
+import tinycss2
 
 from .color import Color, find_colors
 
@@ -103,6 +115,80 @@ _THEME_ATTR = re.compile(
 _WS = re.compile(r"\s+")
 _REDUNDANT_HTML = re.compile(r"^html\s+(?=body\b)", re.I)
 
+_NOT_OPEN = re.compile(r":not\(", re.I)
+
+
+def _not_spans(selector: str) -> list[tuple[int, int]]:
+    """Character ranges covered by a top-level `:not(...)`, brackets balanced.
+
+    A theme marker inside a negation means the opposite of what it says, so
+    every marker match has to be taken outside these ranges. django's docs are
+    the case that proves it:
+
+        @media (prefers-color-scheme: dark) {
+          html:not([data-theme="light"]) { --body-bg: #0e1117; … }
+        }
+
+    Read the `[data-theme="light"]` as a scope and the dark theme's entire
+    token block is filed under *light* — 124 declarations of it, including the
+    ground. Skipping the negation lets the rule fall through to the media
+    query, which says dark, which is what it is.
+    """
+    spans: list[tuple[int, int]] = []
+    for m in _NOT_OPEN.finditer(selector):
+        if spans and m.start() < spans[-1][1]:
+            continue                    # nested inside one we already took
+        i, depth, quote = m.end() - 1, 0, ""
+        while i < len(selector):
+            ch = selector[i]
+            if ch == "\\":
+                i += 2
+                continue
+            if quote:
+                if ch == quote:
+                    quote = ""
+            elif ch in "\"'":
+                quote = ch
+            elif ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0:
+                    spans.append((m.start(), i + 1))
+                    break
+            i += 1
+    return spans
+
+
+def _negation_free(selector: str) -> str:
+    """The selector with every `:not(...)` blanked out, length preserved."""
+    spans = _not_spans(selector)
+    if not spans:
+        return selector
+    out = list(selector)
+    for a, b in spans:
+        out[a:b] = " " * (b - a)
+    return "".join(out)
+
+
+def _outside_negations(selector: str, fn) -> str:
+    """Apply `fn` to the parts of the selector that are not inside a `:not()`."""
+    spans = _not_spans(selector)
+    if not spans:
+        return fn(selector)
+    out, prev = [], 0
+    for a, b in spans:
+        out.append(fn(selector[prev:a]))
+        out.append(selector[a:b])
+        prev = b
+    out.append(fn(selector[prev:]))
+    return "".join(out)
+
+
+def _strip_markers(text: str) -> str:
+    cleaned = _THEME_IS.sub("", text)
+    return _THEME_ATTR.sub(" ", _THEME_CLASS.sub(" ", cleaned))
+
 
 def split_selector_list(selector: str) -> list[str]:
     """Split on the commas that separate selectors, not the ones inside them.
@@ -165,10 +251,13 @@ def theme_scope(selector: str, at_rules: tuple[str, ...]) -> str:
     Selectors that disagree (`.dark .a, .light .b`) also come back unscoped:
     the rule cannot be attributed to one theme, and saying so beats picking
     whichever marker was written first.
+
+    A marker inside `:not()` is not a scope — see `_not_spans`.
     """
     parts = split_selector_list(selector)
     scopes = set()
     for part in parts:
+        part = _negation_free(part)
         m = (_THEME_IS.search(part) or _THEME_CLASS.search(part)
              or _THEME_ATTR.search(part))
         scopes.add(m.group(1).lower() if m else "")
@@ -196,11 +285,15 @@ def strip_theme_scope(selector: str) -> str:
 
     A compound left empty by the removal becomes `:root`: `.dark { --bg: #000 }`
     is a root token override, and dropping it would leave no selector at all.
+
+    `:not(...)` is left alone, for the same reason `theme_scope` does not read
+    into it: `html:not([data-theme="light"])` is a rule *about* the negation,
+    and stripping the marker out of it leaves `html:not()`, which is not a
+    selector at all.
     """
     out = []
     for part in split_selector_list(selector):
-        cleaned = _THEME_IS.sub("", part)
-        cleaned = _THEME_ATTR.sub(" ", _THEME_CLASS.sub(" ", cleaned))
+        cleaned = _outside_negations(part, _strip_markers)
         cleaned = _WS.sub(" ", cleaned).strip()
         # `html body` and `body` select the same element, and the marker is
         # usually carried on `html`, so `html.dark body` has to come out as
@@ -222,6 +315,11 @@ class Declaration:
     order: int = 0          # position within its own stylesheet
     sheet_order: int = 0    # position of the stylesheet in the document
     theme: str = ""         # "light" / "dark" / "" for unscoped
+    # Read from the token stream rather than string-matched, and deliberately
+    # unused so far: importance is the first term of the real cascade, which
+    # `detect_ground` will need in phase 3 of PLAN.md. Capturing it here costs
+    # nothing and means the parser seam does not have to move again.
+    important: bool = False
 
     @property
     def is_custom_property(self) -> bool:
@@ -256,145 +354,100 @@ def strip_comments(css: str) -> str:
     return _COMMENT.sub(" ", css)
 
 
-def _mask_strings(css: str) -> str:
-    """Blank out string contents so `content: "#fff"` is not read as a color.
+_VAR_NAME = re.compile(r"var\(\s*(--[\w-]+)")
 
-    Length is preserved so offsets stay valid for the caller.
 
-    Outside a string a backslash begins an escape and the next character is
-    literal — never a delimiter. Missing that case is not a small error: a
-    Tailwind arbitrary-value class like
-
-        .bg-\\[url\\(\\"https://…/hero.png\\"\\)\\] { background-image: … }
-
-    carries an escaped quote *in the selector*. Reading it as the start of a
-    string masks everything up to the next quote, which swallows the `{` and
-    leaves the brace walker one level deep for the rest of the file. On the
-    stylesheet that turned this up it cost 178 of 181 themed rules — silently,
-    since the parse still succeeds and simply returns less.
-    """
-    out = list(css)
-    i, n = 0, len(css)
-    while i < n:
-        ch = css[i]
-        if ch == "\\":
-            i += 2
-            continue
-        if ch in "\"'":
-            quote = ch
-            j = i + 1
-            while j < n:
-                if css[j] == "\\":
-                    j += 2
-                    continue
-                if css[j] == quote:
-                    break
-                j += 1
-            for k in range(i + 1, min(j, n)):
-                out[k] = " "
-            i = j + 1
-            continue
-        i += 1
-    return "".join(out)
+def _norm(text: str) -> str:
+    """Collapse whitespace the way the old walker's `.strip()`/`split()` did."""
+    return " ".join(text.split())
 
 
 def parse_stylesheet(css: str, source: str, origin: str = "",
                      third_party: bool = False,
                      sheet_order: int = 0) -> Stylesheet:
-    """Walk a stylesheet and collect every color-bearing declaration."""
+    """Parse a stylesheet and collect every color-bearing declaration.
+
+    `tinycss2` does the tokenising; `_walk` decides what to keep. Three things
+    that used to be hand-written are now simply properties of the grammar:
+    strings and comments cannot be mistaken for color (invariant 9), a comma
+    inside `:where()` is not a selector separator (invariant 17), and a
+    statement at-rule is consumed rather than glued to the next selector
+    (invariant 18). Their tests stay — they now guard this integration, which
+    is exactly where a swap like this goes wrong.
+    """
     sheet = Stylesheet(source=source, origin=origin, third_party=third_party,
                        sheet_order=sheet_order)
-    text = _mask_strings(strip_comments(css))
-
-    for name in re.findall(r"var\(\s*(--[\w-]+)", text):
-        sheet.var_refs.add(name)
-
-    # Walk the brace structure, tracking the selector stack and at-rule context.
-    stack: list[str] = []
-    at_stack: list[str] = []
-    buf = []
-    i, n = 0, len(text)
-
-    while i < n:
-        ch = text[i]
-        if ch == "{":
-            prelude = "".join(buf).strip()
-            buf = []
-            if prelude.startswith("@"):
-                at_stack.append(prelude)
-                stack.append("")  # at-rule block: no selector of its own
-            else:
-                stack.append(prelude)
-            i += 1
-            continue
-        if ch == "}":
-            body = "".join(buf)
-            buf = []
-            sel = stack[-1] if stack else ""
-            if sel:
-                _collect(sheet, sel, body, source, tuple(at_stack))
-            if stack:
-                popped = stack.pop()
-                if popped == "" and at_stack:
-                    at_stack.pop()
-            i += 1
-            continue
-        if ch == ";":
-            decl = "".join(buf)
-            buf = []
-            if stack:
-                # A declaration inside the current block.
-                sel = stack[-1]
-                if sel:
-                    _collect(sheet, sel, decl, source, tuple(at_stack))
-            # Otherwise a *statement* at-rule at the top level — `@charset`,
-            # `@import`, `@namespace`, `@layer a, b;`. These end in a semicolon
-            # instead of a block, and dropping the buffer here is the whole
-            # point: left in place it is glued onto the next rule's prelude, so
-            # `@charset "UTF-8"; :root{…}` parses as one selector reading
-            # `@charset "UTF-8"; :root` and the rule is lost. Bootstrap opens
-            # with `@charset`, which cost its entire `:root` token block —
-            # 550 unresolved var() references downstream.
-            i += 1
-            continue
-        buf.append(ch)
-        i += 1
-
+    rules = tinycss2.parse_stylesheet(css, skip_comments=True,
+                                      skip_whitespace=True)
+    _walk(sheet, rules, source, at_rules=(), selector="", theme="")
     return sheet
 
 
-_DECL = re.compile(r"^\s*([\w-]+|--[\w-]+)\s*:\s*(.+?)\s*$", re.S)
+def _contents(node) -> list:
+    return tinycss2.parse_blocks_contents(node.content, skip_comments=True,
+                                          skip_whitespace=True)
 
 
-def _collect(sheet: Stylesheet, selector: str, body: str, source: str,
-             at_rules: tuple[str, ...]) -> None:
-    # Nested blocks were handled by the walker; only flat declarations here.
-    selector = " ".join(selector.split())
-    # Resolved once per block rather than per declaration: the scope is a
-    # property of the rule, and the regexes are not free.
-    theme = theme_scope(selector, at_rules)
-    for chunk in body.split(";"):
-        m = _DECL.match(chunk)
-        if not m:
-            continue
-        prop, value = m.group(1).strip().lower(), m.group(2).strip()
-        if not value:
-            continue
-        keep = prop.startswith("--") or prop in PROPERTY_ROLE
-        if not keep:
-            continue
-        sheet.declarations.append(
-            Declaration(
-                selector=selector,
-                prop=prop,
-                value=" ".join(value.split()),
-                source=source,
-                at_rules=at_rules,
-                order=len(sheet.declarations),
-                sheet_order=sheet.sheet_order,
-                theme=theme,
-            )
+def _walk(sheet: Stylesheet, nodes: list, source: str,
+          at_rules: tuple[str, ...], selector: str, theme: str) -> None:
+    """Record declarations, descending through nested rules and at-rule blocks.
+
+    `selector` is the rule the current nodes sit inside, and `""` means there
+    is none — the body of an `@font-face`, or of an `@media` nested directly in
+    a rule. Declarations there are read for their `var()` references but not
+    kept, which is what the brace walker did by pushing an empty selector for
+    every at-rule block.
+    """
+    for node in nodes:
+        if node.type == "declaration":
+            # Every declaration contributes its references, whether or not the
+            # property is one we keep. `var_refs` decides `live` vs `saved`
+            # (invariant 10), and a property consumed only by `font-family` is
+            # still a property something consumes.
+            value = tinycss2.serialize(node.value)
+            sheet.var_refs.update(_VAR_NAME.findall(value))
+            if selector:
+                _record(sheet, node, value, selector, source, at_rules, theme)
+
+        elif node.type == "qualified-rule":
+            sel = _norm(tinycss2.serialize(node.prelude))
+            # Once per rule rather than per declaration: the scope is a
+            # property of the rule, and the regexes are not free.
+            _walk(sheet, _contents(node), source, at_rules, sel,
+                  theme_scope(sel, at_rules))
+
+        elif node.type == "at-rule":
+            if node.content is None:
+                continue    # a statement at-rule — `@charset`, `@import`,
+                            # `@layer a, b;`. It has no body and declares
+                            # nothing; invariant 18 is now simply this branch.
+            at = _norm(f"@{node.lower_at_keyword} "
+                       f"{tinycss2.serialize(node.prelude)}")
+            _walk(sheet, _contents(node), source, at_rules + (at,),
+                  selector="", theme="")
+
+
+def _record(sheet: Stylesheet, node, value: str, selector: str, source: str,
+            at_rules: tuple[str, ...], theme: str) -> None:
+    prop = node.lower_name
+    if not (prop.startswith("--") or prop in PROPERTY_ROLE):
+        return
+    value = _norm(value)
+    if not value:
+        return
+    sheet.declarations.append(
+        Declaration(
+            selector=selector,
+            prop=prop,
+            value=value,
+            source=source,
+            at_rules=at_rules,
+            order=len(sheet.declarations),
+            sheet_order=sheet.sheet_order,
+            theme=theme,
+            important=node.important,
         )
+    )
 
 
 _VAR_CALL = re.compile(r"var\(\s*(--[\w-]+)\s*(?:,\s*(.*?)\s*)?\)", re.S)
@@ -511,10 +564,12 @@ def parse_inline_styles(html: str, source: str,
     sheet = Stylesheet(source=source, sheet_order=sheet_order)
     masked = strip_comments(html)
     for m in re.finditer(r"""\bstyle\s*=\s*(["'])(.*?)\1""", masked, re.S | re.I):
-        body = m.group(2)
-        _collect(sheet, "[inline]", body, source, ())
-        for name in re.findall(r"var\(\s*(--[\w-]+)", body):
-            sheet.var_refs.add(name)
+        # A style attribute is a declaration list, so it goes through the same
+        # parser as everything else — `background:url(a;b)` has a semicolon in
+        # it that is not a separator.
+        decls = tinycss2.parse_blocks_contents(m.group(2), skip_comments=True,
+                                               skip_whitespace=True)
+        _walk(sheet, decls, source, at_rules=(), selector="[inline]", theme="")
     return sheet
 
 

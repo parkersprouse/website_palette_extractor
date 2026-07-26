@@ -1,6 +1,7 @@
 # Migration plan: hand-rolled CSS reading → `tinycss2` + `cssselect2`
 
-Status: **proposed, not started.** Written 2026-07-26.
+Status: **phase 1 landed 2026-07-26.** Phases 2–4 not started. Written
+2026-07-26.
 
 ## Why
 
@@ -123,7 +124,45 @@ Each phase is one commit, independently revertible, and leaves the tool working.
 
 ---
 
-## Phase 1 — parser swap only
+## Phase 1 — parser swap only — **DONE**
+
+> **Outcome.** All acceptance criteria met. 66 tests (65 unchanged, none of
+> their assertions edited, plus one new), `ruff` clean, reference fixture
+> byte-identical to the previous commit, corpus grounds unchanged, module /
+> console-script / zipapp JSON identical. Four departures from the plan as
+> written, each deliberate:
+>
+> 1. **`split_selector_list` was kept.** The parser no longer needs it, but
+>    `theme_scope`, `strip_theme_scope`, `selector_weight`, `detect_ground` and
+>    `build_var_table` all still do. Deleting it now would mean pulling
+>    `cssselect2` in early — phase 2's job. Same for `strip_comments`, which
+>    survives only in `parse_inline_styles`, where it runs over HTML.
+> 2. **`!important` moved out of `value`** onto `Declaration.important`. This
+>    changed value strings on ~250 corpus declarations and dropped exactly one
+>    — `--tw-backdrop-blur: !important`, whose value is empty once importance
+>    is removed. It paints nothing, so dropping it is right.
+> 3. **`var_refs` is now collected per declaration, not by regex over the
+>    text.** Net effect on the corpus is one reference: `--tw`, which came from
+>    `@supports not (hanging-punctuation:var(--tw))` — an at-rule prelude, and
+>    a Tailwind feature probe never defined or painted.
+> 4. **A latent bug had to be fixed for "unchanged or better" to hold.** See
+>    below; it is now invariant 20.
+>
+> **What the swap uncovered.** Correct string handling meant selectors stopped
+> reading `[data-theme=" "]`, which made django's `html[data-theme="dark"]`
+> theme visible for the first time — and simultaneously made `theme_scope`
+> match the marker inside `html:not([data-theme="light"])`, filing 124 dark
+> declarations under *light*. A marker inside `:not()` is a negation; skipping
+> those ranges fixes it. django went from 1 theme to 2 (`#f8f8f8` / `#181d27`),
+> so the corpus is now **13 themes, 4 inferred**, against a baseline of 12 / 4.
+>
+> **Method note for phases 2–4.** The test suite and the reference fixture both
+> passed on the first run *while django was mis-filed*. What caught it was a
+> declaration-level multiset diff of old parser against new, over bundles
+> frozen to disk so a site changing overnight could not be mistaken for a
+> regression. Do that first, before the palette-level checks.
+
+### As planned
 
 Replace the brace walker with `tinycss2`, keeping the `Declaration` /
 `Stylesheet` output shape byte-identical. **That shape is the seam**: nothing
@@ -268,8 +307,10 @@ materially wrong on real sites.
 ## Checklist
 
 - [x] Decide the Python floor — **3.10, verified across 3.10–3.14**
-- [ ] Phase 1 — `tinycss2` swap behind the `Declaration` seam
-- [ ] Update or retire the zipapp build for a vendored dependency
+- [x] Phase 1 — `tinycss2` swap behind the `Declaration` seam
+- [x] Update or retire the zipapp build for a vendored dependency —
+      **updated**; `uv pip install --target` vendors `tinycss2` +
+      `webencodings` into the staging dir, incantation in CLAUDE.md
 - [ ] Phase 2 — `html.parser` shim + `cssselect2` matching
 - [ ] Phase 3 — full cascade; retire invariants 13/16/19 in writing
 - [ ] Phase 4 — `color-mix()`, `light-dark()`

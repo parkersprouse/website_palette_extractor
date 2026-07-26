@@ -13,22 +13,27 @@ matrix rather than trusting this line:
 
 ```bash
 for v in 3.10 3.11 3.12 3.13 3.14; do
-  uv run --python "$v" --no-project python test_palettekit.py; done
+  uv run --python "$v" --with tinycss2 --no-project python test_palettekit.py
+done
 ```
 
 **Priority order, set by the owner (2026-07-26): accuracy and breadth first,
-slimness second.** The core is stdlib-only today and there is no rule that it
-must stay that way — if a dependency makes the tool read more sites correctly,
+slimness second.** If a dependency makes the tool read more sites correctly,
 take it. This reverses an earlier constraint, and several decisions below were
 made under the old one and should be re-read in that light: the `color-mix()`
-skip, and the argument against modelling the cascade. Pillow/numpy remain
-optional and reached only through `images.py`, behind `--images`.
+skip, and the argument against modelling the cascade.
+
+The core takes exactly one dependency, **`tinycss2`** (pure Python; one
+transitive dep, `webencodings`). It tokenises; everything above the token
+stream — theme scopes, weighting, `var()`, the page element — is still ours.
+This is phase 1 of `PLAN.md`, landed. Pillow/numpy remain optional and reached
+only through `images.py`, behind `--images`.
 
 ## Commands
 
 ```bash
 python3 -m palettekit <target> -o out    # target: .har | URL | .html/.css path
-python3 test_palettekit.py               # 65 tests, all must pass
+python3 test_palettekit.py               # 66 tests, all must pass
 python3 -m palettekit x.har --no-themes  # collapse a two-theme site into one
 ruff check .                             # must stay clean; config in pyproject
 python3 -m palettekit x.har --list-sources   # diagnose framework noise first
@@ -48,13 +53,19 @@ plain `diff` of two runs fails whenever they straddle a second boundary — whic
 looks exactly like a real mismatch and wasted a diagnostic pass once already.
 
 Build the single-file distributable (zipapp refuses a source tree that already
-has `__main__.py`, so it needs a staging dir with a shim):
+has `__main__.py`, so it needs a staging dir with a shim). **`tinycss2` and
+`webencodings` have to be vendored into the staging dir** — a zipapp carries no
+dependency metadata, so without this the `.pyz` imports fine on a machine that
+happens to have them installed and fails everywhere else:
 
 ```bash
 rm -rf /tmp/stage && mkdir -p /tmp/stage
-cp -r palettekit /tmp/stage/ && rm -rf /tmp/stage/palettekit/__pycache__
+cp -r palettekit /tmp/stage/
 printf 'import sys\nfrom palettekit.__main__ import main\nsys.exit(main())\n' \
   > /tmp/stage/__main__.py
+uv pip install --quiet --target /tmp/stage tinycss2
+find /tmp/stage \( -name '__pycache__' -o -name '*.dist-info' \) -prune \
+  -exec rm -rf {} +
 python3 -m zipapp /tmp/stage -o palettekit.pyz -p "/usr/bin/env python3"
 ```
 
@@ -74,7 +85,7 @@ sources.py   →  cssparse.py  →  extract.py  →  emit.py
 | File | Lines | Holds |
 |---|---:|---|
 | `color.py` | 528 | `Color`, parsing, sRGB↔OKLab, CIE Lab/LCH, contrast, hue names |
-| `cssparse.py` | 718 | Declaration walker, `var()`, `selector_weight`, roles, theme scopes, page element |
+| `cssparse.py` | 772 | `tinycss2` integration, `var()`, `selector_weight`, roles, theme scopes, page element |
 | `sources.py` | 292 | `load_har` / `load_url` / `load_paths` → `Bundle` |
 | `extract.py` | 916 | `extract()`, per-theme `_build`, ground, merging, statuses, naming |
 | `emit.py` | 942 | Emitters; `_HTML` is the report template |
@@ -84,6 +95,28 @@ sources.py   →  cssparse.py  →  extract.py  →  emit.py
 `emit.to_document(palette)` returns the dict the JSON file holds — that dict is
 the public data contract. The HTML report consumes the same dict, inlined into
 a `<script type="application/json">`.
+
+**`Declaration` is the parser seam.** `tinycss2` stops at `cssparse._walk`;
+nothing downstream of `Declaration` knows a tokeniser exists, which is what
+made the phase-1 swap reviewable and revertible. Keep it that way. Three notes
+on what `_walk` produces:
+
+- `var_refs` is collected from **every** declaration, including properties the
+  role table drops. It decides `live` vs `saved` (invariant 10), and narrowing
+  it to color-bearing properties would silently reclassify real tokens. It is
+  no longer collected from at-rule *preludes*, which is a deliberate
+  correction: `@supports not (hanging-punctuation:var(--tw))` is a Tailwind
+  feature probe, and `--tw` is never defined or painted.
+- `!important` is read off the token stream onto `Declaration.important` and is
+  **no longer part of `value`**. Nothing uses it yet — it is the first term of
+  the real cascade, for phase 3.
+- `tinycss2`'s serializer inserts `/**/` where two tokens would otherwise
+  re-merge, so `:nth-child(3n+1)` round-trips as `:nth-child(3n/**/+1)`. Valid
+  CSS, and it reaches the selector strings in the JSON and the report. Cosmetic
+  only — 38 declarations on tailwindcss.com, none of them page-level. Left
+  alone deliberately: stripping it would need a string-aware scan over the
+  serializer's output, which is the exact class of hand-rolled code this phase
+  removed.
 
 ## Invariants — do not "simplify" these
 
@@ -144,19 +177,27 @@ because the obvious implementation produced plausible but wrong output.
 8. **Fully transparent colors are dropped** (`alpha < 0.02`). Flattened, they
    are indistinguishable from the ground and manufacture phantom duplicates.
 
-9. **Strings and comments are masked before any color scan**
-   (`_mask_strings`, `strip_comments`). `content: "#fff"` is not a color.
-   `_mask_strings` preserves length so offsets stay valid.
+9. **Strings and comments cannot be read as color** — now because `tinycss2`
+   tokenises them as strings and comments. `content: "#fff"` is not a color.
 
-   **A backslash outside a string is an escape, and the next character is
-   never a delimiter.** Tailwind arbitrary values put escaped quotes in the
-   *selector* — `.bg-\[url\(\"…\"\)\]` — and reading one as a string opener
-   masks through the following `{`, leaving the brace walker a level deep for
-   the rest of the file. The parse still succeeds and quietly returns less,
-   which is the worst way for this to fail: on `ground.news.har` it cost 178 of
-   181 themed rules and two thirds of every declaration, and made a site with
-   two obvious themes look like it had one. Test:
+   This *was* a hand-written masking pass, and the way it failed is a large
+   part of why the parser was replaced. A backslash outside a string is an
+   escape and the next character is never a delimiter; Tailwind arbitrary
+   values put escaped quotes in the *selector* — `.bg-\[url\(\"…\"\)\]` — and
+   reading one as a string opener masked through the following `{`, leaving the
+   brace walker a level deep for the rest of the file. The parse still
+   succeeded and quietly returned less, which is the worst way for this to
+   fail: on `ground.news.har` it cost 178 of 181 themed rules and two thirds of
+   every declaration, and made a site with two obvious themes look like it had
+   one. The test stays and now guards the *integration*:
    `test_escaped_quote_in_a_selector_does_not_swallow_the_rest`.
+
+   **What the swap changed downstream is that string contents are no longer
+   blanked**, so `[role="complementary"]` reads as itself instead of
+   `[role=" "]`. That corrected real misreadings — django's
+   `html[data-theme="dark"]` theme was entirely invisible, and a
+   `url(data:image/png;base64,…)` value was being truncated at the semicolon
+   inside it — and it exposed one latent bug, which is invariant 20.
 
 10. **Code emitters ship `live` colors only** by default (`_for_code`). What
     you paste into a project should be what the site paints; `saved` and
@@ -256,6 +297,11 @@ because the obvious implementation produced plausible but wrong output.
 
     Everything that reads a selector list splits it — `theme_scope`,
     `strip_theme_scope`, `selector_weight`, `detect_ground`, `build_var_table`.
+    The *parser* no longer needs it (`tinycss2` hands back one prelude per
+    rule), which is why `PLAN.md` phase 1 listed it for deletion; those five
+    callers are all still here, so it stays until phase 2 replaces it with
+    `cssselect2`'s own splitting.
+
     An earlier version had `theme_scope` judge the list as a whole, on the
     reasoning that "authors do not mix scoped and unscoped selectors in one
     rule." **Bootstrap 5.3 does, in its most important rule** —
@@ -264,13 +310,15 @@ because the obvious implementation produced plausible but wrong output.
     whose parts disagree is unscoped too. Test:
     `test_a_list_mixing_scoped_and_unscoped_is_unscoped`.
 
-18. **A statement at-rule is consumed, not accumulated** (`parse_stylesheet`).
-    `@charset`, `@import`, `@namespace` and `@layer a, b;` end in a semicolon
-    rather than a block. Left in the prelude buffer they are glued onto the
-    next rule's selector, so the *first rule of the sheet is lost*. Bootstrap
-    opens with `@charset "UTF-8";`, which cost its entire `:root` token block
-    and left 550 `var()` references resolving to nothing — printing
-    `color:` and `rgba(,1)` into the palette. Test:
+18. **A statement at-rule declares nothing** — `@charset`, `@import`,
+    `@namespace` and `@layer a, b;` end in a semicolon rather than a block, and
+    `_walk` skips them on `node.content is None`.
+
+    The brace walker had to be told this, and left in its prelude buffer they
+    were glued onto the next rule's selector, so the *first rule of the sheet
+    was lost*. Bootstrap opens with `@charset "UTF-8";`, which cost its entire
+    `:root` token block and left 550 `var()` references resolving to nothing —
+    printing `color:` and `rgba(,1)` into the palette. Test:
     `test_statement_at_rules_do_not_eat_the_first_rule`.
 
 19. **A custom property defined on the page outranks one defined off it**
@@ -283,6 +331,33 @@ because the obvious implementation produced plausible but wrong output.
     reach no page element still resolve among themselves, because one consumed
     only by `.btn` is still worth reading. Test:
     `test_a_var_defined_off_the_page_does_not_win`.
+
+20. **A theme marker inside `:not()` is a negation, not a scope**
+    (`_not_spans`, `_negation_free`). `theme_scope` takes its match outside
+    every top-level `:not(...)`, and `strip_theme_scope` leaves the negation
+    untouched — stripping the marker out of it would leave `html:not()`, which
+    selects nothing and is how the ground stops being found.
+
+    django's docs are the case:
+
+    ```css
+    @media (prefers-color-scheme: dark) {
+      html:not([data-theme="light"]) { --body-bg: #0e1117; --sidebar-bg: #181d27 }
+    }
+    ```
+
+    Read that marker as a scope and the dark theme's entire token block — 124
+    declarations, the ground among them — is filed under *light*. Skipped, the
+    rule falls through to the media query, which says dark. With no media query
+    around it, "everything except light" is not attributable to one theme, so
+    it comes back unscoped, which is the honest answer rather than a guess.
+
+    This bug predates the `tinycss2` swap; it was hidden because the old
+    masking blanked `"light"` to `" "` and the attribute matcher never fired.
+    Worth remembering as a shape: **a correctness fix can uncover a second bug
+    that the first one was masking**, and the count that exposed it here was a
+    declaration-level diff of old parser against new, not the test suite.
+    Test: `test_a_marker_inside_not_is_a_negation_not_a_scope`.
 
 ## Status vocabulary
 
@@ -387,13 +462,16 @@ Tailwind config should even look like first.
   a tiebreak *inside `detect_ground` only*, where the candidate set is already
   small and filtered. One bit, unambiguous, testable. Not implemented — no site
   in the corpus changes answer with it, and adding cascade machinery on
-  speculation is how invariant 2 earned its warning.
+  speculation is how invariant 2 earned its warning. The bit itself is now
+  captured on `Declaration.important`, so the experiment costs nothing to try.
 
   **The "all four or none" argument above assumed a stdlib-only core, which is
   no longer a constraint.** See **`PLAN.md`** — a phased migration to
-  `tinycss2` + `cssselect2` that makes the full cascade tractable, with the
-  library capabilities probed rather than assumed and the current corpus
-  numbers recorded as its baseline. Proposed, not started.
+  `tinycss2` + `cssselect2` that makes the full cascade tractable. **Phase 1 —
+  the `tinycss2` swap — has landed**; phases 2 (a real DOM and selector
+  matcher), 3 (the cascade proper) and 4 (`color-mix()`) have not. Phase 3 is
+  what would let this limit be lifted, and it is also the only phase that
+  retires documented invariants — read `PLAN.md`'s list before touching it.
 
 - **A bare channel triplet used raw paints nothing, and is reported rather than
   parsed.** The shadcn/ui convention writes `--background: 0 0% 3.9%` and
@@ -443,12 +521,20 @@ Tailwind config should even look like first.
 
 ## Reference fixture
 
-`example/` is the output for `fleshandbonedesign.com/crass`, generated with
-`--exclude static-css --exclude cargo.site --images`. Useful as a regression
-anchor: ground `#151515`, `rgba(255,255,255,.75)` flattening to exactly
-`#c4c4c4` at 10.47:1, `#ffc600` as `saved`, `#13330d` as `inert`, and the
-imagery measuring 99.7% neutral. If a change moves any of those, understand why
-before accepting it.
+`palettes/fleshandbonedesign.com/` is the output for
+`fleshandbonedesign.com/crass`, generated with `--exclude static-css --exclude
+cargo.site --images`. Useful as a regression anchor: ground `#151515`,
+`rgba(255,255,255,.75)` flattening to exactly `#c4c4c4` at 10.47:1, `#ffc600`
+as `saved`, `#13330d` as `inert`, 20 tokens, one theme, no warnings. If a
+change moves any of those, understand why before accepting it.
+
+> **The committed copy is stale**, and was already stale before the `tinycss2`
+> swap — `colors`, `stats`, `themes` and `warnings` differ from what HEAD
+> produces, and the imagery now measures 100.0% neutral rather than the 99.7%
+> this file used to claim. So compare a change against a *freshly generated*
+> run of the previous commit, not against the checked-in files. Regenerating it
+> is worth doing; it has not been done here because that would bury a parser
+> change under a large unrelated diff.
 
 ## Breadth check
 
@@ -472,6 +558,32 @@ specifically because it is **Tailwind v4** and `ground.news.har` is v3: v4's
 
 URL fetches run no JavaScript, so several of these land on the inferred-ground
 fallback. That is fine — the point is the *diff*, not the absolute answer.
+
+Current grounds, after phase 1 (**13 themes, 4 inferred**):
+
+| site | grounds | inferred |
+|---|---|---|
+| getbootstrap.com | `#ffffff` / `#212529` | — |
+| ui.shadcn.com | `#f5f5f5` / `#262626` | both |
+| www.djangoproject.com | `#f8f8f8` / `#181d27` | — |
+| news.ycombinator.com | `#ffffff` | yes |
+| developer.mozilla.org | `#ffffff` | — |
+| tailwindcss.com | `#f0b100` / `#030712` | light |
+| ground.news.har | `#eeefe9` / `#262626` | — |
+| fleshandbonedesign.com.har | `#151515` | — |
+
+Django's dark theme is new — it was written `html[data-theme="dark"]`, and the
+old string masking made every one of those selectors read `[data-theme=" "]`.
+Its ground resolves by the same route its light one always did:
+`body { background: var(--sidebar-bg) }`.
+
+**Two things make this diff readable, and neither is the test suite.** Freeze
+each site's fetched bundle to a file first, so a site that changed overnight
+cannot masquerade as a regression. Then diff at the *declaration* level —
+`(sheet_order, selector, prop, value, theme, at_rules)` as a multiset — not at
+the palette level. The phase-1 swap passed all 65 tests and the reference
+fixture on its first run while still mis-filing 124 of django's declarations;
+the declaration diff is what caught it.
 
 ## Migration TODO
 

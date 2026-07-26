@@ -402,6 +402,36 @@ class TestThemeScopes(unittest.TestCase):
         # Contradictory lists cannot be attributed, so they stay unscoped.
         self.assertEqual(theme_scope(".dark .a, .light .b", ()), "")
 
+    def test_a_marker_inside_not_is_a_negation_not_a_scope(self):
+        """django's docs write the dark theme as `:not([data-theme="light"])`.
+
+            @media (prefers-color-scheme: dark) {
+              html:not([data-theme="light"]) { --body-bg: #0e1117; … }
+            }
+
+        Read the marker as a scope and the dark theme's whole token block —
+        124 declarations of it, the ground among them — is filed under light.
+        Skipping the negation lets the rule fall through to the media query,
+        which says dark, which is what it is.
+
+        On its own, with no media query, "everything except light" is not
+        attributable to one theme either, so it comes back unscoped.
+        """
+        dark_media = ("@media (prefers-color-scheme: dark)",)
+        self.assertEqual(
+            theme_scope('html:not([data-theme="light"])', dark_media), "dark")
+        self.assertEqual(
+            theme_scope(':root:not([data-theme="light"]) .highlight', ()), "")
+        self.assertEqual(theme_scope("html:not(.dark)", ()), "")
+        # A real marker outside the negation still scopes the rule.
+        self.assertEqual(theme_scope(".dark .a:not(.light)", ()), "dark")
+        # Stripping must leave the negation intact — `html:not()` is not a
+        # selector, and the ground would never be matched through it.
+        self.assertEqual(strip_theme_scope('html:not([data-theme="light"])'),
+                         'html:not([data-theme="light"])')
+        self.assertEqual(strip_theme_scope(".dark .a:not(.light)"),
+                         ".a:not(.light)")
+
     def test_selector_list_splits_outside_parens_only(self):
         """A comma inside `:is()`/`:where()`/`[]` does not start a selector."""
         cases = {

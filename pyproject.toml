@@ -36,12 +36,17 @@ classifiers = [
   # Deliberately omitted rather than guessed at — see [project.license] below.
 ]
 
-# Stdlib-only today, but no longer a hard constraint: the owner set accuracy
-# and breadth above slimness on 2026-07-26, so a dependency that makes the tool
-# read more sites correctly is welcome. See PLAN.md. Anything merely optional
-# still belongs behind an extra, reached through a capability check that
-# degrades with a message.
-dependencies = []
+# The owner set accuracy and breadth above slimness on 2026-07-26, so a
+# dependency that makes the tool read more sites correctly is welcome. See
+# PLAN.md. Anything merely *optional* still belongs behind an extra, reached
+# through a capability check that degrades with a message.
+#
+# tinycss2 is a spec-compliant CSS tokenizer, pure Python, one transitive
+# dependency (webencodings, BSD). It replaces the hand-rolled brace walker,
+# which was an approximation of the CSS grammar and leaked a new bug per site:
+# escaped quotes in selectors, statement at-rules glued onto the next rule,
+# commas inside `:where()`. Phase 1 of PLAN.md.
+dependencies = ["tinycss2>=1.5"]
 
 [project.optional-dependencies]
 # `--images` quantises page artwork to check whether it carries color the CSS

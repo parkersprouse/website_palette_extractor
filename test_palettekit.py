@@ -358,6 +358,19 @@ class TestEndToEnd(unittest.TestCase):
             self.assertGreaterEqual(
                 ratio, floor, f"{role} only {ratio:.2f}:1 on the ground")
 
+    def test_document_has_a_schema_version(self):
+        """schemaVersion is the only intended addition to the key set.
+
+        The fixture carries no image report, so `images` (conditional on
+        `pal.image_report`) is absent here — this is the unconditional set.
+        """
+        self.assertEqual(self.doc["schemaVersion"], 1)
+        self.assertEqual(set(self.doc.keys()), {
+            "name", "source", "ground", "groundSource", "generated",
+            "schemaVersion", "stats", "warnings", "defaultTheme", "themes",
+            "colors",
+        })
+
 
 class TestMerging(unittest.TestCase):
     def test_same_color_different_roles_stays_split(self):

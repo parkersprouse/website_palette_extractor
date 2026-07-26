@@ -41,7 +41,7 @@ reached only through `images.py`, behind `--images`.
 
 ```bash
 python3 -m palettekit <target> -o out    # target: .har | URL | .html/.css path
-python3 test_palettekit.py               # 95 tests, all must pass (needs the deps)
+python3 test_palettekit.py               # 96 tests, all must pass (needs the deps)
 python3 -m palettekit x.har --no-themes  # collapse a two-theme site into one
 ruff check .                             # must stay clean; config in pyproject
 python3 -m palettekit x.har --list-sources   # diagnose framework noise first
@@ -135,6 +135,12 @@ sources.py   →  cssparse.py  →  extract.py  →  emit.py
 `emit.to_document(palette)` returns the dict the JSON file holds — that dict is
 the public data contract. The HTML report consumes the same dict, inlined into
 a `<script type="application/json">`.
+
+**It is a versioned contract, since `PLAN.md` T3.** A top-level
+`schemaVersion` (`emit.SCHEMA_VERSION`, currently `1`) is separate from
+`palettekit.__version__` and moves on its own schedule — an additive key never
+bumps it, a removed or re-typed one does. The compatibility promise lives in
+`README.md`'s Output section, not only here.
 
 **`Declaration` is the parser seam.** `tinycss2` stops at `cssparse._walk`;
 nothing downstream of `Declaration` knows a tokeniser exists, which is what

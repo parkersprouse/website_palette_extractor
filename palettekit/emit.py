@@ -9,6 +9,11 @@ import re
 from .color import Color, contrast_ratio, parse_color
 from .extract import Palette, describe
 
+# The document's own schema stamp — moves on a separate schedule from
+# `palettekit.__version__`, which tracks the tool rather than this one dict
+# shape. Additive keys do not bump it; removing or re-typing a key does.
+SCHEMA_VERSION = 1
+
 GROUP_TITLES = {
     "ground": "Ground",
     "surface": "Surface",
@@ -47,12 +52,16 @@ def _theme_document(pal: Palette) -> dict:
 
 
 def to_document(pal: Palette) -> dict:
-    """The dict the JSON file holds, and the report reads.
+    """The dict the JSON file holds, and the report reads. Public API.
 
     `themes` is always present and always holds at least one entry. The
     top-level `ground`, `stats` and `colors` mirror the default theme — the
     first entry — so that everything reading this document before themes
     existed keeps working unchanged.
+
+    `schemaVersion` is this document shape's own stamp, separate from
+    `palettekit.__version__`. An additive key does not bump it; removing or
+    re-typing a key does.
     """
     themes = [_theme_document(pal)]
     if pal.alternate:
@@ -66,6 +75,7 @@ def to_document(pal: Palette) -> dict:
         "generated": datetime.datetime.now().astimezone().isoformat(
             timespec="seconds"
         ),
+        "schemaVersion": SCHEMA_VERSION,
         "stats": pal.stats,
         "warnings": pal.warnings,
         "defaultTheme": pal.theme_id,

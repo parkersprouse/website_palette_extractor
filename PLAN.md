@@ -863,6 +863,18 @@ mirror `themes[0]` so pre-themes readers keep working.
 **Diff level:** the document's **key set**, per theme, against HEAD — not the
 values. The only intended change is one added key.
 
+> **Landed 2026-07-26.** `emit.SCHEMA_VERSION = 1` and a `schemaVersion` key on
+> `to_document`'s output, top level only — not per theme, which is what "per
+> theme" in the diff level above means to *check*, not a place to add the key.
+> A new test asserts the exact key set on a palette with no `--images` report
+> (`images` is conditional on `pal.image_report`, so an unconditional
+> assertEqual needs that case) and was confirmed to fail before the key
+> existed. Key-set diff against a fresh run of the pre-T3 commit on the
+> reference fixture: exactly `{schemaVersion}` added, nothing removed, no
+> value changed at any key including per-theme ones. Suite is 96 tests.
+> Compatibility promise written in `README.md`'s Output section and echoed at
+> `emit.to_document`'s docstring and in `CLAUDE.md`'s data-flow section.
+
 ---
 
 ## Accuracy gaps left by phases 1–4

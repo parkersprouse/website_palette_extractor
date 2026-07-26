@@ -75,6 +75,17 @@ The page lets you switch the copy format between hex, rgb, hsl, oklch and
 as-declared, toggle unrendered colors, and see the selector each color came
 from. Click any swatch to copy it.
 
+**The JSON is a versioned, public API** — `palettekit.emit.to_document()`
+returns the same dict the file holds, and it carries a top-level
+`schemaVersion` (currently `1`). That is a separate number from the package
+version in `pyproject.toml`: the package version tracks the tool, the schema
+version tracks this one document shape, and the two move on their own
+schedules. The compatibility promise: adding a key never bumps
+`schemaVersion`; removing a key or changing what type it holds does. Two
+things are already load-bearing for any consumer written before themes
+existed: `themes` is always present and holds at least one entry, and the
+top-level `ground`, `stats` and `colors` always mirror `themes[0]`.
+
 ## Light and dark themes
 
 When a site ships two themes, both are extracted and the report gets a toggle.
@@ -268,7 +279,7 @@ Run it from an environment where the dependencies are installed — `pip install
 A bare system `python3` will fail at the `tinycss2` import rather than at an
 assertion.
 
-95 tests covering the color maths, cascade ordering, theme scoping, ground
+96 tests covering the color maths, cascade ordering, theme scoping, ground
 detection, the merge rules, and the status classifications. Worth running after
 any edit — several of these exist because the obvious implementation was quietly
 wrong.

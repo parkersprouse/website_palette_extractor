@@ -41,7 +41,7 @@ reached only through `images.py`, behind `--images`.
 
 ```bash
 python3 -m palettekit <target> -o out    # target: .har | URL | .html/.css path
-python3 test_palettekit.py               # 97 tests, all must pass (needs the deps)
+python3 test_palettekit.py               # 98 tests, all must pass (needs the deps)
 python3 -m palettekit x.har --no-themes  # collapse a two-theme site into one
 ruff check .                             # must stay clean; config in pyproject
 python3 -m palettekit x.har --list-sources   # diagnose framework noise first
@@ -708,9 +708,47 @@ because the obvious implementation produced plausible but wrong output.
     imported rather than copied. It already honours quotes and escapes, which
     is the whole reason a regex cannot do this job.
 
-    The removals this diff surfaced — 124 of them — are *not* this bug and are
-    written up under "Known limits": they are `initial` read as a value, and a
-    property resolved from a rule the consuming element never matched.
+    The removals this diff surfaced — 124 of them — are *not* this bug. One of
+    them, `initial` read as a plain value, is now invariant 26 below. The
+    other — a property resolved from a rule the consuming element never
+    matched — is still written up under "Known limits".
+
+26. **A custom property whose stored value is the literal keyword `initial`
+    is treated as absent, not substituted as text** (`resolve_vars`). On a
+    custom property, `initial` **is** the guaranteed-invalid value — a
+    browser resolving `var(name, fallback)` against it uses the fallback, it
+    does not paste in the four letters `initial`.
+
+    Tailwind v4 guards every registered property this way for browsers with
+    no `@property`: `@layer properties { *, ::before, ::after, ::backdrop {
+    --tw-gradient-via-stops: initial; … } }`. Reading `initial` as an ordinary
+    stored value — which a browser cannot do either — resolved
+    `var(--tw-gradient-via-stops, <the real stops>)` to the inert text
+    `initial` and found no color in it, at 108 declarations on
+    tailwindcss.com's dark theme.
+
+    **Matched on the stored value, not the substring.** `--a: initial-value`
+    is a real, readable value and must not be treated as the keyword; the
+    check trims and case-folds, then compares for equality. No other
+    CSS-wide keyword is handled here — `unset` on a custom property is
+    equivalent to `inherit`, which is a real resolvable value once
+    inheritance is modelled, and that is the "scoped custom properties are not
+    modelled" limit below, not this one.
+
+    **Verified against a frozen `tailwindcss.com` bundle**, old code against
+    new: dark-theme `violet` and `teal` each gained exactly **+108**
+    occurrences, the light theme moved by +1/+1, no ground moved, and total
+    token count was unchanged in both themes — usages restored on existing
+    entries, no hue invented. `ground.news.har` and
+    `fleshandbonedesign.com.har` are byte-identical before and after (neither
+    uses this guard shape). Test: `test_initial_custom_property_falls_back`,
+    required to fail against the prior implementation before it was trusted.
+
+    **ui.shadcn.com's `--shimmer-image` looks like the same bug and is only
+    half of it** — it is `initial` in the guard *and* `none` from two
+    utilities the shimmering element never carries, so this invariant alone
+    still leaves `none` winning by last-wins. That half is the "scoped custom
+    properties are not modelled" limit below, not this one.
 
 ## Status vocabulary
 
@@ -887,37 +925,29 @@ Tailwind config should even look like first.
   needs a `calc()` evaluator, which is a separate piece of work; defaulting to
   50% would print a color the page does not paint.
 
-- **A custom property whose winning definition is `initial` — or is a value
-  set on an element the `var()` is not consumed on — resolves to that text.**
-  This is the gap the balanced parse of invariant 25 made visible, and it is
-  two documented limits meeting rather than a new one.
+- **A custom property whose winning definition is a value set on an element
+  the `var()` is not consumed on resolves to that value anyway.** This is the
+  gap the balanced parse of invariant 25 made visible. Its sibling gap —
+  `initial` read as a plain value rather than guaranteed-invalid — is fixed;
+  see invariant 26.
 
-  Tailwind v4 guards every registered property with `@layer properties { *,
-  ::before, ::after, ::backdrop { --tw-gradient-via-stops: initial; … } }`, for
-  browsers with no `@property`. **`initial` on a custom property is the
-  guaranteed-invalid value**, so a browser resolving `var(--tw-gradient-via-stops,
-  <the stops>)` uses the fallback. `resolve_vars` substitutes the literal token
-  `initial` and finds no color in it. 108 declarations on tailwindcss.com's dark
-  theme; `violet` drops from 137 occurrences to 29 and `teal` from 130 to 22.
+  ui.shadcn.com's 16 `.shimmer` declarations are the shape this limit still
+  describes: `--shimmer-image` is defined three times — `initial` in
+  Tailwind's `@property` guard, and `none` by the `.shimmer-none` and
+  `.md\:shimmer-none` utilities — and since none of the three reaches the page
+  element, `build_var_table` falls back to last-wins and takes `none` from a
+  class the shimmering element does not carry. Invariant 26 alone does not fix
+  this: it stops `initial` from winning, but `none` still does, from a rule
+  that was never a candidate to begin with. That needs the **scoped custom
+  properties are not modelled** limit below fixed first — resolving `.card`'s
+  definition only for elements under `.card` — which is `PLAN.md`'s T9.
 
-  ui.shadcn.com's 16 `.shimmer` declarations are the same shape with the second
-  limit on top: `--shimmer-image` is defined three times — `initial` in the
-  guard, and `none` by the `.shimmer-none` and `.md\:shimmer-none` utilities —
-  and since none of the three reaches the page element, `build_var_table` falls
-  back to last-wins and takes `none` from a class the shimmering element does
-  not carry. That is the **scoped custom properties are not modelled** limit
-  below, and it is what makes `background-image: var(--shimmer-image, …)` read
-  as `none`.
-
-  **Neither is a regression.** HEAD reported those colors only because the
-  truncated call left an orphaned tail that resolved separately — the same
-  accident that double-counted 204 other declarations. No hex left any palette:
-  all eight corpus sites keep identical hex sets, grounds and warnings, and the
-  effect is confined to occurrence counts, which `selector_weight` already
-  calls a hint. The fix is to read `initial` as guaranteed-invalid and take the
-  fallback; it was kept out of the balanced-paren change deliberately, so that
-  a real behaviour change would not ride inside one whose blast radius was
-  being measured.
+  **Not a regression, either way.** HEAD reported a color here only because
+  the truncated call left an orphaned tail that resolved separately — the same
+  accident invariant 25 fixed. No hex left any palette from either gap: all
+  eight corpus sites kept identical hex sets, grounds and warnings, and the
+  effect was confined to occurrence counts, which `selector_weight` already
+  calls a hint.
 
 - **Scoring is a heuristic** (`selector_weight`). Treat ordering as a hint.
 - **Framework CSS cannot be reliably auto-detected** when it is inlined in the

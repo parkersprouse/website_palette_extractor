@@ -607,6 +607,19 @@ def resolve_vars(value: str, table: dict[str, str], depth: int = 0) -> str:
     Falls back to the declared default when a name is unknown, and gives up
     after a few levels so a circular definition cannot hang the run.
 
+    **A name whose stored value is the literal keyword `initial` also falls
+    back to the default**, because `initial` on a custom property is the
+    guaranteed-invalid value — a browser resolving `var(name, fallback)` uses
+    the fallback, it does not substitute the text `initial`. Tailwind v4
+    guards every registered property this way for browsers with no
+    `@property`: `@layer properties { *, ::before, ::after, ::backdrop {
+    --tw-gradient-via-stops: initial; … } }`. Treating `initial` as an
+    ordinary stored value — which the browser cannot do either — used to
+    resolve `var(--tw-gradient-via-stops, <the real stops>)` to the inert text
+    `initial` and find no color in it: 108 declarations on tailwindcss.com's
+    dark theme, dropping `violet` from 137 occurrences to 29 and `teal` from
+    130 to 22.
+
     **Each call is delimited by counting parentheses, not by a regex** — see
     `_var_call`. The non-greedy regex this replaced stopped at the first `)`,
     which is the wrong one whenever the fallback contains a function; the fix
@@ -649,8 +662,9 @@ def resolve_vars(value: str, table: dict[str, str], depth: int = 0) -> str:
                 i += 4  # unreadable; leave it as written and carry on
                 continue
             end, name, default = call
-            if name in table:
-                out = resolve_vars(table[name], table, depth + 1)
+            stored = table.get(name)
+            if stored is not None and stored.strip().lower() != "initial":
+                out = resolve_vars(stored, table, depth + 1)
             elif default:
                 out = resolve_vars(default, table, depth + 1)
             else:

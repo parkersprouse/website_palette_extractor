@@ -160,6 +160,33 @@ class TestCss(unittest.TestCase):
         self.assertEqual(resolve_vars("var(--missing, #abcdef)", table),
                          "#abcdef")
 
+    def test_initial_custom_property_falls_back(self):
+        """`initial` on a custom property is guaranteed-invalid, not a value.
+
+        Tailwind v4 guards every registered property with
+        `--tw-gradient-via-stops: initial;` for browsers with no `@property`,
+        so a browser resolving `var(--tw-gradient-via-stops, <stops>)` uses
+        the fallback rather than substituting the text `initial`. Reading it
+        as an ordinary stored value dropped 108 declarations' worth of color
+        on tailwindcss.com's dark theme.
+        """
+        table = {"--tw-gradient-via-stops": "initial"}
+        self.assertEqual(
+            resolve_vars("var(--tw-gradient-via-stops, #7c3aed)", table),
+            "#7c3aed",
+        )
+        # No fallback and an `initial` value: nothing to substitute with.
+        self.assertEqual(resolve_vars("var(--tw-gradient-via-stops)", table), "")
+        # Case and surrounding whitespace do not matter — it is a keyword.
+        self.assertEqual(
+            resolve_vars("var(--a, #000)", {"--a": "  Initial  "}), "#000",
+        )
+        # A value that merely contains the word is not the keyword itself.
+        self.assertEqual(
+            resolve_vars("var(--a, #000)", {"--a": "initial-value"}),
+            "initial-value",
+        )
+
     def test_circular_var_terminates(self):
         out = resolve_vars("var(--a)", {"--a": "var(--b)", "--b": "var(--a)"})
         self.assertIsInstance(out, str)

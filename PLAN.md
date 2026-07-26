@@ -664,8 +664,18 @@ Decided by the owner 2026-07-26, ready to build:
 
 Accuracy gaps left by phases 1–4:
 
-- [ ] **T4** — read `initial` as guaranteed-invalid, take the fallback —
-      **highest value; moves token names on tailwindcss.com**
+- [x] **T4** — read `initial` as guaranteed-invalid, take the fallback —
+      **landed 2026-07-26**. `resolve_vars` now checks the stored value against
+      the literal keyword before substituting it. Verified against a frozen
+      `tailwindcss.com` bundle, old code against new: dark-theme `violet` and
+      `teal` each gained exactly **+108** occurrences (109/71 → 266/192 on this
+      snapshot — lower than the 137/130 recorded when T4 was written, because
+      the live site's content has moved on since; the size of the shift is what
+      matches), light theme moved by +1/+1, no ground moved, no token count
+      changed. `ground.news.har` and `fleshandbonedesign.com.har` are
+      byte-identical before and after (minus `generated`) — the shimmer trap
+      T4 warns about is ui.shadcn.com's, not on either local fixture. That
+      trap (T9's half) is untouched by this change, as predicted
 - [ ] **T5** — evaluate `calc()` in a `color-mix()` percentage (6 declarations)
 - [ ] **T6** — an at-rule nested in a style rule loses its declarations —
       **the one that grows on its own** as CSS nesting spreads
@@ -700,12 +710,12 @@ always be the stale one.
 Nothing below is a phase. Phases 1–4 were one migration with a shared
 acceptance bar; these are independent, and any of them can land alone.
 
-**Ordering, if you want one.** T4 is worth the most by a wide margin — it is
-the only open item that moves colors and token names on a real site today. T6
-is the one that gets worse on its own, because native CSS nesting is making the
-shape it mishandles more common every year. T14 is the one that unblocks
-*checking* any of the others, since a fresh clone can currently regenerate no
-fixture at all. Everything else is genuine but static.
+**Ordering, if you want one.** T4 was worth the most by a wide margin — it was
+the only open item that moved colors and token names on a real site today, and
+it landed 2026-07-26. T6 is the one that gets worse on its own, because native
+CSS nesting is making the shape it mishandles more common every year. T14 is
+the one that unblocks *checking* any of the others, since a fresh clone can
+currently regenerate no fixture at all. Everything else is genuine but static.
 
 Each task carries the level its change should be **diffed** at. That is this
 project's most expensive lesson — phase 1 passed the whole suite and the
@@ -934,9 +944,9 @@ because a "known limit" reads as a decision not to act, and these are not that
 — they are work that was deliberately kept out of a phase whose blast radius
 was being measured.
 
-### T4 — Read `initial` as the guaranteed-invalid value and take the fallback
+### T4 — Read `initial` as the guaranteed-invalid value and take the fallback — landed 2026-07-26
 
-**The highest-value open item.** Tailwind v4 guards every registered property
+**Was the highest-value open item.** Tailwind v4 guards every registered property
 with `@layer properties { *, ::before, ::after, ::backdrop {
 --tw-gradient-via-stops: initial; … } }`, for browsers with no `@property`. On
 a custom property `initial` **is** the guaranteed-invalid value, so a browser
@@ -944,13 +954,43 @@ resolving `var(--tw-gradient-via-stops, <the stops>)` uses the fallback.
 `resolve_vars` substitutes the literal token `initial` instead and finds no
 color in it.
 
-Cost today: **108 declarations on tailwindcss.com's dark theme**; `violet`
-drops from 137 occurrences to 29 and `teal` from 130 to 22. That is ranking,
-and ranking is what names tokens — so this moves names, not just counts.
+Cost at the time this task was written: **108 declarations on
+tailwindcss.com's dark theme**; `violet` drops from 137 occurrences to 29 and
+`teal` from 130 to 22. That is ranking, and ranking is what names tokens — so
+this moves names, not just counts.
 
 Kept out of the invariant-25 change deliberately, so a real behaviour change
 would not ride inside one whose blast radius was being measured. That reason
 has expired.
+
+**Landed.** Fixed at the one call site that reads a name out of the var
+table (`resolve_vars`'s `one_pass`, `palettekit/cssparse.py`): a stored value
+that is the literal keyword `initial` (trimmed, case-folded) is treated as
+absent, so the call falls through to the declared fallback exactly as a
+browser resolving a guaranteed-invalid custom property does. `initial` is
+matched only as an exact stored value — a name whose value merely *contains*
+the word (`initial-value`) is untouched, and no other CSS-wide keyword
+(`unset`, `revert`) is touched, since those are not guaranteed-invalid on a
+custom property and modelling them is inheritance — T9's job, not this one.
+
+Verified against a **frozen** `tailwindcss.com` bundle (fetched once, same
+pickle fed to old and new code, so the diff cannot be site drift): dark-theme
+`violet` and `teal` each gained exactly **+108** occurrences — 109→266 and
+71→192 on this snapshot. The site's content has moved since the numbers above
+were recorded, which is why the absolute counts differ; the **+108 shared by
+both colors** is the signature of one gradient utility's fallback being
+restored, and it matches the 108-declaration estimate exactly. The light theme
+moved by +1/+1 only, no ground moved (`#f0b100` / `#030712` unchanged), and
+total token count was unchanged in both themes (305, 317) — usages were
+restored on existing entries, no new hues invented. `ground.news.har` and
+`fleshandbonedesign.com.har` are byte-identical before and after (minus
+`generated`): neither uses this guard pattern, confirming the blast radius is
+confined to sites that do.
+
+A new unit test, `test_initial_custom_property_falls_back`, requires it to
+fail against HEAD before the fix (checked directly, per this file's own
+testing discipline) and covers the keyword-vs-substring and
+case/whitespace edges. 97 → 98 tests, `ruff` clean.
 
 **Trap:** ui.shadcn.com's 16 `.shimmer` declarations look like the same bug and
 are not — `--shimmer-image` is `initial` in the guard *and* `none` from two

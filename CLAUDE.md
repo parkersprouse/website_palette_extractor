@@ -5,6 +5,9 @@ interactive HTML report plus JSON/CSS/SCSS/TS/Tailwind. Values are **parsed
 from CSS, never sampled from pixels** — that is the whole premise, and it is
 what makes the output exact rather than approximate.
 
+**Work directly on `main`, set by the owner 2026-07-26.** No feature branches
+for task completion — commit to `main` as work lands.
+
 **Python 3.10+, verified** — the suite passes on 3.10, 3.11, 3.12, 3.13 and
 3.14, and 3.10 produces byte-identical JSON to 3.14 on the reference fixture.
 Raised from a nominal, never-tested 3.9 because `tinycss2`/`cssselect2`

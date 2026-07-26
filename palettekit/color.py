@@ -240,6 +240,26 @@ _XYZ_TO_LINEAR_SRGB = (
     (0.05563007969699366, -0.20397695888897652, 1.0569715142428786),
 )
 
+# The two above run sRGB-ward, which is all a parser ever needed. `color-mix()`
+# has to go the other way as well — a mix declared `in lab` means converting
+# both arguments *into* Lab — so these are their inverses, as given in CSS
+# Color 4's sample code. `test_lab_and_xyz_round_trip` asserts they really are
+# inverses rather than trusting the transcription.
+_LINEAR_SRGB_TO_XYZ = (
+    (0.41239079926595934, 0.357584339383878, 0.1804807884018343),
+    (0.21263900587151027, 0.715168678767756, 0.07219231536073371),
+    (0.01933081871559182, 0.11919477979462598, 0.9505321522496607),
+)
+_D65_TO_D50 = (
+    (1.0479298208405488, 0.022946793341019088, -0.05019222954313557),
+    (0.029627815688159344, 0.990434484573249, -0.01707382502938514),
+    (-0.009243058152591178, 0.015055144896577895, 0.7518742899580008),
+)
+
+
+def _apply(matrix, v) -> tuple[float, float, float]:
+    return tuple(sum(row[i] * v[i] for i in range(3)) for row in matrix)
+
 
 def lab_to_color(L: float, a: float, b: float, alpha: float = 1.0) -> Color:
     """CIE Lab (D50, as CSS defines it) to sRGB.
@@ -258,9 +278,28 @@ def lab_to_color(L: float, a: float, b: float, alpha: float = 1.0) -> Color:
     zr = fz ** 3 if fz ** 3 > _EPSILON else (116.0 * fz - 16.0) / _KAPPA
 
     xyz = (xr * _D50[0], yr * _D50[1], zr * _D50[2])
-    d65 = tuple(sum(row[i] * xyz[i] for i in range(3)) for row in _D50_TO_D65)
-    lin = tuple(sum(row[i] * d65[i] for i in range(3))
-                for row in _XYZ_TO_LINEAR_SRGB)
+    lin = _apply(_XYZ_TO_LINEAR_SRGB, _apply(_D50_TO_D65, xyz))
+    return Color(_linear_to_srgb(lin[0]), _linear_to_srgb(lin[1]),
+                 _linear_to_srgb(lin[2]), alpha)
+
+
+def color_to_lab(c: Color) -> tuple[float, float, float]:
+    """sRGB to CIE Lab (D50) — the inverse of `lab_to_color`."""
+    xyz = _apply(_D65_TO_D50, xyz_d65_of(c))
+    ratio = [xyz[i] / _D50[i] for i in range(3)]
+    f = [_cbrt(t) if t > _EPSILON else (_KAPPA * t + 16.0) / 116.0
+         for t in ratio]
+    return (116.0 * f[1] - 16.0, 500.0 * (f[0] - f[1]), 200.0 * (f[1] - f[2]))
+
+
+def xyz_d65_of(c: Color) -> tuple[float, float, float]:
+    return _apply(_LINEAR_SRGB_TO_XYZ,
+                  tuple(_srgb_to_linear(v) for v in (c.r, c.g, c.b)))
+
+
+def xyz_d65_to_color(x: float, y: float, z: float,
+                     alpha: float = 1.0) -> Color:
+    lin = _apply(_XYZ_TO_LINEAR_SRGB, (x, y, z))
     return Color(_linear_to_srgb(lin[0]), _linear_to_srgb(lin[1]),
                  _linear_to_srgb(lin[2]), alpha)
 
@@ -350,11 +389,17 @@ def _hue(tok: str) -> float | None:
         return None
 
 
-def parse_color(text: str) -> Color | None:
+def parse_color(text: str, appearance: str = "light") -> Color | None:
     """Parse a CSS color. Returns None for anything not understood.
 
     Handles hex (3/4/6/8), rgb(), rgba(), hsl(), hsla(), oklch(), oklab(),
-    and named colors, in both comma and space-separated syntax.
+    lab(), lch(), color-mix(), light-dark(), and named colors, in both comma
+    and space-separated syntax.
+
+    `appearance` is which branch a `light-dark()` resolves to, and it defaults
+    to light because that is what a browser does when the document says nothing
+    about `color-scheme`. Every caller that knows better passes the theme it is
+    building.
     """
     if not text:
         return None
@@ -385,6 +430,11 @@ def parse_color(text: str) -> Color | None:
     if not m:
         return None
     fn = m.group(1).lower()
+    if fn == "color-mix":
+        return parse_color_mix(m.group(2), appearance)
+    if fn == "light-dark":
+        return parse_light_dark(m.group(2), appearance)
+
     parts, slash_alpha = _split_args(m.group(2))
     if not parts:
         return None
@@ -483,6 +533,386 @@ def _hsl_to_rgb(h: float, s: float, l: float) -> tuple[float, float, float]:
     return ((r + m) * 255, (g + m) * 255, (b + m) * 255)
 
 
+# ------------------------------------------------------- interpolation spaces
+#
+# `color-mix(in <space>, …)` is defined as interpolation *in a named space*, so
+# mixing needs each space in both directions — the public conversions above only
+# ever ran sRGB-ward, because parsing only ever needed that. These are
+# unrounded on purpose: `Color.hsl()` and `Color.oklch()` round for display, and
+# rounding a coordinate before interpolating it puts the result off by a whole
+# 8-bit step often enough to matter when the buckets are keyed on hex.
+
+def _hsl_of(c: Color) -> tuple[float, float, float]:
+    """Hue in degrees, saturation and lightness 0-1. Unrounded."""
+    r, g, b = (v / 255.0 for v in (c.r, c.g, c.b))
+    mx, mn = max(r, g, b), min(r, g, b)
+    lightness = (mx + mn) / 2
+    if abs(mx - mn) < 1e-12:
+        return (0.0, 0.0, lightness)
+    d = mx - mn
+    s = d / (2 - mx - mn) if lightness > 0.5 else d / (mx + mn)
+    if mx == r:
+        h = ((g - b) / d) % 6
+    elif mx == g:
+        h = (b - r) / d + 2
+    else:
+        h = (r - g) / d + 4
+    return (h * 60.0, s, lightness)
+
+
+def _polar(rect: tuple[float, float, float]) -> tuple[float, float, float]:
+    """(L, a, b) to (L, C, H°) — the shape `oklch` and `lch` interpolate in."""
+    lightness, a, b = rect
+    return (lightness, math.hypot(a, b),
+            math.degrees(math.atan2(b, a)) % 360.0)
+
+
+def _rect(polar: tuple[float, float, float]) -> tuple[float, float, float]:
+    lightness, chroma, hue = polar
+    rad = math.radians(hue)
+    return (lightness, chroma * math.cos(rad), chroma * math.sin(rad))
+
+
+# name -> (to coords, from coords, hue index or None, "hue is powerless" test).
+#
+# A powerless hue is the reason the last field exists: a grey has no meaningful
+# hue angle, and interpolating its arbitrary 0° against a real hue swings the
+# result through colors neither argument contains. CSS Color 4 handles this by
+# treating the angle as *missing* and carrying the other color's forward, which
+# is what `_mix_hue` does with this predicate.
+#
+# **The thresholds differ per space because they are noise floors, not
+# perceptual ones.** A true grey does not convert to a chroma of exactly zero:
+# it lands at ~1e-5 in CIE Lab and ~4e-8 in OKLab, all of it accumulated
+# rounding through the matrices. The nearest genuinely tinted grey, `#808081`,
+# sits at 0.56 and 1.5e-3 in those same spaces. Each threshold has orders of
+# magnitude of clearance on both sides; one shared constant does not, because
+# Lab chroma runs to ~150 and OKLab chroma to ~0.4.
+_SPACES: dict[str, tuple] = {
+    "srgb": (
+        lambda c: (c.r / 255.0, c.g / 255.0, c.b / 255.0),
+        lambda v, a: Color(v[0] * 255.0, v[1] * 255.0, v[2] * 255.0, a),
+        None, None,
+    ),
+    "srgb-linear": (
+        lambda c: tuple(_srgb_to_linear(v) for v in (c.r, c.g, c.b)),
+        lambda v, a: Color(*(_linear_to_srgb(x) for x in v), a),
+        None, None,
+    ),
+    "hsl": (
+        _hsl_of,
+        lambda v, a: Color(*_hsl_to_rgb(v[0], max(0.0, min(1.0, v[1])),
+                                        max(0.0, min(1.0, v[2]))), a),
+        0, lambda v: v[1] < 1e-6,
+    ),
+    "hwb": (
+        lambda c: (_hsl_of(c)[0], min(c.r, c.g, c.b) / 255.0,
+                   1.0 - max(c.r, c.g, c.b) / 255.0),
+        lambda v, a: _hwb_to_color(v[0], v[1], v[2], a),
+        0, lambda v: v[1] + v[2] >= 1.0,
+    ),
+    "lab": (color_to_lab, lambda v, a: lab_to_color(v[0], v[1], v[2], a),
+            None, None),
+    "lch": (
+        lambda c: _polar(color_to_lab(c)),
+        lambda v, a: lab_to_color(*_rect(v), a),
+        2, lambda v: v[1] < 1e-3,
+    ),
+    "oklab": (Color.oklab, lambda v, a: oklab_to_color(v[0], v[1], v[2], a),
+              None, None),
+    "oklch": (
+        lambda c: _polar(c.oklab()),
+        lambda v, a: oklab_to_color(*_rect(v), a),
+        2, lambda v: v[1] < 1e-5,
+    ),
+    "xyz": (xyz_d65_of, lambda v, a: xyz_d65_to_color(*v, a), None, None),
+    "xyz-d65": (xyz_d65_of, lambda v, a: xyz_d65_to_color(*v, a), None, None),
+    "xyz-d50": (
+        lambda c: _apply(_D65_TO_D50, xyz_d65_of(c)),
+        lambda v, a: xyz_d65_to_color(*_apply(_D50_TO_D65, v), a),
+        None, None,
+    ),
+}
+
+
+def _hwb_to_color(h: float, w: float, b: float, alpha: float) -> Color:
+    w, b = max(0.0, w), max(0.0, b)
+    if w + b >= 1.0:
+        grey = w / (w + b) * 255.0
+        return Color(grey, grey, grey, alpha)
+    rgb = _hsl_to_rgb(h, 1.0, 0.5)
+    return Color(*((v / 255.0 * (1 - w - b) + w) * 255.0 for v in rgb), alpha)
+
+
+_HUE_METHODS = ("shorter", "longer", "increasing", "decreasing")
+
+
+def _mix_hue(h1: float, h2: float, method: str) -> tuple[float, float]:
+    """The two angles adjusted so a straight lerp travels the intended arc."""
+    h1, h2 = h1 % 360.0, h2 % 360.0
+    d = h2 - h1
+    if method == "longer":
+        if 0 < d < 180:
+            h1 += 360.0
+        elif -180 < d <= 0:
+            h2 += 360.0
+    elif method == "increasing":
+        if d < 0:
+            h2 += 360.0
+    elif method == "decreasing":
+        if d > 0:
+            h1 += 360.0
+    else:                                   # shorter, the default
+        if d > 180:
+            h1 += 360.0
+        elif d < -180:
+            h2 += 360.0
+    return h1, h2
+
+
+def mix_colors(space: str, c1: Color, p1: float, c2: Color, p2: float,
+               hue_method: str = "shorter") -> Color | None:
+    """Interpolate two colors in `space`, `p1`/`p2` already normalised to sum 1.
+
+    Alpha is **premultiplied**, per CSS Color 4: the coordinates are weighted by
+    each color's own alpha before mixing and divided back out afterwards, so a
+    translucent color contributes in proportion to how much of it there is.
+    Hue is excluded from that, having no zero to scale toward.
+
+    The zero-alpha short circuit is not an optimisation, it is accuracy. The
+    corpus shape by a wide margin is Tailwind's opacity modifier —
+    `color-mix(in oklab, <color> 25%, transparent)` — and the premultiplied
+    algebra collapses there exactly: with the other alpha zero, every weighted
+    coordinate is the first color's own, and the result is that color at
+    `alpha * p1`. Running it through OKLab and back instead lands ±1 off on
+    some channels, and buckets are keyed on the quantised hex, so that drift
+    would invent palette entries out of rounding.
+    """
+    alpha = c1.a * p1 + c2.a * p2
+    if alpha <= 0.0:
+        # Both arguments fully transparent, or both weighted to nothing. The
+        # result paints nothing; invariant 8 drops it downstream.
+        return Color(0.0, 0.0, 0.0, 0.0)
+    if c2.a <= 0.0:
+        return Color(c1.r, c1.g, c1.b, alpha)
+    if c1.a <= 0.0:
+        return Color(c2.r, c2.g, c2.b, alpha)
+
+    entry = _SPACES.get(space)
+    if entry is None:
+        return None                         # a space we do not implement
+    to_space, from_space, hue_i, powerless = entry
+
+    v1, v2 = list(to_space(c1)), list(to_space(c2))
+    if hue_i is not None:
+        # A grey's hue angle is arbitrary, so it is treated as missing and
+        # takes the other color's — otherwise mixing a grey with a blue sweeps
+        # through hues neither of them has.
+        if powerless(v1) and not powerless(v2):
+            v1[hue_i] = v2[hue_i]
+        elif powerless(v2) and not powerless(v1):
+            v2[hue_i] = v1[hue_i]
+        v1[hue_i], v2[hue_i] = _mix_hue(v1[hue_i], v2[hue_i], hue_method)
+
+    out = []
+    for i in range(3):
+        if i == hue_i:
+            out.append(v1[i] * p1 + v2[i] * p2)
+        else:
+            out.append((v1[i] * c1.a * p1 + v2[i] * c2.a * p2) / alpha)
+    return from_space(tuple(out), alpha)
+
+
+# ------------------------------------------------------ color-mix, light-dark
+
+def _balanced_end(text: str, start: int) -> int:
+    """Index just past the `)` closing the `(` at `start`, or -1.
+
+    Quotes and escapes are honoured because a function argument can hold either
+    — `url("a)b")` closes nothing.
+    """
+    depth, quote, i = 0, "", start
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == quote:
+                quote = ""
+        elif ch == "\\":
+            i += 2
+            continue
+        elif ch in "\"'":
+            quote = ch
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return -1
+
+
+def _split_top(body: str) -> list[str]:
+    """Split on the commas that separate arguments, not the ones inside them."""
+    parts, depth, quote, start, i = [], 0, "", 0, 0
+    while i < len(body):
+        ch = body[i]
+        if quote:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == quote:
+                quote = ""
+        elif ch == "\\":
+            i += 2
+            continue
+        elif ch in "\"'":
+            quote = ch
+        elif ch in "([":
+            depth += 1
+        elif ch in ")]":
+            depth = max(0, depth - 1)
+        elif ch == "," and depth == 0:
+            parts.append(body[start:i])
+            start = i + 1
+        i += 1
+    parts.append(body[start:])
+    return [p.strip() for p in parts]
+
+
+_PERCENT = re.compile(r"^([+-]?(?:\d+\.?\d*|\.\d+))%$")
+_LEADING_PERCENT = re.compile(r"^[+-]?(?:\d+\.?\d*|\.\d+)%")
+_LEADING_FUNC = re.compile(r"^[a-zA-Z][\w-]*\(")
+_LEADING_TOKEN = re.compile(r"^(?:#[0-9a-fA-F]+|[a-zA-Z][\w-]*)")
+
+
+def _split_component(text: str) -> tuple[str, str] | None:
+    """`<color> <percentage>?` split into its two halves, either possibly empty.
+
+    Written as a scan rather than a whitespace split because minified CSS omits
+    the space: ground.news ships `color-mix(in oklab,var(--ring)50%,transparent)`
+    and `var(--ring)50%` has no boundary a `split()` can find. The color token
+    is read first — a balanced function call, a hex, or an identifier — and
+    whatever trails it is the percentage.
+
+    A percentage may also be written first, which the spec allows and nothing
+    on the corpus does.
+    """
+    text = text.strip()
+    if not text:
+        return None
+    lead = _LEADING_PERCENT.match(text)
+    if lead:
+        return (text[lead.end():].strip(), lead.group(0))
+
+    if _LEADING_FUNC.match(text):
+        end = _balanced_end(text, text.index("("))
+        if end < 0:
+            return None
+    else:
+        m = _LEADING_TOKEN.match(text)
+        if not m:
+            return None
+        end = m.end()
+    return (text[:end].strip(), text[end:].strip())
+
+
+def _mix_component(text: str, appearance: str) -> tuple[Color, float | None] | None:
+    """One `color-mix()` argument: its color and its percentage, if written.
+
+    `transparent` parses here though `parse_color` refuses it. On its own it
+    tells a palette nothing and is deliberately dropped; as a mix argument it
+    is the entire mechanism by which Tailwind expresses opacity, and reading it
+    as "no color" would throw the declaration away.
+
+    A percentage this tool cannot evaluate — `calc(2 * 30%)` — makes the whole
+    mix unreadable rather than defaulting. Guessing 50% would print a color the
+    page does not paint.
+    """
+    split = _split_component(text)
+    if split is None:
+        return None
+    color_text, pct_text = split
+    if color_text.lower() == "transparent":
+        color = Color(0.0, 0.0, 0.0, 0.0)
+    else:
+        color = parse_color(color_text, appearance)
+        if color is None:
+            return None
+    if not pct_text:
+        return (color, None)
+    m = _PERCENT.match(pct_text)
+    if not m:
+        return None
+    return (color, max(0.0, min(100.0, float(m.group(1)))))
+
+
+def parse_color_mix(body: str, appearance: str) -> Color | None:
+    """`color-mix(in <space>[ <method> hue], <c1> <p1>?, <c2> <p2>?)`."""
+    parts = _split_top(body)
+    if len(parts) != 3:
+        return None
+
+    head = parts[0].split()
+    if len(head) < 2 or head[0].lower() != "in":
+        return None
+    space = head[1].lower()
+    method = "shorter"
+    if len(head) == 4 and head[3].lower() == "hue":
+        method = head[2].lower()
+        if method not in _HUE_METHODS:
+            return None
+    elif len(head) != 2:
+        return None
+    if space not in _SPACES:
+        return None
+
+    first = _mix_component(parts[1], appearance)
+    second = _mix_component(parts[2], appearance)
+    if first is None or second is None:
+        return None
+    (c1, p1), (c2, p2) = first, second
+
+    # Percentage normalisation, CSS Color 5. An omitted percentage is whatever
+    # the other one leaves over; both omitted is an even mix. When both are
+    # written and fall short of 100% the shortfall is not padded with either
+    # color — it scales the result's alpha, which is how
+    # `color-mix(in oklab, red 30%, blue 30%)` comes out translucent.
+    if p1 is None and p2 is None:
+        p1 = p2 = 50.0
+    elif p1 is None:
+        p1 = 100.0 - p2
+    elif p2 is None:
+        p2 = 100.0 - p1
+    total = p1 + p2
+    if total <= 0:
+        return None
+    alpha_scale = min(1.0, total / 100.0)
+
+    mixed = mix_colors(space, c1, p1 / total, c2, p2 / total, method)
+    if mixed is None:
+        return None
+    return Color(mixed.r, mixed.g, mixed.b, mixed.a * alpha_scale)
+
+
+def parse_light_dark(body: str, appearance: str) -> Color | None:
+    """`light-dark(A, B)` — whichever branch the palette being built selects.
+
+    Not a color function so much as a theme choice written inline, which is why
+    it belongs to this tool rather than being skipped: a theme is already the
+    unit everything here is built per. The branch is chosen by the caller's
+    `appearance`, and the palette that asked is the one that paints it.
+    """
+    parts = _split_top(body)
+    if len(parts) != 2:
+        return None
+    return parse_color(parts[1] if appearance == "dark" else parts[0],
+                       appearance)
+
+
 # Matches anything that could be a color value inside a declaration.
 # Built with %-formatting rather than an f-string on purpose: the pattern
 # contains regex quantifiers like {3,8}, which an f-string would require
@@ -497,13 +927,54 @@ COLOR_TOKEN = re.compile(
 )
 
 
-def find_colors(value: str) -> list[Color]:
-    """Pull every color out of a declaration value, in order."""
+_WHOLE_VALUE_FUNCS = re.compile(r"\b(color-mix|light-dark)\s*\(", re.I)
+
+
+def _whole_value_spans(value: str) -> list[tuple[int, int]]:
+    """Ranges covered by a top-level `color-mix()` or `light-dark()` call.
+
+    Top-level only: a `color-mix()` nested in another is evaluated by the outer
+    one's recursion, not found again here.
+    """
+    spans: list[tuple[int, int]] = []
+    for m in _WHOLE_VALUE_FUNCS.finditer(value):
+        if spans and m.start() < spans[-1][1]:
+            continue
+        end = _balanced_end(value, m.end() - 1)
+        if end > 0:
+            spans.append((m.start(), end))
+    return spans
+
+
+def find_colors(value: str, appearance: str = "light") -> list[Color]:
+    """Pull every color out of a declaration value, in order.
+
+    `color-mix()` and `light-dark()` are handled before the token scan and
+    their spans are then excluded from it, because they are functions *of*
+    colors: the two hexes in `light-dark(#fff, #18191b)` are one color, chosen
+    by the theme, and the arguments to a `color-mix()` are not colors the page
+    paints — the mix is.
+
+    **A call this tool cannot evaluate contributes nothing, rather than falling
+    back to the arguments inside it.** `color-mix(in oklch, #b4d455 calc(2 *
+    30%), transparent)` has a readable hex in it and that hex is not on the
+    page; reporting it would be exactly the plausible-looking guess this module
+    exists to refuse. It costs a handful of real declarations on the corpus and
+    is visible only at the per-declaration level — see `PLAN.md` phase 4.
+    """
     out = []
-    for m in COLOR_TOKEN.finditer(value):
-        c = parse_color(m.group(0))
-        if c is not None:
-            out.append(c)
+    spans = _whole_value_spans(value)
+    cursor = 0
+    for start, end in spans + [(len(value), len(value))]:
+        for m in COLOR_TOKEN.finditer(value, cursor, start):
+            c = parse_color(m.group(0), appearance)
+            if c is not None:
+                out.append(c)
+        if end > start:
+            c = parse_color(value[start:end], appearance)
+            if c is not None:
+                out.append(c)
+        cursor = end
     return out
 
 

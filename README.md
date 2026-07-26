@@ -77,10 +77,13 @@ from. Click any swatch to copy it.
 
 When a site ships two themes, both are extracted and the report gets a toggle.
 
-Two mechanisms are recognised: a `prefers-color-scheme` media query, and a
-class or attribute on a wrapper element — `.dark`, `.theme-dark`, `.is-light`,
-`[data-theme="dark"]`, `[data-bs-theme=dark]`. The second is the common one,
-since Tailwind's `dark:` variant compiles to it.
+Three mechanisms are recognised: a `prefers-color-scheme` media query; a class
+or attribute on a wrapper element — `.dark`, `.theme-dark`, `.is-light`,
+`[data-theme="dark"]`, `[data-bs-theme=dark]`; and a `light-dark()` value. The
+second is the common one, since Tailwind's `dark:` variant compiles to it. The
+third needs no wrapper and no media query at all — a site can declare its whole
+dark theme by writing `light-dark(#fff, #18191b)`, and each palette reads the
+branch that belongs to it.
 
 Each theme is extracted from scratch rather than tagged onto one pass, because
 a theme has its own ground — so every contrast ratio you see is measured
@@ -223,17 +226,22 @@ knowing before you read too much into a status.
 - **No JavaScript is executed.** A HAR captures styles that were injected before
   you exported, which covers most of it, but a color computed in JS and applied
   to an element property is not in any stylesheet and will not be found.
-- **The cascade is approximated, not implemented.** Ground detection follows
-  document order, and `var()` resolution takes the last definition. Specificity,
-  `@layer` and scoped custom properties are not modelled, apart from a few
-  narrow rules for theme overrides and for the page background. This is fine for
-  gathering a palette and wrong for predicting exact computed styles.
+- **The cascade is implemented where it decides an answer, and nowhere else.**
+  `importance → @layer → specificity → document order` resolves the page
+  background and what a custom property holds. It is not a cascade engine: every
+  other declaration enters the palette as written, because a palette wants every
+  color a site declares rather than the one that won on some element. Scoped
+  custom properties and `@property` are not modelled.
 - **Ranking is a heuristic.** Score reflects where a color is used, not just
   how often. Treat the order as a strong hint, not a measurement.
-- `color-mix()`, `light-dark()` and relative color syntax are not evaluated;
-  such values are skipped rather than guessed at. `lab()` and `lch()` **are**
-  read — modern Tailwind emits them after a hex fallback, so they win the
-  cascade and skipping them would drop the color entirely.
+- `color-mix()` **is** evaluated, in eleven interpolation spaces, and so is
+  `light-dark()`. A mix whose percentage is a `calc()`, or whose space is one
+  of the few not implemented, is skipped whole — the colors written inside it
+  are not reported, because the page paints the mix and not its arguments.
+  Relative color syntax (`oklch(from white l c h)`) is not evaluated.
+  `lab()` and `lch()` are read — modern Tailwind emits them after a hex
+  fallback, so they win the cascade and skipping them would drop the color
+  entirely.
 
 ## Example
 
@@ -246,7 +254,7 @@ can open `example/index.html` and see the result without running anything.
 python3 test_palettekit.py
 ```
 
-65 tests covering the color maths, cascade ordering, theme scoping, ground
+93 tests covering the color maths, cascade ordering, theme scoping, ground
 detection, the merge rules, and the status classifications. Worth running after
 any edit — several of these exist because the obvious implementation was quietly
 wrong.

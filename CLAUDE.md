@@ -20,11 +20,10 @@ done
 
 **Priority order, set by the owner (2026-07-26): accuracy and breadth first,
 slimness second.** If a dependency makes the tool read more sites correctly,
-take it. This reverses an earlier constraint, and several decisions below were
-made under the old one and should be re-read in that light — chiefly the
-`color-mix()` skip, which is now the largest remaining gap. The argument
-against modelling the cascade was the other, and it has been acted on: the
-cascade is implemented (invariant 21).
+take it. This reverses an earlier constraint, and two decisions were made under
+the old one and have both since been acted on: the cascade is implemented
+(invariant 21), and `color-mix()`/`light-dark()` are parsed rather than skipped
+(invariants 22–23). `PLAN.md`'s four phases are all landed.
 
 The core takes two dependencies, both pure Python and both by the same authors:
 **`tinycss2`** (one transitive dep, `webencodings`) tokenises, and
@@ -38,7 +37,7 @@ reached only through `images.py`, behind `--images`.
 
 ```bash
 python3 -m palettekit <target> -o out    # target: .har | URL | .html/.css path
-python3 test_palettekit.py               # 77 tests, all must pass
+python3 test_palettekit.py               # 93 tests, all must pass
 python3 -m palettekit x.har --no-themes  # collapse a two-theme site into one
 ruff check .                             # must stay clean; config in pyproject
 python3 -m palettekit x.har --list-sources   # diagnose framework noise first
@@ -93,11 +92,11 @@ sources.py   →  cssparse.py  →  extract.py  →  emit.py
 
 | File | Lines | Holds |
 |---|---:|---|
-| `color.py` | 528 | `Color`, parsing, sRGB↔OKLab, CIE Lab/LCH, contrast, hue names |
-| `cssparse.py` | 705 | `tinycss2` integration, `var()`, `selector_weight`, roles, theme scopes, `@layer` names |
+| `color.py` | 999 | `Color`, parsing, sRGB↔OKLab/CIE Lab/XYZ both ways, `color-mix()`, `light-dark()`, contrast, hue names |
+| `cssparse.py` | 745 | `tinycss2` integration, `var()`, `selector_weight`, roles, theme scopes, `@layer` names |
 | `dom.py` | 300 | `html.parser` → `ElementTree` shim, `cssselect2` matching of `<html>`/`<body>`, specificity |
 | `sources.py` | 292 | `load_har` / `load_url` / `load_paths` → `Bundle` |
-| `extract.py` | 1090 | `extract()`, the cascade, per-theme `_build`, ground, merging, statuses, naming |
+| `extract.py` | 1121 | `extract()`, the cascade, per-theme `_build`, ground, merging, statuses, naming |
 | `emit.py` | 942 | Emitters; `_HTML` is the report template |
 | `images.py` | 148 | Optional image quantisation, not part of the token set |
 | `__main__.py` | 248 | CLI |
@@ -524,6 +523,85 @@ because the obvious implementation produced plausible but wrong output.
     site needs it, is to resolve within each element and prefer the body's
     answer. Stated at `detect_ground`.
 
+22. **A `color-mix()` this tool cannot evaluate contributes nothing — not the
+    colors written inside it** (`find_colors`, phase 4). `color-mix(in oklch,
+    #b4d455 calc(2 * 30%), transparent)` has a perfectly readable hex in it and
+    the page paints a translucent version of it, not that. Before phase 4 the
+    token scan reached inside and reported the hex at full opacity; now the
+    call is evaluated as a unit or skipped as a unit. Same for `light-dark()`:
+    if the branch this theme selects will not parse, the *other* branch is not
+    a fallback, because it is a color this theme does not use. Costs six
+    declarations corpus-wide, all `calc()` percentages. Tests:
+    `test_a_mix_that_cannot_be_evaluated_yields_nothing`,
+    `test_a_branch_that_will_not_parse_yields_nothing`.
+
+    **The zero-alpha short circuit in `mix_colors` is accuracy, not speed.**
+    `color-mix(in <space>, X p%, transparent)` is Tailwind's opacity modifier
+    and ~90% of every mix on the corpus. With the other alpha at zero the
+    premultiplied algebra collapses exactly — every weighted coordinate is X's
+    own — so the answer is X at `alpha × p` with no interpolation at all.
+    Converting to OKLab and back instead lands ±1 off on some channels, and
+    invariant 7 keys buckets on the quantised `hexa`, so that drift invents
+    palette entries out of rounding. Test:
+    `test_a_mix_with_transparent_is_the_color_at_that_alpha`.
+
+    **The powerless-hue thresholds are per-space and are noise floors, not
+    perceptual ones** (`_SPACES`). A true grey converts to a chroma of ~1e-5 in
+    CIE Lab and ~4e-8 in OKLab, all of it accumulated rounding; the nearest
+    genuinely tinted grey, `#808081`, sits at 0.56 and 1.5e-3. One shared
+    epsilon cannot serve both — Lab chroma runs to ~150 and OKLab chroma to
+    ~0.4 — and getting it wrong means a grey's arbitrary hue angle is averaged
+    into every polar mix. Test: `test_a_powerless_hue_is_carried_forward`.
+
+23. **`light-dark()` is a theme mechanism, not just a value** (`_scopes_present`,
+    phase 4). A site that writes it ships both themes by definition, so one
+    `light-dark()` carrying color declares both scopes — while the declaration
+    itself stays *unscoped*, so each palette reads it once and takes a
+    different branch.
+
+    Resolving the branch without registering the scope is the tempting half of
+    this and is worse than doing nothing. developer.mozilla.org ships no
+    `prefers-color-scheme` block and no theme class worth the name; the
+    function is the entire declaration of its dark theme. Branch-only would
+    have picked light everywhere and **deleted** every dark color the tool
+    used to report. With the scope, MDN goes from one theme to two —
+    `#ffffff` / `#18191b`, both read from `html { background-color }` rather
+    than inferred. Tests: `TestLightDark`.
+
+    **"Ships both themes by definition" overreaches slightly, and the caveat is
+    worth carrying.** `light-dark()` resolves against the *used* `color-scheme`,
+    whose initial value is `normal` — light. A page that writes `light-dark()`
+    and never declares `color-scheme: light dark` renders the light branch
+    whatever the OS says, and calling that page two-themed is wrong. **This
+    tool cannot currently tell the difference**: `color-scheme` is neither a
+    custom property nor in `PROPERTY_ROLE`, so `_record` drops it and it never
+    reaches a `Declaration`. Checked against the corpus rather than assumed —
+    MDN's CSS carries nine `color-scheme` declarations including
+    `color-scheme:light dark`, so its two themes are real, and it is also the
+    only corpus site using the function at all. Reading `color-scheme` is the
+    fix if a counter-example turns up; it has not.
+
+24. **`resolve_vars` pads a substitution that would abut its neighbour**
+    (`_GLUE_LEFT`/`_GLUE_RIGHT`). CSS substitutes *tokens*; this substitutes
+    *text*, and the difference manufactures colors. Tailwind v4 minifies to
+
+    ```css
+    color-mix(in oklab,var(--color-white)var(--tw-shadow-alpha),transparent)
+    ```
+
+    — two component values needing no separator. Pasted together they give
+    `#fff100%`, which the color scanner read as the hex `#fff100`: a bright
+    yellow, 18 occurrences on ground.news, painted nowhere on it. Two correct
+    values and one missing space invent a whole color. Padded, it reads as
+    white at 100%, which is what the page paints.
+
+    This is the same hazard `tinycss2`'s serializer guards with `/**/` —
+    `:nth-child(3n/**/+1)`, above — arriving at the one place the library is
+    not doing the writing. Found by phase 4's declaration-level diff, as a
+    *removal*: the new parser could not read `#fff100%` either, and would have
+    reported nothing where it should report white. Test:
+    `test_var_substitution_does_not_glue_two_tokens_into_one`.
+
 ## Status vocabulary
 
 | Status | Means | Detected by |
@@ -540,6 +618,13 @@ because the obvious implementation produced plausible but wrong output.
 `[data-bs-theme=dark]`, …). Both are scopes over declarations. Selector-scoped
 is the common case — Tailwind's `dark:` variant compiles to it — so
 media-query-only detection would miss most modern sites.
+
+**A third arrives from a different direction: `light-dark()`** (invariant 23).
+It is not a scope over declarations but over one *value*, so it is detected in
+`_scopes_present` rather than in `theme_scope`, and the declaration carrying it
+stays unscoped — each palette reads it and takes its own branch. A site using
+it ships both themes whether or not it says so any other way, which is how
+developer.mozilla.org's dark theme is found at all.
 
 **Which of the two answered is recorded on `Declaration.theme_media`**, and it
 is a cascade input rather than bookkeeping: a selector-scoped theme states its
@@ -585,16 +670,15 @@ Tailwind config should even look like first.
   it buys accuracy — see the priority note at the top — but it should still
   earn its place against the corpus.
 - Parsers return `None` for anything not understood rather than guessing.
-  `color-mix()`, `light-dark()` and relative color syntax are skipped, not
+  Relative color syntax (`oklch(from white l c h)`) is skipped, not
   approximated.
 
-  **`color-mix()` is now the largest single category of skipped color** — 631
-  declarations on tailwindcss.com, 211 on ui.shadcn.com — and unlike a bare
-  channel triplet it is not ambiguous: it is defined interpolation in a named
-  space, and the OKLab/Lab machinery to evaluate it is already in `color.py`.
-  Skipping it was right when slimness ranked first. It is now the highest-value
-  parsing gap. `light-dark()` is two values and a theme choice, which this tool
-  already models, so it is nearly free and directly relevant.
+  **`color-mix()` and `light-dark()` are parsed** since phase 4 — 895 and 70
+  declarations on the corpus respectively — in eleven interpolation spaces:
+  `srgb`, `srgb-linear`, `hsl`, `hwb`, `lab`, `lch`, `oklab`, `oklch`, `xyz`,
+  `xyz-d50`, `xyz-d65`. A space outside that list returns `None`, as does a
+  `calc()` percentage. Invariants 22–23 are what the implementation is *not*
+  allowed to do; read them before touching `mix_colors`.
 - Comments explain *why*, especially where a line looks redundant. Most of the
   invariants above are also stated at their call site — keep them in sync.
 - Emitted token names sort naturally (`_natural`): `ink-2` before `ink-10`.
@@ -686,6 +770,22 @@ Tailwind config should even look like first.
   real rule, by a defensible mechanism, and was still not the color on the
   screen. Both wrong answers were self-consistent. What settled it each time was
   evidence from outside the parse: a screenshot of the running site.
+- **A `calc()` inside a `color-mix()` percentage is not evaluated**, so the
+  whole mix is skipped (invariant 22). Six declarations corpus-wide, all
+  `.shimmer-color-*` on ui.shadcn.com writing
+  `color-mix(in oklch, <color> calc(60 * 1%), transparent)`. Reaching them
+  needs a `calc()` evaluator, which is a separate piece of work; defaulting to
+  50% would print a color the page does not paint.
+
+- **`var(--x, <fallback containing parens>)` is cut at the first `)`.**
+  `_VAR_CALL` is a non-greedy regex, so
+  `var(--shimmer-image, linear-gradient(…))` resolves to garbage and whatever
+  colors fall out of it are meaningless. Three declarations on ui.shadcn.com.
+  This predates phase 4 and was not changed by it — it produced the same
+  garbage before and after — but it is now the largest remaining `var()`
+  defect. The fix is to match `var(` with balanced parens instead of a regex,
+  the same shape as `_balanced_end` in `color.py`.
+
 - **Scoring is a heuristic** (`selector_weight`). Treat ordering as a hint.
 - **Framework CSS cannot be reliably auto-detected** when it is inlined in the
   document, which is the common case for page builders. This is deliberately
@@ -734,7 +834,7 @@ specifically because it is **Tailwind v4** and `ground.news.har` is v3: v4's
 URL fetches run no JavaScript, so several of these land on the inferred-ground
 fallback. That is fine — the point is the *diff*, not the absolute answer.
 
-Current grounds, after phase 3 (**13 themes, 4 inferred** — unchanged by it):
+Current grounds, after phase 4 (**14 themes, 4 inferred**):
 
 | site | grounds | inferred |
 |---|---|---|
@@ -742,24 +842,39 @@ Current grounds, after phase 3 (**13 themes, 4 inferred** — unchanged by it):
 | ui.shadcn.com | `#f5f5f5` / `#262626` | both |
 | www.djangoproject.com | `#f8f8f8` / `#181d27` | — |
 | news.ycombinator.com | `#ffffff` | yes |
-| developer.mozilla.org | `#ffffff` | — |
+| developer.mozilla.org | `#ffffff` / `#18191b` | — |
 | tailwindcss.com | `#f0b100` / `#030712` | light |
 | ground.news.har | `#eeefe9` / `#262626` | — |
 | fleshandbonedesign.com.har | `#151515` | — |
+
+MDN's second theme is phase 4's, and it is the only ground any phase moved
+since phase 1. The site declares it entirely through `light-dark()`
+(invariant 23): `html { background-color: var(--color-background-page) }`,
+where that property holds `light-dark(#fff,#18191b)`. Both branches used to
+land in one palette and the dark one had nowhere to be.
 
 Django's dark theme is new — it was written `html[data-theme="dark"]`, and the
 old string masking made every one of those selectors read `[data-theme=" "]`.
 Its ground resolves by the same route its light one always did:
 `body { background: var(--sidebar-bg) }`.
 
-**The four inferred grounds are not a cascade problem and the real cascade did
-not move them.** Checked directly rather than assumed, and worth not
-re-deriving: shadcn's only `<body>`/`<html>` backgrounds are
-`color-mix(in oklab, …)` (**phase 4**); tailwindcss.com's `<html>` carries
-`dark:bg-gray-950` with no light counterpart, so there is no light page rule to
-read; and **news.ycombinator.com paints with the presentational attribute
-`bgcolor="#f6f6ef"`** while its `body` rules set no background at all — that
-one is not CSS and no phase reaches it.
+**The four inferred grounds are inferred because no page-level background is
+readable at all — not because a readable one was ranked wrongly.** Neither the
+cascade nor `color-mix()` moved any of them, and no remaining phase reaches
+them. All three reasons were enumerated from the frozen bundles rather than
+reasoned about, and are worth not re-deriving:
+
+- **ui.shadcn.com has zero page-background candidates in either theme.** Its
+  `<body>` carries `overscroll-none group/body antialiased` — no background
+  utility — and it ships no `body`/`html`/`:root` background rule.
+  ~~"Its only `<body>`/`<html>` backgrounds are `color-mix(in oklab, …)`, so
+  phase 4 will fix it"~~ was written before phase 4 and was wrong; phase 4
+  measured it and left it inferred.
+- **tailwindcss.com's `<html>`** carries `dark:bg-gray-950` with no light
+  counterpart, so there is no light page rule to read.
+- **news.ycombinator.com paints with the presentational attribute
+  `bgcolor="#f6f6ef"`** while its `body` rules set no background at all — that
+  one is not CSS.
 
 **Two things make this diff readable, and neither is the test suite.** Freeze
 each site's fetched bundle to a file first, so a site that changed overnight
@@ -786,6 +901,24 @@ them. Palettes came out byte-identical again, and the key diff is the only
 thing that showed the twelve custom properties that moved — and that all twelve
 were fixes. `git stash push palettekit/` is enough to run old against new
 without a scratch copy of the module.
+
+Phase 4's level was the **per-declaration color list** —
+`(sheet_order, order, selector, prop) → [hexa]`, per theme. Not the palette,
+which folds and merges; not the declaration, which the phase does not touch. It
+is the only level that shows *removals*, and the removals were the finding: a
+`color-mix()` that no longer parses used to leak its inner argument out as a
+full-opacity color, and one of those leaks turned out to be a bright yellow no
+site contains (invariant 24). The palettes changed on exactly the four sites
+that use either function, which is the check that the blast radius was the
+intended one.
+
+**Predict the blast radius before writing the code, at the level the change
+operates on.** Before phase 4 touched anything, every page-level background
+candidate on all eight frozen bundles was enumerated per theme and marked for
+whether either new function reached it. Exactly one did — MDN's — so "MDN
+gains a dark theme and no other ground moves" was a falsifiable prediction
+rather than a hope, and the two documented claims it contradicted got corrected
+in `PLAN.md` before they could be rationalised afterwards.
 
 **A test that passes before *and* after tests nothing about the change.** All
 eight of phase 3's new tests were run against the stashed HEAD and required to

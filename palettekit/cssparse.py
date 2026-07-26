@@ -563,11 +563,30 @@ def _record(sheet: Stylesheet, node, value: str, selector: str, source: str,
 _VAR_CALL = re.compile(r"var\(\s*(--[\w-]+)\s*(?:,\s*(.*?)\s*)?\)", re.S)
 
 
+_GLUE_LEFT = "(,/ \t\n"
+_GLUE_RIGHT = "),/; \t\n"
+
+
 def resolve_vars(value: str, table: dict[str, str], depth: int = 0) -> str:
     """Substitute var() references using a name -> value table.
 
     Falls back to the declared default when a name is unknown, and gives up
     after a few levels so a circular definition cannot hang the run.
+
+    **A substitution that would abut its neighbour is padded with a space**,
+    because CSS substitutes *tokens* and this substitutes *text*. Tailwind v4
+    minifies its opacity utilities to
+    `color-mix(in oklab,var(--color-white)var(--tw-shadow-alpha),transparent)`;
+    those are two component values with no separator needed, and pasting them
+    together yields `#fff100%` — which the color scanner then read as the hex
+    `#fff100`, a bright yellow appearing 18 times on ground.news and painted
+    nowhere. A whole invented color, from two correct values and one missing
+    space. The padded form reads as white at 100%, which is what the page
+    paints.
+
+    This is the same hazard `tinycss2`'s serializer guards with `/**/` — see
+    CLAUDE.md's note on `:nth-child(3n/**/+1)` — arriving at the one place the
+    library is not doing the writing.
     """
     if depth > 8 or "var(" not in value:
         return value
@@ -575,10 +594,21 @@ def resolve_vars(value: str, table: dict[str, str], depth: int = 0) -> str:
     def sub(m: re.Match) -> str:
         name, default = m.group(1), m.group(2)
         if name in table:
-            return resolve_vars(table[name], table, depth + 1)
-        if default:
-            return resolve_vars(default, table, depth + 1)
-        return ""
+            out = resolve_vars(table[name], table, depth + 1)
+        elif default:
+            out = resolve_vars(default, table, depth + 1)
+        else:
+            return ""
+        if not out:
+            return out
+        text = m.string
+        before = text[m.start() - 1] if m.start() else ""
+        after = text[m.end():m.end() + 1]
+        if before and before not in _GLUE_LEFT and not out[0].isspace():
+            out = " " + out
+        if after and after not in _GLUE_RIGHT and not out[-1].isspace():
+            out = out + " "
+        return out
 
     prev = None
     out = value
@@ -661,11 +691,11 @@ def selector_weight(selector: str, at_rules: tuple[str, ...]) -> float:
     return w
 
 
-def declaration_colors(decl: Declaration,
-                       table: dict[str, str]) -> list[Color]:
+def declaration_colors(decl: Declaration, table: dict[str, str],
+                       appearance: str = "light") -> list[Color]:
     """Colors in a declaration, after var() substitution."""
     value = resolve_vars(decl.value, table)
-    return find_colors(value)
+    return find_colors(value, appearance)
 
 
 def parse_inline_styles(html: str, source: str,

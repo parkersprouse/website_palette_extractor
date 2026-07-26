@@ -1,7 +1,6 @@
 # Migration plan: hand-rolled CSS reading → `tinycss2` + `cssselect2`
 
-Status: **phases 1, 2 and 3 landed 2026-07-26.** Phase 4 not started. Written
-2026-07-26.
+Status: **all four phases landed 2026-07-26.** Written 2026-07-26.
 
 ## Why
 
@@ -321,9 +320,17 @@ currently correct, and stays correct for a *different reason*:
 >
 > | inferred ground | why | reachable by |
 > |---|---|---|
-> | ui.shadcn.com, both themes | the only `<body>`/`<html>` backgrounds are `color-mix(in oklab, …)` | phase 4 |
+> | ui.shadcn.com, both themes | ~~the only `<body>`/`<html>` backgrounds are `color-mix(in oklab, …)`~~ **wrong — see below** | ~~phase 4~~ nothing |
 > | news.ycombinator.com | painted by the presentational attribute `bgcolor="#f6f6ef"`; its `body` rules set no background at all | nothing — it is not CSS |
 > | tailwindcss.com, light | `<html>` carries `dark:bg-gray-950` and no light counterpart; there is no light page-background rule to read | nothing |
+>
+> **Corrected while implementing phase 4**, by enumerating every page-level
+> background candidate per theme rather than reasoning about it: ui.shadcn.com
+> has **zero** in either theme. Its `<body>` carries `overscroll-none
+> group/body antialiased` and no background utility, and it ships no
+> `body`/`html`/`:root` background rule at all. It is the same category as the
+> two rows below it — nothing to rank, not something ranked wrongly. Phase 4
+> left it inferred, and no phase reaches it.
 >
 > Written down rather than quietly dropped, because the number is the headline
 > measure in the baseline section and someone will check it. **The honest
@@ -436,7 +443,80 @@ stated.**
 
 ---
 
-## Phase 4 — `color-mix()` and `light-dark()`
+## Phase 4 — `color-mix()` and `light-dark()` — **DONE**
+
+> **Outcome.** 93 tests (78 unchanged, none of their assertions edited, plus
+> `TestColorMix` of nine, `TestLightDark` of five, and one in `TestCss`), all
+> fifteen run against the stashed `palettekit/` and required to fail there.
+> `ruff` clean, **reference fixture byte-identical** to a fresh run of the
+> previous commit, 3.10 identical to 3.14, module / console-script / zipapp
+> JSON identical. 895 `color-mix()` declarations and 70 `light-dark()` ones now
+> resolve; six still do not, and they are named below. Cost is 5–10% on the two
+> heaviest sites (tailwindcss.com 1219 → 1340 ms, ui.shadcn.com 925 → 968 ms)
+> and nothing measurable elsewhere.
+>
+> **The headline is the theme, not the mix.** `color-mix()` moved a great many
+> colors and no ground, exactly as the rewritten criterion above predicted.
+> `light-dark()` moved developer.mozilla.org from **one theme to two**,
+> `#ffffff` / `#18191b`, both read from `html { background-color }` rather than
+> inferred. The corpus is now **14 themes, 4 inferred** against phase 3's 13/4.
+>
+> Palette-level blast radius was exactly the four sites that use either
+> function; getbootstrap.com, www.djangoproject.com, news.ycombinator.com and
+> fleshandbonedesign.com.har are byte-identical.
+>
+> **Departures from the plan as written:**
+>
+> 1. **`light-dark()` had to become a theme *mechanism*, not just a value.**
+>    The plan called it "two values selected by the active theme, which this
+>    tool already models per palette" — true, and not sufficient. MDN ships no
+>    `prefers-color-scheme` block and no theme class worth the name; the
+>    function *is* the whole declaration of its dark theme. Resolving branches
+>    without registering scopes would have picked light everywhere and
+>    **deleted** every dark color the tool used to report. `_scopes_present`
+>    now reads it as declaring both. Invariant 23.
+> 2. **A phantom color had to be fixed for "unchanged or better" to hold** —
+>    the same shape phase 1 hit with invariant 20, and found the same way.
+>    `resolve_vars` substitutes *text* where CSS substitutes *tokens*, so
+>    Tailwind v4's minified
+>    `color-mix(in oklab,var(--color-white)var(--tw-shadow-alpha),transparent)`
+>    resolved to `#fff100%` and the scanner read the hex `#fff100` — a bright
+>    yellow, 18 occurrences on ground.news, painted nowhere. Phase 4 removed it
+>    (the mix no longer parses) and would have reported *nothing* in its place;
+>    padding substitutions at token boundaries reports white at 100%, which is
+>    what the page paints. Invariant 24.
+> 3. **The zero-alpha short circuit is accuracy, not speed.** `color-mix(in
+>    oklab, X p%, transparent)` is ~90% of the corpus and the premultiplied
+>    algebra collapses there exactly to "X at alpha × p". Round-tripping
+>    through OKLab instead lands ±1 off on some channels, and buckets are keyed
+>    on the quantised hex — the drift would invent palette entries out of
+>    rounding. Invariant 22.
+> 4. **Powerless-hue thresholds are per-space and are noise floors.** A true
+>    grey converts to a chroma of ~1e-5 in CIE Lab and ~4e-8 in OKLab, all
+>    rounding; the nearest genuinely tinted grey sits at 0.56 and 1.5e-3. One
+>    shared epsilon cannot serve both, because Lab chroma runs to ~150 and
+>    OKLab chroma to ~0.4. Found by a test, not by reading.
+> 5. **`calc()` percentages are refused, and that is the whole remaining gap** —
+>    six declarations, all `.shimmer-color-*` on ui.shadcn.com writing
+>    `color-mix(in oklch, <color> calc(60 * 1%), transparent)`. Evaluating them
+>    needs a `calc()` evaluator, which is a different piece of work; guessing
+>    50% would print a color the page does not paint.
+>
+> **What the diff showed that a palette check would not.** Per-declaration
+> color lists, per theme, over frozen bundles. Beyond the phantom above it
+> found the intended removals — `color-mix(in oklab,var(--color-gray-950),white
+> 90%)` used to contribute `#030712` *and* `#ffffff`, neither of which is on the
+> page, and now contributes the one color that is, `#e1e2e4`. The palettes
+> would have shown a plausible net change either way.
+>
+> **One pre-existing defect found and deliberately not fixed.** `resolve_vars`
+> matches `var()` with a non-greedy regex, so a fallback containing parens —
+> `var(--shimmer-image, linear-gradient(…))` on ui.shadcn.com — is cut at the
+> first `)` and the rest of the value is left as garbage. It produced garbage
+> before this phase and after it, on three declarations of one site. It is a
+> `var()` bug, not a `color-mix()` one, and folding it in would bury it.
+
+### As planned
 
 Independent of 1–3; can land at any point.
 
@@ -444,12 +524,50 @@ Independent of 1–3; can land at any point.
   `color.py` already has OKLab, Lab and sRGB conversions. Support at minimum
   `srgb`, `oklab`, `oklch`, `lab`, `lch`; return `None` for spaces not
   implemented, per the existing "parse or return None, never guess" convention.
+  — **Done, and eleven spaces rather than five**: `srgb`, `srgb-linear`, `hsl`,
+  `hwb`, `lab`, `lch`, `oklab`, `oklch`, `xyz`, `xyz-d50`, `xyz-d65`. The extra
+  six cost almost nothing once the Lab inverse matrices were in — those were
+  needed for `lab`/`lch` regardless, and `xyz` is the intermediate they pass
+  through. The corpus uses only `oklab` (905 declarations) and `oklch` (14).
 - `light-dark(A, B)` — two values selected by the active theme, which this tool
-  already models per palette. Nearly free and directly relevant.
+  already models per palette. Nearly free and directly relevant. — **Done, and
+  it is a theme mechanism**, not only a value: see departure 1 above.
 
-**Acceptance:** the 631 + 211 skipped declarations resolve; corpus grounds
-unchanged (these appear in component colors, not page backgrounds, so a moved
-ground means something is wrong).
+**Acceptance — rewritten before implementing, because as first written it was
+wrong in both directions.** It said "corpus grounds unchanged … a moved ground
+means something is wrong". Measured against frozen bundles, the opposite holds:
+
+- **`color-mix()` reaches no page background on any corpus site.** Enumerating
+  every page-level `background`/`background-color` candidate per theme, across
+  all eight inputs, exactly one is touched by either function — and it is a
+  `light-dark()`. So "grounds unchanged" is right for `color-mix()` and is not
+  a check of anything, since nothing was at risk.
+- **`light-dark()` must move a ground, and that is the phase's headline.**
+  developer.mozilla.org writes `html { background-color:
+  var(--color-background-page) }` where that property resolves to
+  `light-dark(#fff,#18191b)`. Today both branches land in one palette and the
+  site reads as one theme. Reading the branch the theme selects is what makes
+  its dark ground readable at all.
+- ~~"two of the four inferred grounds are waiting on this phase"~~ — **false,
+  and stated in three places.** ui.shadcn.com has **zero** page-level
+  background candidates in either theme: its `<body>` carries no background
+  utility and it ships no `body`/`html`/`:root` background rule. It is the
+  same category as tailwindcss.com's light ground and news.ycombinator.com's
+  `bgcolor` attribute — nothing to rank, not something ranked wrongly. Phase 4
+  moves the inferred count not at all. Corrected at its three sites.
+
+So: **the reference fixture is the hard check** — `fleshandbonedesign.com.har`
+contains neither function, so every anchor must be byte-identical.
+developer.mozilla.org gains a light/dark pair, `#ffffff` / `#18191b`. **No
+other ground moves.** Palette *contents* change on the three `color-mix()`
+sites and on MDN, which is the point, and the readable diff is the one below.
+
+**Diff at the per-declaration color list** — `(sheet_order, order, selector,
+prop) → [hexa]`, per theme, old against new over frozen bundles. Not the
+palette, which folds and merges, and not the declaration, which does not change
+at all this phase. It is the only level that shows the *removals*: a
+`color-mix()` this tool cannot evaluate now yields nothing, where today its
+inner argument leaks out as a full-opacity color the page never paints.
 
 ---
 
@@ -481,6 +599,9 @@ materially wrong on real sites.
       were re-read and **kept**: the prediction that they would dissolve into
       specificity was wrong in all three cases, corrected in writing above.
       Palettes byte-identical corpus-wide; 12 custom properties resolve better
-- [ ] Phase 4 — `color-mix()`, `light-dark()` — now the only phase that can
-      move a corpus ground, and two of the four inferred ones are waiting on it
-- [ ] Re-run the breadth check in CLAUDE.md after every phase
+- [x] Phase 4 — `color-mix()`, `light-dark()` — **landed 2026-07-26**. Moved
+      one ground and it was `light-dark()`'s, not `color-mix()`'s:
+      developer.mozilla.org goes from one theme to two. The inferred count is
+      unchanged at 4, and the ~~"two of the four are waiting on this
+      phase"~~ claim was wrong — corrected in the acceptance section above
+- [x] Re-run the breadth check in CLAUDE.md after every phase

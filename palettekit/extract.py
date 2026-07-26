@@ -449,14 +449,40 @@ def _scopes_present(sheets: list[Stylesheet], table: dict[str, str]) -> set[str]
     A `prefers-color-scheme: dark` block that only flips an image filter is not
     a second palette. Building one anyway would produce a copy of the base
     theme under a label promising something different.
+
+    **`light-dark()` is the third theme mechanism** (phase 4), and unlike the
+    other two it is not a scope over declarations — it is a scope over one
+    value, written inline. A site using it ships both themes by definition, so
+    a single `light-dark()` carrying color declares both, and the declaration
+    itself stays unscoped so that it is read once per theme with a different
+    branch each time. developer.mozilla.org is the case: it writes
+    `html { background-color: var(--color-background-page) }` where the property
+    holds `light-dark(#fff,#18191b)`, and without this it reads as one theme
+    with both branches piled into it.
+
+    Strictly the function resolves against the used `color-scheme`, so a page
+    declaring neither `color-scheme: light dark` nor `dark` renders the light
+    branch always and is not two-themed. `color-scheme` is not a property this
+    tool records, so that case is not distinguished — see invariant 23.
     """
     found: set[str] = set()
     for sheet in sheets:
         for d in sheet.declarations:
-            if d.theme and d.theme not in found and _colors_of(
-                resolve_vars(d.value, table)
-            ):
+            if found >= {"light", "dark"}:
+                return found
+            if not d.theme and "var(" not in d.value \
+                    and "light-dark(" not in d.value.lower():
+                continue
+            # A `light-dark()` usually arrives through a custom property rather
+            # than written in place, so the substitution has to happen before
+            # the test — MDN's page rule reads `var(--color-background-page)`.
+            resolved = resolve_vars(d.value, table)
+            low = resolved.lower()
+            if d.theme and d.theme not in found and _colors_of(resolved, d.theme):
                 found.add(d.theme)
+            if "light-dark(" in low and (_colors_of(resolved, "light")
+                                         or _colors_of(resolved, "dark")):
+                found |= {"light", "dark"}
     return found
 
 
@@ -650,6 +676,13 @@ def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
     table = build_var_table(sheets, scope, page=page, layers=layers)
     pal = Palette(page_url=page_url, theme_id=theme_id, theme_scope=scope)
 
+    # Which branch a `light-dark()` resolves to. An unscoped build gets light,
+    # which is what a browser does when the document says nothing about
+    # `color-scheme`. That case is only reachable with `--no-themes`: a site
+    # that writes `light-dark()` at all registers both scopes in
+    # `_scopes_present`, so a themed run always has a real answer here.
+    appearance = scope or "light"
+
     # A theme's own rules shadow the unscoped ones they were written to
     # override, matched on (selector as it reads inside the theme, property).
     # That pair is exactly what an author repeats to override something for a
@@ -676,7 +709,7 @@ def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
                 continue  # this theme overrides it
             n_decls += 1
             value = resolve_vars(d.value, table)
-            colors = _colors_of(value)
+            colors = _colors_of(value, appearance)
             if not colors:
                 continue
 
@@ -749,9 +782,9 @@ def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
     return pal
 
 
-def _colors_of(value: str) -> list[Color]:
+def _colors_of(value: str, appearance: str = "light") -> list[Color]:
     from .color import find_colors
-    return find_colors(value)
+    return find_colors(value, appearance)
 
 
 def _source_stats(sheets: list[Stylesheet]) -> list[dict]:
@@ -826,9 +859,12 @@ def detect_ground(entries: list[Entry],
             candidates.append((_cascade_key(u, spec, layers), e.color, u))
 
     if candidates:
-        # `max` keeps the first of equal keys, and two colors read out of one
-        # declaration — `light-dark(#fff, #18191b)` on MDN — tie on every term
-        # there is. Which is to say the tie is broken by score, upstream.
+        # `max` keeps the first of equal keys, which matters because two colors
+        # read out of one declaration tie on every term this key has — a
+        # gradient's stops, say. It used to matter for `light-dark()` too, and
+        # since phase 4 it does not: that resolves to the one color the theme
+        # being built actually selects, which is how MDN's dark ground became
+        # readable rather than being whichever branch was written first.
         _key, color, u = max(candidates, key=lambda t: t[0])
         return color, f"{u.selector} {{ {u.prop} }} in {u.source}"
 

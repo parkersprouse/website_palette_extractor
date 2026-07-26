@@ -46,7 +46,13 @@ classifiers = [
 # which was an approximation of the CSS grammar and leaked a new bug per site:
 # escaped quotes in selectors, statement at-rules glued onto the next rule,
 # commas inside `:where()`. Phase 1 of PLAN.md.
-dependencies = ["tinycss2>=1.5"]
+#
+# cssselect2 is the same story one level up, and by the same authors: a
+# spec-compliant selector parser and matcher, pure Python, and its only
+# dependency is tinycss2. It answers "does this rule land on <html>/<body>"
+# against a real tree, replacing a regex that could only read one compound
+# selector and refused everything else. Phase 2 of PLAN.md.
+dependencies = ["tinycss2>=1.5", "cssselect2>=0.9"]
 
 [project.optional-dependencies]
 # `--images` quantises page artwork to check whether it carries color the CSS

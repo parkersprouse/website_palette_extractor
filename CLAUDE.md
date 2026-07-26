@@ -13,7 +13,8 @@ matrix rather than trusting this line:
 
 ```bash
 for v in 3.10 3.11 3.12 3.13 3.14; do
-  uv run --python "$v" --with tinycss2 --no-project python test_palettekit.py
+  uv run --python "$v" --with tinycss2 --with cssselect2 --no-project \
+    python test_palettekit.py
 done
 ```
 
@@ -23,17 +24,19 @@ take it. This reverses an earlier constraint, and several decisions below were
 made under the old one and should be re-read in that light: the `color-mix()`
 skip, and the argument against modelling the cascade.
 
-The core takes exactly one dependency, **`tinycss2`** (pure Python; one
-transitive dep, `webencodings`). It tokenises; everything above the token
-stream — theme scopes, weighting, `var()`, the page element — is still ours.
-This is phase 1 of `PLAN.md`, landed. Pillow/numpy remain optional and reached
-only through `images.py`, behind `--images`.
+The core takes two dependencies, both pure Python and both by the same authors:
+**`tinycss2`** (one transitive dep, `webencodings`) tokenises, and
+**`cssselect2`** (whose only dep is `tinycss2`) parses and matches selectors.
+Everything above them — theme scopes, weighting, `var()`, what counts as a
+theme — is still ours. These are phases 1 and 2 of `PLAN.md`, both landed.
+Pillow/numpy remain optional and reached only through `images.py`, behind
+`--images`.
 
 ## Commands
 
 ```bash
 python3 -m palettekit <target> -o out    # target: .har | URL | .html/.css path
-python3 test_palettekit.py               # 66 tests, all must pass
+python3 test_palettekit.py               # 69 tests, all must pass
 python3 -m palettekit x.har --no-themes  # collapse a two-theme site into one
 ruff check .                             # must stay clean; config in pyproject
 python3 -m palettekit x.har --list-sources   # diagnose framework noise first
@@ -53,17 +56,19 @@ plain `diff` of two runs fails whenever they straddle a second boundary — whic
 looks exactly like a real mismatch and wasted a diagnostic pass once already.
 
 Build the single-file distributable (zipapp refuses a source tree that already
-has `__main__.py`, so it needs a staging dir with a shim). **`tinycss2` and
-`webencodings` have to be vendored into the staging dir** — a zipapp carries no
-dependency metadata, so without this the `.pyz` imports fine on a machine that
-happens to have them installed and fails everywhere else:
+has `__main__.py`, so it needs a staging dir with a shim). **`tinycss2`,
+`cssselect2` and `webencodings` have to be vendored into the staging dir** — a
+zipapp carries no dependency metadata, so without this the `.pyz` imports fine
+on a machine that happens to have them installed and fails everywhere else.
+Test the built `.pyz` with a Python that has *neither* installed; on a machine
+set up for development every interpreter has them and the bug is invisible:
 
 ```bash
 rm -rf /tmp/stage && mkdir -p /tmp/stage
 cp -r palettekit /tmp/stage/
 printf 'import sys\nfrom palettekit.__main__ import main\nsys.exit(main())\n' \
   > /tmp/stage/__main__.py
-uv pip install --quiet --target /tmp/stage tinycss2
+uv pip install --quiet --target /tmp/stage tinycss2 cssselect2
 find /tmp/stage \( -name '__pycache__' -o -name '*.dist-info' \) -prune \
   -exec rm -rf {} +
 python3 -m zipapp /tmp/stage -o palettekit.pyz -p "/usr/bin/env python3"
@@ -80,14 +85,17 @@ sources.py   →  cssparse.py  →  extract.py  →  emit.py
 (HAR/URL/     (tokenise,      (score, ground,  (JSON/CSS/SCSS/
  local files)  var(), roles,   merge, name —    TS/Tailwind/HTML)
                theme scopes)   once per theme)
+                    ↑               ↑
+                  dom.py  (which rules land on <html>/<body>)
 ```
 
 | File | Lines | Holds |
 |---|---:|---|
 | `color.py` | 528 | `Color`, parsing, sRGB↔OKLab, CIE Lab/LCH, contrast, hue names |
-| `cssparse.py` | 772 | `tinycss2` integration, `var()`, `selector_weight`, roles, theme scopes, page element |
+| `cssparse.py` | 615 | `tinycss2` integration, `var()`, `selector_weight`, roles, theme scopes |
+| `dom.py` | 270 | `html.parser` → `ElementTree` shim, `cssselect2` matching of `<html>`/`<body>` |
 | `sources.py` | 292 | `load_har` / `load_url` / `load_paths` → `Bundle` |
-| `extract.py` | 916 | `extract()`, per-theme `_build`, ground, merging, statuses, naming |
+| `extract.py` | 920 | `extract()`, per-theme `_build`, ground, merging, statuses, naming |
 | `emit.py` | 942 | Emitters; `_HTML` is the report template |
 | `images.py` | 148 | Optional image quantisation, not part of the token set |
 | `__main__.py` | 248 | CLI |
@@ -252,7 +260,7 @@ because the obvious implementation produced plausible but wrong output.
     `test_names_align_across_themes`.
 
 16. **A rule is page-level if it *selects* `<html>`/`<body>`, not only if it
-    reads like it** (`page_elements`, `matches_page_element`). A utility
+    reads like it** (`dom.py`). A utility
     framework paints the page from the element: ground.news writes
     `<body class="… bg-light-primary dark:bg-dark-primary …">`, and those beat
     its own `body { background-color: var(--background) }` on specificity. Match
@@ -268,12 +276,55 @@ because the obvious implementation produced plausible but wrong output.
     alone picks the wrong one. Test:
     `test_a_later_utility_the_body_lacks_does_not_win`.
 
-    The matcher is deliberately narrow — one compound, no combinators, no
-    pseudo-class but `:root` — because anything less certain than "this paints
-    the page element" should defer to `_PAGE_SEL`. `.foo .bar` is a rule about
-    a descendant; `.foo:hover` is not a resting background. Selector escapes
-    are unescaped before comparing (`unescape_ident`, both `\:` and `\3a `),
-    since CSS writes `.dark\:bg-x` for the class HTML spells `dark:bg-x`.
+    **The matcher is `cssselect2`'s, over a real tree** (phase 2). It used to
+    be a regex over one compound selector, deliberately narrow because a
+    hand-rolled matcher cannot be trusted past `.foo.bar[x=y]` — a combinator,
+    an `:is()` or an unfamiliar pseudo-class simply failed to match and
+    deferred to `_PAGE_SEL`. `.foo .bar` and `.foo:hover` are still False, and
+    that is now a *conclusion* rather than a refusal to answer: the body is not
+    a descendant of itself, and a hover state is skipped by an explicit rule.
+    Escapes need no special handling now — `.dark\:bg-x` and `.dark\3a bg-x`
+    both reach the class HTML spells `dark:bg-x`, because the selector parser
+    unescapes them.
+
+    **Three kinds of selector are refused, and all three are rules**
+    (`dom.matches_page_element`): one carrying a pseudo-element (`body::after`
+    paints a generated box, not the page); one standing on a dynamic state
+    (`:hover`, `:focus`, `:target` — the ground is what the page looks like at
+    rest); and one that lands on **everything**.
+
+    That last is the only place a real matcher needed reining in, and it is
+    measured rather than theoretical (`dom._is_blanket`). `*` and `:root *` do
+    select `<html>`, so `cssselect2` says yes — and counting them as page-level
+    is how Tailwind v4's reset block (`* { --tw-gradient-from: #0000;
+    --tw-ring-offset-color: #fff; … }`) comes to outrank every utility that
+    sets those properties to a color the site actually paints. On the corpus
+    that moved 11 named colors on ground.news to `#0000`/`#fff`, and took
+    MDN's `light-dark()` polyfill from a light/dark pair to its dark branch
+    alone. A blanket rule reaches the unselected theme too, so it earns nothing
+    by the argument invariant 19 exists for; and the universal selector is the
+    weakest thing in CSS, so promoting it inverts the cascade. Tested by
+    matching against a nondescript element rather than by pattern-matching the
+    selector text. Test:
+    `test_a_blanket_rule_is_not_a_statement_about_the_page`.
+
+    A selector `cssselect2` cannot compile is False rather than an error, which
+    is required and not defensive: `strip_theme_scope` can emit `:is( , …)`
+    (the nesting `_not_spans` documents as unmodelled), and real CSS carries
+    pseudo-classes no library knows. Test:
+    `test_a_selector_that_will_not_compile_is_false_not_an_error`.
+
+    **The tree is a ~60-line `html.parser` shim, not `html5lib`**
+    (`dom._TreeBuilder`). It does no implied-tag insertion beyond one rule —
+    `<head>` and `<body>` are children of `<html>`, always — so misnesting
+    below the page element is preserved as written. That cannot reach an answer
+    here, because the only elements ever tested are `<html>` and `<body>` and
+    the only structure a selector can ask about them is their ancestry. The one
+    implied tag is not optional: `</head>` is routinely omitted, and without it
+    the body nests inside the head, `html > body` stops matching and
+    `head .foo` starts. `lxml` is a C extension and is ruled out by the
+    pure-Python floor. Tests: `test_messy_markup_still_places_the_page_element`,
+    `test_a_real_matcher_answers_what_the_narrow_one_refused`.
 
     `page_elements` returns `None` when it could not read the tags at all,
     which is **not** the same as an element with no classes. Treating unknown
@@ -298,9 +349,16 @@ because the obvious implementation produced plausible but wrong output.
     Everything that reads a selector list splits it — `theme_scope`,
     `strip_theme_scope`, `selector_weight`, `detect_ground`, `build_var_table`.
     The *parser* no longer needs it (`tinycss2` hands back one prelude per
-    rule), which is why `PLAN.md` phase 1 listed it for deletion; those five
-    callers are all still here, so it stays until phase 2 replaces it with
-    `cssselect2`'s own splitting.
+    rule), which is why `PLAN.md` phase 1 listed it for deletion.
+
+    **Phase 2 kept it too, deliberately.** `cssselect2` splits a list while
+    compiling it, but every one of those five callers works on selectors that
+    may not compile — `theme_scope` and `selector_weight` run over raw preludes
+    from any stylesheet on the page, and `strip_theme_scope` can *produce*
+    something invalid (`:is( , …)`, per `_not_spans`). Routing them through a
+    parser that raises would mean swallowing the error and falling back to
+    string splitting anyway, in five places instead of one. It goes when
+    phase 3 gives every selector a compiled form it can rely on.
 
     An earlier version had `theme_scope` judge the list as a whole, on the
     reasoning that "authors do not mix scoped and unscoped selectors in one
@@ -477,11 +535,15 @@ Tailwind config should even look like first.
 
   **The "all four or none" argument above assumed a stdlib-only core, which is
   no longer a constraint.** See **`PLAN.md`** — a phased migration to
-  `tinycss2` + `cssselect2` that makes the full cascade tractable. **Phase 1 —
-  the `tinycss2` swap — has landed**; phases 2 (a real DOM and selector
-  matcher), 3 (the cascade proper) and 4 (`color-mix()`) have not. Phase 3 is
-  what would let this limit be lifted, and it is also the only phase that
-  retires documented invariants — read `PLAN.md`'s list before touching it.
+  `tinycss2` + `cssselect2` that makes the full cascade tractable. **Phases 1
+  (the `tinycss2` swap) and 2 (a real DOM and selector matcher) have landed**;
+  3 (the cascade proper) and 4 (`color-mix()`) have not. Phase 3 is what would
+  let this limit be lifted, and it is also the only phase that retires
+  documented invariants — read `PLAN.md`'s list before touching it. Phase 2
+  supplies its missing half: real specificity is now one
+  `cssselect2.compile_selector_list(...)[i].specificity` call away, and it is
+  correct on the cases that defeat a hand-rolled count (`:where()` contributes
+  zero, `:is()`/`:not()` take the max of their arguments).
 
 - **A bare channel triplet used raw paints nothing, and is reported rather than
   parsed.** The shadcn/ui convention writes `--background: 0 0% 3.9%` and
@@ -569,7 +631,7 @@ specifically because it is **Tailwind v4** and `ground.news.har` is v3: v4's
 URL fetches run no JavaScript, so several of these land on the inferred-ground
 fallback. That is fine — the point is the *diff*, not the absolute answer.
 
-Current grounds, after phase 1 (**13 themes, 4 inferred**):
+Current grounds, after phase 2 (**13 themes, 4 inferred** — unchanged by it):
 
 | site | grounds | inferred |
 |---|---|---|
@@ -594,6 +656,17 @@ cannot masquerade as a regression. Then diff at the *declaration* level —
 the palette level. The phase-1 swap passed all 65 tests and the reference
 fixture on its first run while still mis-filing 124 of django's declarations;
 the declaration diff is what caught it.
+
+**Diff at the level the change operates on, and that is not always the
+declaration.** Phase 2 changed no declaration at all — it changed one boolean,
+`matches_page_element`, so the readable diff was that boolean: every distinct
+`(selector, kind)` pair the two call sites ever hand it, old implementation
+against new. That enumerates the blast radius before any palette is built. It
+found 379 flipped declarations across four sites, of which 345 were `*` and
+`:root *` and would have inverted Tailwind's and MDN's resets — and the palette
+diff at the end was byte-identical, so a palette check alone would have shipped
+it silently. Keep the old implementation alive in a scratch module for the
+length of the change; it costs nothing and it is the only way to run this.
 
 ## Migration TODO
 

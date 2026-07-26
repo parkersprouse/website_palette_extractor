@@ -1,6 +1,6 @@
 # Migration plan: hand-rolled CSS reading → `tinycss2` + `cssselect2`
 
-Status: **phase 1 landed 2026-07-26.** Phases 2–4 not started. Written
+Status: **phases 1 and 2 landed 2026-07-26.** Phases 3–4 not started. Written
 2026-07-26.
 
 ## Why
@@ -199,7 +199,59 @@ instead of hand-written code, but their tests stay — they now guard the
 
 ---
 
-## Phase 2 — real document, real selector matching
+## Phase 2 — real document, real selector matching — **DONE**
+
+> **Outcome.** All acceptance criteria met. 69 tests (65 unchanged, plus four
+> new; one deleted with its helper), `ruff` clean, reference fixture
+> byte-identical to a fresh run of the previous commit, corpus grounds and
+> palettes byte-identical across all eight inputs, module / console-script /
+> zipapp JSON identical, 3.10 identical to 3.14. The shim landed in a new
+> `dom.py`. Three departures from the plan as written:
+>
+> 1. **A fourth rule was needed: the blanket selector.** The plan anticipated
+>    `:hover` and combinators. It did not anticipate that `*` and `:root *`
+>    *genuinely select* `<html>`, so a real matcher says yes to them where the
+>    regex said no. That is the single largest behaviour change in the phase and
+>    it is a regression, not an improvement — see below. `dom._is_blanket`
+>    refuses them, tested by matching against a nondescript element rather than
+>    by pattern-matching selector text.
+> 2. **`split_selector_list` was kept again**, and this time for a reason that
+>    will not expire on its own: its five callers work on selectors that may not
+>    compile, including ones `strip_theme_scope` itself can render invalid.
+>    Retiring it needs phase 3's compiled-selector-per-rule, not `cssselect2`'s
+>    presence. Noted at invariant 17.
+> 3. **One implied end tag had to go into the shim.** `</head>` is optional and
+>    routinely omitted, and `html.parser` closes nothing on its own, so `<body>`
+>    was nesting inside `<head>` — `html > body` stopped matching and
+>    `head .foo` started. `<head>`/`<body>`/`<frameset>` are children of
+>    `<html>`, always; that is the only insertion rule, and it is exactly the
+>    one the module's claim depends on.
+>
+> **What the change uncovered.** Promoting `*` to a page match would have let
+> Tailwind v4's reset block — `* { --tw-gradient-from: #0000;
+> --tw-ring-offset-color: #fff; --tw-shadow: 0 0 #0000 }` — outrank every
+> utility that sets those properties to a real color, because invariant 19 lays
+> page-scoped definitions over the rest. Measured: 11 named colors on
+> ground.news collapsing to `#0000`/`#fff`, 26 on tailwindcss.com, and MDN's
+> `light-dark()` polyfill (`:root *`) reduced to its dark branch, taking
+> `--color-background-page` from `#ffffff`/`#18191b` to `#18191b` alone.
+>
+> **Method note.** Phase 1's lesson was "diff declarations, not palettes."
+> Phase 2 changed no declaration — it changed one boolean — so the readable
+> diff was that boolean, over every `(selector, kind)` pair its two call sites
+> hand it, old implementation against new. 379 declarations flipped; 345 were
+> the blanket selectors above. **The palette diff at the end was
+> byte-identical**, so the palette check alone would have shipped the inversion
+> silently. Generalised at the end of CLAUDE.md's breadth-check section: diff at
+> the level the change operates on.
+>
+> **What phase 3 inherits.** Real specificity is now one
+> `compile_selector_list(sel)[i].specificity` away, correct on `:where()`
+> (contributes zero) and `:is()`/`:not()` (max of arguments) — the cases that
+> defeat a hand-rolled count and the reason CLAUDE.md's "all four or none"
+> argument concluded against trying.
+
+### As planned
 
 1. Add the stdlib `html.parser` → `ElementTree` shim (verified above) in
    `sources.py` or a new `dom.py`. It must keep returning **`None` when the
@@ -213,7 +265,8 @@ instead of hand-written code, but their tests stay — they now guard the
    real one can.
 
 **Delete:** `_SIMPLE`, `_attr_matches`, `unescape_ident`, `PageElement`'s
-hand-parsed attribute handling.
+hand-parsed attribute handling. — **all four deleted**, along with `_TAG_ATTR`
+and `_IDENT_ESC`; `cssparse.py` went 772 → 615 lines.
 
 **Tests that encode the old restriction and need conscious review** — each is
 currently correct, and stays correct for a *different reason*:
@@ -223,7 +276,14 @@ currently correct, and stays correct for a *different reason*:
 - `.bg-light-primary:hover` → `False`. Decide deliberately: a real matcher can
   evaluate `:hover` structurally. Keep it false — a hover state is not the
   page's resting background — but make that an explicit rule, not a side effect.
-- `page_elements`' escape handling tests move to the shim.
+  **Kept false, explicitly.** `cssselect2` flags exactly the dynamic-state
+  pseudo-classes `never_matches` and `ElementWrapper.matches` drops them; the
+  code skips them itself so the rule is stated rather than inherited.
+- `page_elements`' escape handling tests move to the shim. **Done differently:**
+  `unescape_ident` had a unit test, and with the helper gone the guard moved
+  onto the behaviour — `.dark\:bg-dark-primary` and `.dark\3a bg-dark-primary`
+  must both reach the class the body carries, asserted in
+  `test_matches_only_what_selects_the_page_element`.
 
 **Acceptance:** as phase 1, plus `TestPageElement` and `TestUtilityGround` pass
 (with the two rewrites above documented in the commit message).
@@ -311,7 +371,8 @@ materially wrong on real sites.
 - [x] Update or retire the zipapp build for a vendored dependency —
       **updated**; `uv pip install --target` vendors `tinycss2` +
       `webencodings` into the staging dir, incantation in CLAUDE.md
-- [ ] Phase 2 — `html.parser` shim + `cssselect2` matching
+- [x] Phase 2 — `html.parser` shim + `cssselect2` matching — **landed
+      2026-07-26** as `dom.py`; grounds and palettes unchanged corpus-wide
 - [ ] Phase 3 — full cascade; retire invariants 13/16/19 in writing
 - [ ] Phase 4 — `color-mix()`, `light-dark()`
 - [ ] Re-run the breadth check in CLAUDE.md after every phase

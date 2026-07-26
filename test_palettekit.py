@@ -19,16 +19,14 @@ from palettekit.color import (
 )
 from palettekit.cssparse import (
     is_inert_shadow,
-    matches_page_element,
-    page_elements,
     parse_stylesheet,
     resolve_vars,
     selector_weight,
     split_selector_list,
     strip_theme_scope,
     theme_scope,
-    unescape_ident,
 )
+from palettekit.dom import matches_page_element, page_elements
 
 
 class TestParsing(unittest.TestCase):
@@ -482,22 +480,22 @@ class TestPageElement(unittest.TestCase):
     HTML = ('<html lang="en-US"><body id="pg" '
             'class="flex bg-light-primary dark:bg-dark-primary">')
 
-    def test_unescape_both_escape_forms(self):
-        # Tailwind emits either depending on version and what is escaped.
-        self.assertEqual(unescape_ident(r"dark\:bg-x"), "dark:bg-x")
-        self.assertEqual(unescape_ident(r"dark\3a bg-x"), "dark:bg-x")
-
     def test_matches_only_what_selects_the_page_element(self):
         els = page_elements(self.HTML)
         cases = {
             ".bg-light-primary": True,
+            # Selectors escape what HTML writes literally, and Tailwind emits
+            # either form depending on version. Both have to reach the class
+            # the body actually carries.
             r".dark\:bg-dark-primary": True,
             r".dark\3a bg-dark-primary": True,
             "body": True, "html": True, ":root": True,
             "body.flex": True, "#pg": True, '[lang="en-US"]': True,
             # The same utility sitting on some other element.
             ".bg-dark-primary": False,
-            # A descendant of the body is not the body.
+            # A descendant of the body is not the body. Still false, but now
+            # because the body is not a descendant of itself — not because
+            # combinators are refused wholesale.
             ".flex .bg-light-primary": False,
             ".flex > .x": False,
             # A hover state is not the page's resting background.
@@ -508,6 +506,46 @@ class TestPageElement(unittest.TestCase):
         for sel, want in cases.items():
             self.assertIs(matches_page_element(sel, els), want, sel)
 
+    def test_a_real_matcher_answers_what_the_narrow_one_refused(self):
+        """The lifted restriction: combinators and functional pseudo-classes.
+
+        Every one of these was False before phase 2, because a hand-rolled
+        matcher stopped at the first thing it did not model. `_PAGE_SEL` caught
+        `html body` anyway; the rest were simply lost.
+        """
+        els = page_elements(self.HTML)
+        for sel in ("html body", "html > body", "body:not(.nope)",
+                    ":is(.bg-light-primary, .zzz)", "body:where(.flex)",
+                    'html:not([data-theme="light"])'):
+            self.assertIs(matches_page_element(sel, els), True, sel)
+
+    def test_a_blanket_rule_is_not_a_statement_about_the_page(self):
+        """`*` selects `<html>` and tells you nothing — see `dom._is_blanket`.
+
+        Tailwind v4 writes its reset this way. Counting it as page-level lets
+        `* { --tw-ring-offset-color: #fff }` outrank every utility that sets
+        the same property to a color the site actually paints.
+        """
+        els = page_elements(self.HTML)
+        for sel in ("*", ":root *", "body *", "html *", "*, ::before"):
+            self.assertIs(matches_page_element(sel, els), False, sel)
+
+    def test_a_selector_that_will_not_compile_is_false_not_an_error(self):
+        """Required, not defensive — two known shapes reach here.
+
+        `strip_theme_scope` can emit `:is( , …)` for the nesting
+        `cssparse._not_spans` documents as unmodelled, and real CSS carries
+        pseudo-classes cssselect2 does not know.
+        """
+        els = page_elements(self.HTML)
+        for sel in (":is( , .x)", "body:dir(ltr)", "", "body,", "@media"):
+            self.assertIs(matches_page_element(sel, els), False, sel)
+        # tinycss2's serializer writes `:nth-child(3n+1)` as
+        # `:nth-child(3n/**/+1)` so the tokens cannot re-merge, and that string
+        # reaches selectors in the JSON. It still has to parse.
+        self.assertIs(matches_page_element("body:nth-child(3n/**/+1)", els),
+                      True)
+
     def test_unreadable_document_is_not_an_empty_one(self):
         """None means "could not tell", which is not "carries no classes"."""
         self.assertIsNone(page_elements("no html here"))
@@ -515,6 +553,22 @@ class TestPageElement(unittest.TestCase):
         # Read, and genuinely bare — the reference fixture's shape.
         bare = page_elements('<html><body style="opacity:0">')
         self.assertEqual([e.classes for e in bare], [frozenset(), frozenset()])
+
+    def test_messy_markup_still_places_the_page_element(self):
+        """No implied-tag insertion, so the void elements have to be right.
+
+        Treat `<meta>` as needing a close tag and `<body>` becomes a child of
+        `<head>` — at which point `head > *` and `.flex .x` start matching it.
+        """
+        els = page_elements(
+            '<!DOCTYPE html>\n<HTML LANG=en>\n<head><meta charset=utf-8>'
+            '<link rel=stylesheet href=a.css>\n<body class="flex">'
+            '<p>unclosed<br>text'
+        )
+        self.assertEqual([e.tag for e in els], ["html", "body"])
+        self.assertEqual(els[1].classes, frozenset({"flex"}))
+        self.assertIs(matches_page_element("html > body", els), True)
+        self.assertIs(matches_page_element("head .flex", els), False)
 
 
 UTILITY_GROUND = """<!DOCTYPE html><html><head><style>

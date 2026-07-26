@@ -14,17 +14,15 @@ from dataclasses import dataclass, field
 
 from .color import Color, contrast_ratio, delta_ok, hue_name, wcag_label
 from .cssparse import (
-    PageElement,
     Stylesheet,
     is_inert_shadow,
-    matches_page_element,
-    page_elements,
     parse_inline_styles,
     parse_stylesheet,
     resolve_vars,
     selector_weight,
     split_selector_list,
 )
+from .dom import PageElement, matches_page_element, page_elements
 from .sources import Bundle
 
 # Above this OKLab chroma a color is treated as having a real hue rather than

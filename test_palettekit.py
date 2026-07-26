@@ -529,6 +529,13 @@ class TestPageElement(unittest.TestCase):
         els = page_elements(self.HTML)
         for sel in ("*", ":root *", "body *", "html *", "*, ::before"):
             self.assertIs(matches_page_element(sel, els), False, sel)
+        # The probe element is built once at import and shared by every call.
+        # `cssselect2` caches ancestry and sibling lookups on a wrapper as it
+        # answers, so ask again — with a real match in between — and make sure
+        # nothing about it drifts. A probe that quietly starts matching turns
+        # `_is_blanket` off and restores the inversion it exists to prevent.
+        self.assertIs(matches_page_element(".bg-light-primary", els), True)
+        self.assertIs(matches_page_element("*", els), False)
 
     def test_a_selector_that_will_not_compile_is_false_not_an_error(self):
         """Required, not defensive — two known shapes reach here.

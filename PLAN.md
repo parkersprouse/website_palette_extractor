@@ -58,6 +58,14 @@ Not assumed. Probed directly (Python 3.14, clean venv):
   values — with `.dark\:bg-dark-primary` correctly matching `<body>` and
   `.bg-dark-primary` correctly not.
 
+  > **It came in at ~55 lines, not 15** — the probe had no void-element list,
+  > no end-tag matching, and no implied `</head>`, and all three turned out to
+  > be load-bearing rather than polish. Worth carrying into phase 3's estimate:
+  > the risky part of a shim like this is not the shape the probe demonstrates,
+  > it is the list of exceptions the real corpus contains. Cost is fine —
+  > 6 ms of a 170 ms run on developer.mozilla.org, 4 ms of 490 ms on the 11 MB
+  > ground.news HAR, against ~0.1 ms for the two `re.search` calls it replaced.
+
 ### Python floor — settled
 
 **Decided 2026-07-26: the floor is 3.10, and it is now verified rather than

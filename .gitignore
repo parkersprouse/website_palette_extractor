@@ -1,0 +1,5 @@
+*.har
+.DS_Store
+.remember
+.venv
+palettes

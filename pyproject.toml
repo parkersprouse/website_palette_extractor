@@ -1,0 +1,111 @@
+[build-system]
+requires = ["hatchling>=1.18"]
+build-backend = "hatchling.build"
+
+[project]
+name = "palettekit"
+description = "Read a website's color palette out of its stylesheets and render it as an interactive page."
+readme = "README.md"
+
+# Nominal floor. The syntax parses back to 3.7, but the package has only been
+# run on 3.12 — verify across the range before treating this as a promise.
+requires-python = ">=3.9"
+
+# Single source of truth is palettekit/__init__.py; see [tool.hatch.version].
+dynamic = ["version"]
+
+# TODO(migration): fill in before publishing anywhere.
+authors = [{ name = "Parker Sprouse" }]
+keywords = ["css", "color", "design-tokens", "extractor", "har", "oklab", "palette"]
+
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Software Development :: Build Tools",
+  "Topic :: Text Processing :: Markup :: HTML",
+  # TODO(migration): add a "License :: ..." classifier and a LICENSE file.
+  # Deliberately omitted rather than guessed at — see [project.license] below.
+]
+
+# The core is stdlib-only, and that is a design constraint rather than an
+# accident. Anything that would need a runtime dependency belongs behind an
+# extra, reached through a capability check that degrades with a message.
+dependencies = []
+
+[project.optional-dependencies]
+# `--images` quantises page artwork to check whether it carries color the CSS
+# does not. Without these, the flag warns and the rest of the tool still runs.
+images = ["pillow>=9", "numpy>=1.21"]
+
+# scikit-learn gives a faster, better-conditioned k-means. images.py falls back
+# to a numpy implementation when it is absent, so this is purely a speedup.
+images-fast = ["pillow>=9", "numpy>=1.21", "scikit-learn>=1.0"]
+
+dev = ["ruff>=0.4", "build>=1.0", "pytest>=7"]
+
+[project.scripts]
+palettekit = "palettekit.__main__:main"
+
+# TODO(migration): decide a licence, then uncomment and add the LICENSE file.
+# [project.license]
+# text = "MIT"
+
+[project.urls]
+Homepage = "https://github.com/parkersprouse/palettekit"
+Issues = "https://github.com/parkersprouse/palettekit/issues"
+
+[tool.hatch.version]
+path = "palettekit/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["palettekit"]
+
+[tool.hatch.build.targets.sdist]
+# Ship the tests and the reference fixture: example/ is the regression anchor
+# described in CLAUDE.md, and it is worth having in a source release.
+include = [
+  "/palettekit",
+  "/test_palettekit.py",
+  "/README.md",
+  "/CLAUDE.md",
+]
+
+[tool.ruff]
+# 88 is ruff's default and everything already fits under it. The source is
+# mostly written to ~79; tightening to 79 would flag roughly 40 existing lines,
+# so do that as a deliberate pass rather than letting the linter nag from day one.
+line-length = 88
+target-version = "py39"
+
+[tool.ruff.lint]
+select = [
+  "E",    # pycodestyle
+  "F",    # pyflakes
+  "W",    # warnings
+  "I",    # import sorting
+  "UP",   # pyupgrade
+  "B",    # bugbear
+  "C4",   # comprehensions
+  "SIM",  # simplify
+]
+ignore = [
+  # The color-science modules use short names (l, m, s, a, b, L, C, H) because
+  # they match the published OKLab formulae. Renaming them to satisfy a linter
+  # would make the maths harder to check against the reference.
+  "E741",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# The report template is one long HTML string; wrapping it would corrupt output.
+"palettekit/emit.py" = ["E501"]
+# Tests assert on long literal color values and selectors.
+"test_palettekit.py" = ["E501"]
+
+[tool.pytest.ini_options]
+# The suite is unittest-based; pytest discovers those classes natively, so both
+# `python3 test_palettekit.py` and `pytest` work. Keep it that way — the plain
+# stdlib invocation is what makes the tests runnable with no install at all.
+testpaths = ["."]
+python_files = ["test_*.py"]

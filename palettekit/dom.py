@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
+from functools import lru_cache
 from html.parser import HTMLParser
 
 import cssselect2
@@ -220,6 +221,35 @@ def _describe(node: cssselect2.ElementWrapper) -> PageElement:
         attrs={k: v for k, v in attrib.items() if k not in ("class", "id")},
         node=node,
     )
+
+
+@lru_cache(maxsize=4096)
+def selector_specificity(selector: str) -> tuple[int, int, int]:
+    """`(ids, classes, elements)` for a selector, the way a browser counts it.
+
+    `cssselect2` supplies this, which is the reason it is worth having at all
+    for the cascade: a hand-rolled count gets exactly the cases wrong that
+    modern CSS is written in. `:where()` contributes zero, so Tailwind v4's
+    `.dark\\:bg-x:where(.dark,.dark *)` is one class and not two;
+    `:is()`/`:not()`/`:has()` contribute the *maximum* of their arguments
+    rather than the sum. Counting those by pattern is how a partial cascade
+    ends up worse than plain document order.
+
+    A selector list takes the highest of its members. That is not the cascade's
+    own rule — the cascade scores whichever selector matched — so callers that
+    know which one matched should ask about that one. `extract._page_specificity`
+    does, per part.
+
+    Uncompilable is `(0, 0, 0)`: the weakest thing there is, so a selector we
+    cannot read never outranks one we can. Cached because `build_var_table`
+    asks about the same handful of selectors once per custom property, and
+    Bootstrap has thousands.
+    """
+    try:
+        compiled = cssselect2.compile_selector_list(selector)
+    except Exception:
+        return (0, 0, 0)
+    return max((sel.specificity for sel in compiled), default=(0, 0, 0))
 
 
 def matches_page_element(selector: str,

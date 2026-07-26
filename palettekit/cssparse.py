@@ -241,13 +241,8 @@ def split_selector_list(selector: str) -> list[str]:
     return [p.strip() for p in parts if p.strip()]
 
 
-def theme_scope(selector: str, at_rules: tuple[str, ...]) -> str:
-    """`light`, `dark`, or `""` for a declaration that belongs to no theme.
-
-    The selector is consulted before the media query. A rule written `.dark .x`
-    inside a `prefers-color-scheme: light` block is contradictory and
-    vanishingly rare, and the explicit class is the stronger statement of the
-    two.
+def selector_theme(selector: str) -> str:
+    """The theme this selector puts itself in, from its own markers alone.
 
     A selector list is judged per selector, and one unscoped selector makes
     the whole rule unscoped. Bootstrap 5.3 opens with
@@ -265,9 +260,8 @@ def theme_scope(selector: str, at_rules: tuple[str, ...]) -> str:
 
     A marker inside `:not()` is not a scope — see `_not_spans`.
     """
-    parts = split_selector_list(selector)
     scopes = set()
-    for part in parts:
+    for part in split_selector_list(selector):
         part = _negation_free(part)
         m = (_THEME_IS.search(part) or _THEME_CLASS.search(part)
              or _THEME_ATTR.search(part))
@@ -276,11 +270,33 @@ def theme_scope(selector: str, at_rules: tuple[str, ...]) -> str:
         found = scopes.pop()
         if found:
             return found
+    return ""
+
+
+def media_theme(at_rules: tuple[str, ...]) -> str:
+    """The theme a `prefers-color-scheme` block puts its contents in."""
     for at in at_rules:
         m = _THEME_MEDIA.search(at)
         if m:
             return m.group(1).lower()
     return ""
+
+
+def theme_scope(selector: str, at_rules: tuple[str, ...]) -> str:
+    """`light`, `dark`, or `""` for a declaration that belongs to no theme.
+
+    The selector is consulted before the media query. A rule written `.dark .x`
+    inside a `prefers-color-scheme: light` block is contradictory and
+    vanishingly rare, and the explicit class is the stronger statement of the
+    two.
+
+    Which of the two mechanisms answered is worth knowing downstream and is
+    kept on `Declaration.theme_media`: a selector-scoped theme states its scope
+    *in the selector*, so `html.dark` outranks `html` on real specificity and
+    needs no help from the cascade. A media-scoped one has no specificity
+    difference at all from what it overrides.
+    """
+    return selector_theme(selector) or media_theme(at_rules)
 
 
 def strip_theme_scope(selector: str) -> str:
@@ -326,11 +342,20 @@ class Declaration:
     order: int = 0          # position within its own stylesheet
     sheet_order: int = 0    # position of the stylesheet in the document
     theme: str = ""         # "light" / "dark" / "" for unscoped
-    # Read from the token stream rather than string-matched, and deliberately
-    # unused so far: importance is the first term of the real cascade, which
-    # `detect_ground` will need in phase 3 of PLAN.md. Capturing it here costs
-    # nothing and means the parser seam does not have to move again.
+    # The first term of the cascade, read from the token stream rather than
+    # string-matched.
     important: bool = False
+    # The second. The fully-qualified `@layer` name this declaration sits in —
+    # `a.b` for a layer nested in a layer — or "" for an unlayered declaration,
+    # which the spec ranks *above* every layer. The order the names themselves
+    # cascade in is a property of the document rather than of one sheet, so it
+    # is resolved in `extract.layer_order`.
+    layer: str = ""
+    # True when this declaration's theme came from a `prefers-color-scheme`
+    # block rather than from a marker in its own selector. That distinction is
+    # a cascade input: a selector-scoped theme outranks what it overrides on
+    # specificity, and a media-scoped one is identical to it on every term.
+    theme_media: bool = False
 
     @property
     def is_custom_property(self) -> bool:
@@ -356,6 +381,11 @@ class Stylesheet:
     sheet_order: int = 0
     declarations: list[Declaration] = field(default_factory=list)
     var_refs: set[str] = field(default_factory=set)
+    # `@layer` names in the order this sheet first mentions them, by either
+    # form. Merged across sheets into one document-wide order by
+    # `extract.layer_order` — layer names are global, and a sheet that mentions
+    # `utilities` is talking about the same layer another sheet declared.
+    layers: list[str] = field(default_factory=list)
 
 
 _COMMENT = re.compile(r"/\*.*?\*/", re.S)
@@ -390,7 +420,8 @@ def parse_stylesheet(css: str, source: str, origin: str = "",
                        sheet_order=sheet_order)
     rules = tinycss2.parse_stylesheet(css, skip_comments=True,
                                       skip_whitespace=True)
-    _walk(sheet, rules, source, at_rules=(), selector="", theme="")
+    _walk(sheet, rules, source, at_rules=(), selector="", theme="",
+          theme_media=False, layer="")
     return sheet
 
 
@@ -399,8 +430,41 @@ def _contents(node) -> list:
                                           skip_whitespace=True)
 
 
+def _qualify(parent: str, name: str) -> str:
+    """`base` inside `@layer framework` is the layer `framework.base`."""
+    return f"{parent}.{name}" if parent else name
+
+
+def _register_layer(sheet: Stylesheet, name: str) -> None:
+    """Note a layer's existence, and its ancestors' — order comes from this.
+
+    Registering `a.b` registers `a` first even if nothing named it, because a
+    sub-layer cascades *inside* its parent and the parent has to hold a
+    position for that to mean anything.
+    """
+    parts = name.split(".")
+    for i in range(1, len(parts) + 1):
+        qualified = ".".join(parts[:i])
+        if qualified not in sheet.layers:
+            sheet.layers.append(qualified)
+
+
+def _anonymous_layer(sheet: Stylesheet, parent: str) -> str:
+    """A name for `@layer { … }`, which creates a new layer every time.
+
+    Two anonymous blocks are two layers, never the same one re-opened, so the
+    name has to be unique across the whole document — hence the sheet's
+    position in it. The NUL keeps it from colliding with anything an author
+    could write, and carries no dot, so `_register_layer` still splits the
+    qualified name on parentage correctly.
+    """
+    n = sum(1 for name in sheet.layers if "\x00" in name)
+    return _qualify(parent, f"\x00{sheet.sheet_order}-{n}")
+
+
 def _walk(sheet: Stylesheet, nodes: list, source: str,
-          at_rules: tuple[str, ...], selector: str, theme: str) -> None:
+          at_rules: tuple[str, ...], selector: str, theme: str,
+          theme_media: bool, layer: str) -> None:
     """Record declarations, descending through nested rules and at-rule blocks.
 
     `selector` is the rule the current nodes sit inside, and `""` means there
@@ -408,6 +472,10 @@ def _walk(sheet: Stylesheet, nodes: list, source: str,
     a rule. Declarations there are read for their `var()` references but not
     kept, which is what the brace walker did by pushing an empty selector for
     every at-rule block.
+
+    `layer` is the enclosing `@layer`, which propagates through every other
+    kind of at-rule: a rule inside `@layer base { @media … { … } }` is in
+    `base` just as much as one written directly in it.
     """
     for node in nodes:
         if node.type == "declaration":
@@ -418,28 +486,47 @@ def _walk(sheet: Stylesheet, nodes: list, source: str,
             value = tinycss2.serialize(node.value)
             sheet.var_refs.update(_VAR_NAME.findall(value))
             if selector:
-                _record(sheet, node, value, selector, source, at_rules, theme)
+                _record(sheet, node, value, selector, source, at_rules, theme,
+                        theme_media, layer)
 
         elif node.type == "qualified-rule":
             sel = _norm(tinycss2.serialize(node.prelude))
             # Once per rule rather than per declaration: the scope is a
             # property of the rule, and the regexes are not free.
+            scoped = selector_theme(sel)
+            media = "" if scoped else media_theme(at_rules)
             _walk(sheet, _contents(node), source, at_rules, sel,
-                  theme_scope(sel, at_rules))
+                  scoped or media, bool(media), layer)
 
         elif node.type == "at-rule":
+            keyword = node.lower_at_keyword
+            prelude = _norm(tinycss2.serialize(node.prelude))
             if node.content is None:
-                continue    # a statement at-rule — `@charset`, `@import`,
-                            # `@layer a, b;`. It has no body and declares
-                            # nothing; invariant 18 is now simply this branch.
-            at = _norm(f"@{node.lower_at_keyword} "
-                       f"{tinycss2.serialize(node.prelude)}")
+                # A statement at-rule — `@charset`, `@import`, `@layer a, b;`.
+                # It has no body and declares nothing; invariant 18 is now
+                # simply this branch.
+                if keyword == "layer":
+                    # …but `@layer a, b;` declares the *order*, which is the
+                    # whole point of writing it: it reserves positions before
+                    # any of the blocks that fill them appear. Tailwind v4
+                    # opens with one.
+                    for name in prelude.split(","):
+                        if name.strip():
+                            _register_layer(sheet, _qualify(layer, name.strip()))
+                continue
+            inner = layer
+            if keyword == "layer":
+                inner = (_qualify(layer, prelude) if prelude
+                         else _anonymous_layer(sheet, layer))
+                _register_layer(sheet, inner)
+            at = _norm(f"@{keyword} {prelude}")
             _walk(sheet, _contents(node), source, at_rules + (at,),
-                  selector="", theme="")
+                  selector="", theme="", theme_media=False, layer=inner)
 
 
 def _record(sheet: Stylesheet, node, value: str, selector: str, source: str,
-            at_rules: tuple[str, ...], theme: str) -> None:
+            at_rules: tuple[str, ...], theme: str, theme_media: bool,
+            layer: str) -> None:
     prop = node.lower_name
     if not (prop.startswith("--") or prop in PROPERTY_ROLE):
         return
@@ -457,6 +544,8 @@ def _record(sheet: Stylesheet, node, value: str, selector: str, source: str,
             sheet_order=sheet.sheet_order,
             theme=theme,
             important=node.important,
+            layer=layer,
+            theme_media=theme_media,
         )
     )
 
@@ -580,7 +669,8 @@ def parse_inline_styles(html: str, source: str,
         # it that is not a separator.
         decls = tinycss2.parse_blocks_contents(m.group(2), skip_comments=True,
                                                skip_whitespace=True)
-        _walk(sheet, decls, source, at_rules=(), selector="[inline]", theme="")
+        _walk(sheet, decls, source, at_rules=(), selector="[inline]", theme="",
+              theme_media=False, layer="")
     return sheet
 
 

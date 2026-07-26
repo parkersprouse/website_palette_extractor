@@ -21,22 +21,24 @@ done
 **Priority order, set by the owner (2026-07-26): accuracy and breadth first,
 slimness second.** If a dependency makes the tool read more sites correctly,
 take it. This reverses an earlier constraint, and several decisions below were
-made under the old one and should be re-read in that light: the `color-mix()`
-skip, and the argument against modelling the cascade.
+made under the old one and should be re-read in that light — chiefly the
+`color-mix()` skip, which is now the largest remaining gap. The argument
+against modelling the cascade was the other, and it has been acted on: the
+cascade is implemented (invariant 21).
 
 The core takes two dependencies, both pure Python and both by the same authors:
 **`tinycss2`** (one transitive dep, `webencodings`) tokenises, and
-**`cssselect2`** (whose only dep is `tinycss2`) parses and matches selectors.
-Everything above them — theme scopes, weighting, `var()`, what counts as a
-theme — is still ours. These are phases 1 and 2 of `PLAN.md`, both landed.
-Pillow/numpy remain optional and reached only through `images.py`, behind
-`--images`.
+**`cssselect2`** (whose only dep is `tinycss2`) parses selectors, matches them,
+and counts their specificity. Everything above them — theme scopes, weighting,
+`var()`, what counts as a theme, the cascade itself — is still ours. These are
+phases 1, 2 and 3 of `PLAN.md`, all landed. Pillow/numpy remain optional and
+reached only through `images.py`, behind `--images`.
 
 ## Commands
 
 ```bash
 python3 -m palettekit <target> -o out    # target: .har | URL | .html/.css path
-python3 test_palettekit.py               # 69 tests, all must pass
+python3 test_palettekit.py               # 77 tests, all must pass
 python3 -m palettekit x.har --no-themes  # collapse a two-theme site into one
 ruff check .                             # must stay clean; config in pyproject
 python3 -m palettekit x.har --list-sources   # diagnose framework noise first
@@ -92,10 +94,10 @@ sources.py   →  cssparse.py  →  extract.py  →  emit.py
 | File | Lines | Holds |
 |---|---:|---|
 | `color.py` | 528 | `Color`, parsing, sRGB↔OKLab, CIE Lab/LCH, contrast, hue names |
-| `cssparse.py` | 615 | `tinycss2` integration, `var()`, `selector_weight`, roles, theme scopes |
-| `dom.py` | 270 | `html.parser` → `ElementTree` shim, `cssselect2` matching of `<html>`/`<body>` |
+| `cssparse.py` | 705 | `tinycss2` integration, `var()`, `selector_weight`, roles, theme scopes, `@layer` names |
+| `dom.py` | 300 | `html.parser` → `ElementTree` shim, `cssselect2` matching of `<html>`/`<body>`, specificity |
 | `sources.py` | 292 | `load_har` / `load_url` / `load_paths` → `Bundle` |
-| `extract.py` | 920 | `extract()`, per-theme `_build`, ground, merging, statuses, naming |
+| `extract.py` | 1090 | `extract()`, the cascade, per-theme `_build`, ground, merging, statuses, naming |
 | `emit.py` | 942 | Emitters; `_HTML` is the report template |
 | `images.py` | 148 | Optional image quantisation, not part of the token set |
 | `__main__.py` | 248 | CLI |
@@ -116,8 +118,16 @@ on what `_walk` produces:
   correction: `@supports not (hanging-punctuation:var(--tw))` is a Tailwind
   feature probe, and `--tw` is never defined or painted.
 - `!important` is read off the token stream onto `Declaration.important` and is
-  **no longer part of `value`**. Nothing uses it yet — it is the first term of
-  the real cascade, for phase 3.
+  **no longer part of `value`**. It is the first term of the cascade
+  (invariant 21).
+- **`@layer` names ride on `Declaration.layer`, but their order does not.**
+  Layers are global to the document — a sheet writing `@layer utilities {…}` is
+  filling in a layer another sheet reserved — so the name is all a single sheet
+  can know. `Stylesheet.layers` records first-mention order within the sheet
+  and `extract.layer_order` merges those into the document's one true order.
+  The statement form `@layer a, b;` is the only reason `_walk` looks at
+  statement at-rules at all (invariant 18): it declares no properties, and
+  reserves the positions.
 - `tinycss2`'s serializer inserts `/**/` where two tokens would otherwise
   re-merge, so `:nth-child(3n+1)` round-trips as `:nth-child(3n/**/+1)`. Valid
   CSS, and it reaches the selector strings in the JSON and the report. Cosmetic
@@ -136,23 +146,24 @@ because the obvious implementation produced plausible but wrong output.
    from unrounded floats prints ratios that disagree with our own hex. Test:
    `test_contrast_matches_reported_hex`.
 
-2. **Ground is resolved by cascade order, not by weight** (`detect_ground`).
-   The last `html`/`body`/`:root` background rule wins. Weighting instead picks
-   the framework's default background on any site that loads a framework before
-   its own CSS. Everything downstream depends on this — alpha flattening and
-   every contrast ratio are measured against the ground. Test:
-   `test_ground_follows_cascade_not_weight`.
+2. **Ground is resolved by the cascade, not by weight** (`detect_ground`).
+   Weighting instead picks the framework's default background on any site that
+   loads a framework before its own CSS. Everything downstream depends on this
+   — alpha flattening and every contrast ratio are measured against the ground.
+   Test: `test_ground_follows_cascade_not_weight`.
 
-   Within a themed extraction there is one addition: a declaration carrying the
-   theme's own marker outranks an unscoped one regardless of order
-   (`Usage.cascade_key`). For a selector-scoped theme that is literal
-   specificity — `html.dark` beats `html`; for a `prefers-color-scheme` block it
-   is the near-universal convention that the override is written after what it
-   overrides. On an unthemed site every declaration is unscoped and the tuple
-   degrades to the plain `(sheet, order)` pair, so the base path is untouched.
+   **This warning is about `selector_weight`, the usage heuristic — not about
+   CSS specificity, which is part of the cascade and does not conflict with
+   it.** Keep that distinction in view: it is the one a reader arriving at
+   invariant 21 will otherwise stall on.
 
-   Resolution is cascade order and nothing else. What invariant 16 changes is
-   the *candidate set*, not how the winner is picked among them.
+   Since phase 3 the resolution is the real cascade
+   (`importance → layer → specificity → order`, invariant 21) rather than
+   document order alone. What invariant 16 changes is the *candidate set*, not
+   how the winner is picked among them.
+
+   The theme addendum this invariant used to carry is now one term of that key
+   and is narrowed to the media case — see invariant 21.
 
 3. **Stylesheets are collected in document order** (`collect_sheets`,
    `_document_order`), walking `<style>` and `<link rel=stylesheet>` together
@@ -232,6 +243,14 @@ because the obvious implementation produced plausible but wrong output.
     `border-color` override still slips through. Test:
     `test_overridden_values_leave_the_theme_that_replaced_them`.
 
+    **`PLAN.md` predicted phase 3 would retire this as a specificity
+    approximation. It does not, and the prediction misread what the rule
+    does.** This decides **which colors enter the palette at all**; the cascade
+    decides **which value a property resolves to**. Those are different
+    questions, and no amount of ranking answers the first — a color the dark
+    theme never paints is still in the bucket, correctly ranked and still
+    wrong. Kept verbatim, its test untouched.
+
 14. **Themed selectors are normalised before weighting or ground-matching**
     (`strip_theme_scope`). `html.dark body` has to read as `body`, or
     `selector_weight` scores the dark theme's page rule as an ordinary class and
@@ -275,6 +294,16 @@ because the obvious implementation produced plausible but wrong output.
     *after* the `.dark\:bg-dark-primary` the body actually carries, so ordering
     alone picks the wrong one. Test:
     `test_a_later_utility_the_body_lacks_does_not_win`.
+
+    **This is a candidate-set rule, and phase 3 did not retire it** — `PLAN.md`
+    predicted "the matcher decides" and that is only half true. A real matcher
+    over-matches, which is what `_is_blanket` below exists for, so *which*
+    rules are candidates stays a decision made here. What phase 3 did retire is
+    the limit that used to sit under this: ground.news happened to declare its
+    utility after the `body` rule it beats, so document order agreed with
+    specificity **by luck**, and a site written the other way round was read
+    wrongly. Invariant 21 now decides it on specificity. Test:
+    `test_specificity_beats_a_later_rule_of_lower_specificity`.
 
     **The matcher is `cssselect2`'s, over a real tree** (phase 2). It used to
     be a regex over one compound selector, deliberately narrow because a
@@ -355,10 +384,15 @@ because the obvious implementation produced plausible but wrong output.
     compiling it, but every one of those five callers works on selectors that
     may not compile — `theme_scope` and `selector_weight` run over raw preludes
     from any stylesheet on the page, and `strip_theme_scope` can *produce*
-    something invalid (`:is( , …)`, per `_not_spans`). Routing them through a
-    parser that raises would mean swallowing the error and falling back to
-    string splitting anyway, in five places instead of one. It goes when
-    phase 3 gives every selector a compiled form it can rely on.
+    something invalid (`:is( , …)`, per `_not_spans`).
+
+    **Phase 2 predicted it would go in phase 3, "once every selector has a
+    compiled form it can rely on." It did not, and the prediction should not be
+    made a third time.** Phase 3 added a sixth caller rather than removing any:
+    `_page_specificity` has to walk the *matched* form of a selector list and
+    the *declared* form in step, part by part, because it matches on one and
+    scores on the other. Nothing compiled gives you that pairing, and either
+    form may fail to compile. It stays.
 
     An earlier version had `theme_scope` judge the list as a whole, on the
     reasoning that "authors do not mix scoped and unscoped selectors in one
@@ -379,16 +413,36 @@ because the obvious implementation produced plausible but wrong output.
     printing `color:` and `rgba(,1)` into the palette. Test:
     `test_statement_at_rules_do_not_eat_the_first_rule`.
 
+    **`@layer a, b;` is the one exception, and it declares no *property*.** It
+    declares the **order**, which is the entire reason a site writes the line —
+    it reserves positions before any block fills them, and Tailwind v4 opens
+    with one. `_walk` registers the names and still skips the rule. Test:
+    `test_a_later_layer_wins_and_the_statement_form_sets_the_order`.
+
 19. **A custom property defined on the page outranks one defined off it**
-    (`build_var_table`). `var()` resolution is otherwise last-definition-wins,
-    which is fine until a site ships a named theme nobody selected: Bootstrap's
-    own docs carry `[data-bs-theme=blue] { --bs-body-bg: var(--bs-blue) }`, and
-    last-wins reports the page background as Bootstrap blue. Definitions whose
-    selector reaches `html`/`body`/`:root` — or a class the document actually
-    carries, per invariant 16 — are laid down over the rest. Properties that
-    reach no page element still resolve among themselves, because one consumed
-    only by `.btn` is still worth reading. Test:
-    `test_a_var_defined_off_the_page_does_not_win`.
+    (`build_var_table`). A site ships a named theme nobody selected:
+    Bootstrap's own docs carry `[data-bs-theme=blue] { --bs-body-bg:
+    var(--bs-blue) }`, and last-definition-wins reports the page background as
+    Bootstrap blue. Definitions whose selector reaches `html`/`body`/`:root` —
+    or a class the document actually carries, per invariant 16 — are laid down
+    over the rest. Properties that reach no page element still resolve among
+    themselves, because one consumed only by `.btn` is still worth reading.
+    Test: `test_a_var_defined_off_the_page_does_not_win`.
+
+    **`PLAN.md` predicted this would become "a specificity consequence rather
+    than a special case." It is not, and believing so would have reintroduced
+    the exact bug it prevents:** `:root` and `[data-bs-theme=blue]` are **both
+    `(0, 1, 0)`**, so specificity cannot separate them at all, and the blue
+    block is written later. This is a **matching** rule, and matching is the
+    cascade's own first step — only declarations from rules that match the
+    element are ranked against each other, and the document's `<html>` carries
+    no `data-bs-theme=blue`.
+
+    What phase 3 changed is only how the page-reaching set resolves among
+    itself: the full key of invariant 21 instead of last-wins. **Off-page
+    definitions stay on last-wins**, deliberately — they are a fallback, and
+    ranking declarations that match *different* elements by specificity is
+    precisely the error above.
 
 20. **A theme marker inside `:not()` is a negation, not a scope**
     (`_not_spans`, `_negation_free`). `theme_scope` takes its match outside
@@ -417,6 +471,59 @@ because the obvious implementation produced plausible but wrong output.
     declaration-level diff of old parser against new, not the test suite.
     Test: `test_a_marker_inside_not_is_a_negation_not_a_scope`.
 
+21. **The cascade is `importance → layer → specificity → document order`, and
+    it is all four terms or none** (`_cascade_key`, phase 3). Two call sites
+    use it and only two: `detect_ground` and `build_var_table`.
+
+    **Not three terms, and not a subset.** `!important` is not a tiebreak
+    bolted onto the end — among important declarations the **layer order
+    reverses**, so the *earlier* layer wins and an unlayered important
+    declaration is the weakest important one there is. Importance changes what
+    the next term means. And specificity without layers is worse than plain
+    document order on any layered site, because an unlayered rule beats every
+    layered one however specific it is — which is most of Tailwind v4.
+    Tests: `TestCascade`.
+
+    **Specificity is `cssselect2`'s, not a count of our own.** `:where()`
+    contributes zero, `:is()`/`:not()`/`:has()` take the *maximum* of their
+    arguments. Counting those by pattern is how a hand-rolled cascade gets
+    Tailwind v4 backwards — `.dark\:bg-x:where(.dark,.dark *)` is one class,
+    not two.
+
+    **Matching reads the themed selector; scoring reads the declared one**
+    (`_page_specificity`). `html.dark body` has to be *seen* as the dark
+    theme's `body` rule, because that is the form this tool's theme model
+    recognises — and *scored* as `html.dark body`, because that is what a
+    browser counts. Keeping both is what makes a selector-scoped theme outrank
+    what it overrides with no rule saying so, which is half of invariant 2's
+    old theme addendum now retired into the key.
+
+    The other half survives as one term. A `prefers-color-scheme` block has no
+    specificity advantage at all over what it overrides, so it needs
+    `Usage.theme_media` to beat a later unscoped rule. **That term sits between
+    specificity and document order, and the placement is load-bearing**: a
+    media-dark `body` must beat a later unscoped `body`, and must *lose* to an
+    unscoped `.bg-x` the body carries, because a browser applying the dark
+    theme still applies the class on top of it. Above specificity it would get
+    the second backwards. Test:
+    `test_a_media_theme_loses_to_specificity_but_beats_order`.
+
+    **Ordering is still the last term and still decides most real ties.** On
+    the corpus this key changed **no ground and no candidate rank** — every
+    site's answer was already right. What it moved was twelve custom-property
+    resolutions across three sites, each one a fix, none of them a color: see
+    `PLAN.md`'s phase 3 outcome. **The value of this invariant is insurance
+    against a class of site the corpus does not contain**, which is a real
+    result and an easy one to mistake for a no-op.
+
+    **`<html>` and `<body>` candidates are ranked in one pool**, which the
+    cascade never does — it resolves each element separately, and the visible
+    page color is the body's background where it has one. Left undone
+    deliberately: instrumenting every candidate with the element it reaches
+    showed no corpus site has page-level backgrounds on both. The fix, when a
+    site needs it, is to resolve within each element and prefer the body's
+    answer. Stated at `detect_ground`.
+
 ## Status vocabulary
 
 | Status | Means | Detected by |
@@ -427,11 +534,18 @@ because the obvious implementation produced plausible but wrong output.
 
 ## Themes
 
-`theme_scope` recognises two mechanisms: a `prefers-color-scheme` media query,
-and a class or attribute on a wrapper (`.dark`, `.theme-dark`, `.is-light`,
-`[data-theme="dark"]`, `[data-bs-theme=dark]`, …). Both are scopes over
-declarations. Selector-scoped is the common case — Tailwind's `dark:` variant
-compiles to it — so media-query-only detection would miss most modern sites.
+`theme_scope` recognises two mechanisms: a `prefers-color-scheme` media query
+(`media_theme`), and a class or attribute on a wrapper (`selector_theme` —
+`.dark`, `.theme-dark`, `.is-light`, `[data-theme="dark"]`,
+`[data-bs-theme=dark]`, …). Both are scopes over declarations. Selector-scoped
+is the common case — Tailwind's `dark:` variant compiles to it — so
+media-query-only detection would miss most modern sites.
+
+**Which of the two answered is recorded on `Declaration.theme_media`**, and it
+is a cascade input rather than bookkeeping: a selector-scoped theme states its
+scope in the selector, so it outranks what it overrides on real specificity,
+while a media-scoped one is identical to it on every term there is. See
+invariant 21.
 
 `_theme_plan` decides what to build. Unscoped declarations belong to every
 theme, so each palette is those plus one scope's overrides:
@@ -501,49 +615,38 @@ Tailwind config should even look like first.
   than it used to be, so it is worth fixing — the selector is simply the
   enclosing rule's — but doing it inside phase 1 would have hidden a real
   behaviour change inside a swap that was meant to have none.
-- **The cascade is approximated, not implemented.** Ground follows document
-  order; `var()` resolution takes the last definition. Specificity, `@layer`
-  and scoped custom properties are not modelled — beyond the narrow rules in
-  invariants 2, 13 and 16, which exist because getting theme overrides or the
-  ground wrong produces a whole palette of colors the site never paints. Fine
-  for gathering a palette, wrong for predicting computed styles.
+- **The cascade is implemented where it decides an answer, and nowhere else.**
+  Phase 3 made `importance → layer → specificity → document order` real
+  (invariant 21) at the two places a wrong answer produces a palette of colors
+  the site never paints: `detect_ground` and `build_var_table`. **This is not a
+  cascade engine and does not compute anyone's styles.** What is still not
+  modelled:
 
-  Invariant 16 is a candidate-set rule, not a specificity model. It happens to
-  land right on ground.news because the utility is declared after the `body`
-  rule it beats, so document order agrees with specificity there. A site whose
-  element-matched utility came *earlier* than a competing `body` rule would
-  still be read wrongly.
+  - **Only two properties are resolved this way** — the page background, and
+    what a custom property holds. Every other declaration goes into the palette
+    as written, because the palette wants every color a site declares, not the
+    one that won on some element.
+  - **`@import url(…) layer(x)`** does not register a layer, because `@import`
+    is not followed at all (`layer_order`).
+  - **Scoped custom properties (`@property`, and inheritance down the tree)**
+    are not modelled. A property redefined on `.card` resolves globally here.
+  - **An at-rule nested inside a style rule** still loses its declarations —
+    see the limit above; it is a parse-shape gap, not a cascade one.
+  - **`<html>` and `<body>` candidates share one pool**, per invariant 21.
 
-  **Why not just compute specificity.** Specificity alone is computable from
-  the selector — it is a mechanical `(ids, classes, elements)` count. It is
-  also not enough on its own. The real cascade is
-  `importance → layer → specificity → document order`, and a single page
-  (tailwindcss.com) exercises all four: `!important` in values, `@layer` used
-  structurally by Tailwind v4, `:where()` contributing zero specificity while
-  `:is()`/`:not()`/`:has()` take the max of their arguments. Adding specificity
-  *without* layers makes layered sites worse than document order does, because
-  an unlayered rule beats any layered one regardless of how specific it is. So
-  the options are all four or none, and all four is a cascade engine — which
-  contradicts both the stated limit above and the stdlib-only core.
+  **Why all four terms and not a cheaper subset**, which is the tempting
+  mistake and was argued through before it was built: specificity alone is a
+  mechanical `(ids, classes, elements)` count, and adding it *without* layers
+  makes layered sites **worse** than document order, because an unlayered rule
+  beats every layered one however specific it is — which is all of Tailwind v4.
+  And `!important` cannot be a final tiebreak, because it *reverses* the layer
+  term. A single page (tailwindcss.com) exercises all four. So it was all four
+  or none, and "none" was the honest answer only while the core was
+  stdlib-only.
 
-  The narrow version worth considering if a real case turns up: `!important` as
-  a tiebreak *inside `detect_ground` only*, where the candidate set is already
-  small and filtered. One bit, unambiguous, testable. Not implemented — no site
-  in the corpus changes answer with it, and adding cascade machinery on
-  speculation is how invariant 2 earned its warning. The bit itself is now
-  captured on `Declaration.important`, so the experiment costs nothing to try.
-
-  **The "all four or none" argument above assumed a stdlib-only core, which is
-  no longer a constraint.** See **`PLAN.md`** — a phased migration to
-  `tinycss2` + `cssselect2` that makes the full cascade tractable. **Phases 1
-  (the `tinycss2` swap) and 2 (a real DOM and selector matcher) have landed**;
-  3 (the cascade proper) and 4 (`color-mix()`) have not. Phase 3 is what would
-  let this limit be lifted, and it is also the only phase that retires
-  documented invariants — read `PLAN.md`'s list before touching it. Phase 2
-  supplies its missing half: real specificity is now one
-  `cssselect2.compile_selector_list(...)[i].specificity` call away, and it is
-  correct on the cases that defeat a hand-rolled count (`:where()` contributes
-  zero, `:is()`/`:not()` take the max of their arguments).
+  **`selector_weight` is not this and never was.** It is a usage heuristic that
+  orders the palette, invariant 2's warning is about it, and phase 3 left it
+  untouched. Treat its ordering as a hint.
 
 - **A bare channel triplet used raw paints nothing, and is reported rather than
   parsed.** The shadcn/ui convention writes `--background: 0 0% 3.9%` and
@@ -631,7 +734,7 @@ specifically because it is **Tailwind v4** and `ground.news.har` is v3: v4's
 URL fetches run no JavaScript, so several of these land on the inferred-ground
 fallback. That is fine — the point is the *diff*, not the absolute answer.
 
-Current grounds, after phase 2 (**13 themes, 4 inferred** — unchanged by it):
+Current grounds, after phase 3 (**13 themes, 4 inferred** — unchanged by it):
 
 | site | grounds | inferred |
 |---|---|---|
@@ -648,6 +751,15 @@ Django's dark theme is new — it was written `html[data-theme="dark"]`, and the
 old string masking made every one of those selectors read `[data-theme=" "]`.
 Its ground resolves by the same route its light one always did:
 `body { background: var(--sidebar-bg) }`.
+
+**The four inferred grounds are not a cascade problem and the real cascade did
+not move them.** Checked directly rather than assumed, and worth not
+re-deriving: shadcn's only `<body>`/`<html>` backgrounds are
+`color-mix(in oklab, …)` (**phase 4**); tailwindcss.com's `<html>` carries
+`dark:bg-gray-950` with no light counterpart, so there is no light page rule to
+read; and **news.ycombinator.com paints with the presentational attribute
+`bgcolor="#f6f6ef"`** while its `body` rules set no background at all — that
+one is not CSS and no phase reaches it.
 
 **Two things make this diff readable, and neither is the test suite.** Freeze
 each site's fetched bundle to a file first, so a site that changed overnight
@@ -667,6 +779,20 @@ found 379 flipped declarations across four sites, of which 345 were `*` and
 diff at the end was byte-identical, so a palette check alone would have shipped
 it silently. Keep the old implementation alive in a scratch module for the
 length of the change; it costs nothing and it is the only way to run this.
+
+Phase 3's level was the **ordering key**: for every ground candidate and every
+custom property, old winner against new, with the key's terms printed beside
+them. Palettes came out byte-identical again, and the key diff is the only
+thing that showed the twelve custom properties that moved — and that all twelve
+were fixes. `git stash push palettekit/` is enough to run old against new
+without a scratch copy of the module.
+
+**A test that passes before *and* after tests nothing about the change.** All
+eight of phase 3's new tests were run against the stashed HEAD and required to
+fail there; one of them passed, because the fixture's document order happened
+to agree with the layer reversal it meant to check, and it was rewritten until
+it disagreed. Do this — it is cheap, and a test written from a correct
+implementation will otherwise quietly assert the thing that was already true.
 
 ## Migration TODO
 

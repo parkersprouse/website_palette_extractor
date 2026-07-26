@@ -22,7 +22,12 @@ from .cssparse import (
     selector_weight,
     split_selector_list,
 )
-from .dom import PageElement, matches_page_element, page_elements
+from .dom import (
+    PageElement,
+    matches_page_element,
+    page_elements,
+    selector_specificity,
+)
 from .sources import Bundle
 
 # Above this OKLab chroma a color is treated as having a real hue rather than
@@ -47,20 +52,15 @@ class Usage:
     inert: bool = False
     sheet_order: int = 0
     order: int = 0
-    # The selector with any theme marker removed, and whether it had one.
+    # The selector as it reads from inside its own theme, with any marker
+    # removed. What the declaration is *matched* on; `selector` is what it is
+    # scored on. See `_page_specificity` for why those differ.
     scope_selector: str = ""
-    scoped: bool = False
-
-    @property
-    def cascade_key(self) -> tuple[int, int, int]:
-        # Theme-scoped declarations outrank unscoped ones within their own
-        # theme, ahead of document order. For a selector-scoped theme that is
-        # literally true — `html.dark` outweighs `html` on specificity, whatever
-        # the order. For a `prefers-color-scheme` block it is not specificity
-        # but convention: the override block is written after what it overrides.
-        # Outside a themed extraction every declaration is unscoped, so this
-        # degrades to the plain (sheet, order) pair invariant 2 describes.
-        return (1 if self.scoped else 0, self.sheet_order, self.order)
+    # Cascade terms carried over from the declaration, so `detect_ground` can
+    # rank a usage without going back to the stylesheet.
+    important: bool = False
+    layer: str = ""
+    theme_media: bool = False
 
 
 @dataclass
@@ -259,42 +259,188 @@ def _match_href(href: str, base_url: str, css_by_url: dict):
     return None
 
 
+# ------------------------------------------------------------------- cascade
+#
+# `importance → layer → specificity → document order`, which is the real thing
+# rather than the approximation of it this used to carry. Two call sites use
+# it and only two: `detect_ground`, to pick the color the page sits on, and
+# `build_var_table`, to pick what a custom property resolves to. Everything
+# else about ordering a palette is `selector_weight`, which is a *usage
+# heuristic* and deliberately not this — invariant 2's warning is about that
+# function, and the two do not conflict.
+
+
+def layer_order(sheets: list[Stylesheet]) -> dict[str, int]:
+    """Map every `@layer` name to its position in the document's layer order.
+
+    Layers are global to the document, not to a sheet: a sheet that opens
+    `@layer utilities { … }` is filling in the layer another sheet reserved, so
+    the order is the order of *first mention* anywhere, walking sheets in
+    document order.
+
+    A sub-layer cascades inside its parent, which a flat first-mention list
+    gets wrong: `@layer a; @layer b; @layer a.x` mentions `a.x` last, but it
+    belongs between `a` and `b`. Sorting each name by the chain of its
+    ancestors' positions puts it back where it goes.
+
+    **`@import url(…) layer(x)` is not modelled**, because `@import` is not
+    followed at all — the imported sheet is fetched separately if at all, and
+    arrives with no memory of the layer it was imported into. Worth naming
+    rather than pretending: a site that layers exclusively through `@import`
+    reads here as entirely unlayered, which is the same answer this gave
+    before layers existed.
+    """
+    seen: list[str] = []
+    for sheet in sorted(sheets, key=lambda s: s.sheet_order):
+        for name in sheet.layers:
+            if name not in seen:
+                seen.append(name)
+    at = {name: i for i, name in enumerate(seen)}
+
+    def path(name: str) -> tuple[int, ...]:
+        parts = name.split(".")
+        return tuple(at.get(".".join(parts[:i + 1]), len(seen))
+                     for i in range(len(parts)))
+
+    return {name: i for i, name in enumerate(sorted(seen, key=path))}
+
+
+def _layer_rank(layer: str, layers: dict[str, int], important: bool) -> int:
+    """Where a declaration's layer puts it, as one sortable number.
+
+    Unlayered normal declarations beat every layer, and later layers beat
+    earlier ones. For `!important` declarations the spec **reverses** the whole
+    ordering: an earlier layer wins, and an unlayered important declaration is
+    the weakest important one there is. That reversal is the reason importance
+    cannot be bolted on as a simple tiebreak — it changes what the next term
+    means — and it is why this is all four terms or none.
+    """
+    n = len(layers)
+    if important:
+        return -(n + 1) if not layer else -layers.get(layer, n)
+    return n if not layer else layers.get(layer, n)
+
+
+def _cascade_key(d, specificity: tuple[int, int, int],
+                 layers: dict[str, int]) -> tuple:
+    """The full ordering key. Bigger wins.
+
+    Takes a `Declaration` or a `Usage` — both carry the same five terms, and
+    the two call sites hold one each.
+
+    The theme term sits **between specificity and document order**, and that
+    placement is the whole of what is left of invariant 2's theme addendum. A
+    `prefers-color-scheme: dark` block writing `body { background: … }` has to
+    beat a later unscoped `body` rule, because a browser applying the dark
+    theme applies it — but it has to *lose* to an unscoped `.bg-x` that the
+    body actually carries, because a browser does that too. Putting the term
+    above specificity would win the first case and get the second backwards.
+
+    Selector-scoped themes need no term at all: `html.dark` is `(0, 1, 2)`
+    against `html`'s `(0, 0, 1)`, so specificity already says it. That half of
+    the addendum is now a consequence rather than a rule.
+    """
+    return (
+        1 if d.important else 0,
+        _layer_rank(d.layer, layers, d.important),
+        specificity,
+        1 if d.theme_media else 0,
+        d.sheet_order,
+        d.order,
+    )
+
+
+def _page_specificity(selector: str, scope_selector: str,
+                      page: list[PageElement] | None
+                      ) -> tuple[int, int, int] | None:
+    """Specificity of this rule *as it applies to the page element*, or None.
+
+    None means the rule does not reach `<html>` or `<body>` at all, and that is
+    the cascade's own first step: only declarations from rules that match the
+    element are ranked against each other. It is the reason invariant 19
+    survives phase 3 rather than dissolving into specificity — `:root` and
+    `[data-bs-theme=blue]` are *both* `(0, 1, 0)`, so specificity cannot
+    separate them and never could. What separates them is that the document's
+    `<html>` carries no `data-bs-theme=blue`, so Bootstrap's blue block is not
+    a candidate for the page background in the first place.
+
+    Two selector strings go in, and the split is deliberate. Matching runs on
+    `scope_selector`, the selector as it reads from inside its own theme, since
+    that is the form this tool's theme model recognises — `html.dark body` has
+    to be seen as the dark theme's `body` rule. Specificity is read off the
+    selector **as declared**, because that is what a browser counts: the marker
+    is part of the selector and earns the theme its precedence. Keeping both is
+    what makes a selector-scoped theme outrank what it overrides without any
+    rule saying so.
+
+    `split_selector_list` yields the two lists in step — `strip_theme_scope`
+    emits one cleaned part per part it was given — so the parts pair up by
+    position. If they ever did not, the matched form is scored instead, which
+    understates the theme rather than inventing precedence for it.
+    """
+    matched = split_selector_list(scope_selector or selector)
+    declared = split_selector_list(selector)
+    if len(declared) != len(matched):
+        declared = matched
+
+    best = None
+    for raw, part in zip(declared, matched, strict=False):
+        if not (_PAGE_SEL.match(part) or matches_page_element(part, page)):
+            continue
+        spec = selector_specificity(raw)
+        if best is None or spec > best:
+            best = spec
+    return best
+
+
 def build_var_table(sheets: list[Stylesheet], theme: str = "",
-                    page: list[PageElement] | None = None) -> dict[str, str]:
+                    page: list[PageElement] | None = None,
+                    layers: dict[str, int] | None = None) -> dict[str, str]:
     """Map custom property name to its value, as seen from within one theme.
 
-    Later declarations win, which approximates the cascade well enough for
-    resolving a value to a color. It does not model specificity.
+    Two populations, and the split between them is the cascade's first step
+    rather than a heuristic. A definition whose rule **reaches the page
+    element** — `:root`, `html`, `body`, or a class the document actually
+    carries — is a candidate for what the page computes, and those are resolved
+    against each other by the full cascade. A definition that reaches no page
+    element is not a candidate at all, and the two never compete.
 
-    Theme scoping is the first exception, and it has to be: a site that
-    redefines `--bg` under `.dark` would otherwise hand the dark value to the
-    light palette, since the dark block is usually written last. Unscoped
-    definitions are laid down first, then the ones belonging to this theme on
-    top — declarations scoped to any *other* theme are not visible here at all.
+    That is invariant 19, and phase 3 does not retire it: specificity cannot
+    do this job, because `:root` and `[data-bs-theme=blue]` are both `(0, 1, 0)`
+    and the blue block is written later. Bootstrap's own docs ship exactly that
+    rule setting `--bs-body-bg: var(--bs-blue)`, and ranking the two would
+    report the page background as Bootstrap blue. They are not ranked, because
+    the document's `<html>` carries no `data-bs-theme=blue`. What phase 3
+    changed here is only how the *page-reaching* set is resolved: by
+    `importance → layer → specificity → order` instead of by last-wins.
 
-    The second is *where* a property is defined. A definition on a selector
-    that reaches the page — `:root`, `html`, `body`, or a class the document
-    actually carries — outranks one from a scope we have no reason to think is
-    active, whatever the order. Bootstrap's own docs site ships a
-    `[data-bs-theme=blue]` block setting `--bs-body-bg: var(--bs-blue)`; that
-    is a named theme nobody selected, and last-wins alone reports the page
-    background as Bootstrap blue. Definitions that reach no page element still
-    fall back to last-wins among themselves, because a property consumed only
-    by `.btn` is still worth resolving.
+    Off-page definitions stay on last-wins, deliberately. They are a fallback —
+    a property consumed only by `.btn` is still worth resolving — and ranking
+    declarations that match different elements by specificity would be
+    comparing things the cascade never compares.
+
+    Theme scoping filters both populations: declarations scoped to any *other*
+    theme are not visible here at all, and the passes run unscoped-first so
+    that the off-page fallback still prefers this theme's own definitions.
     """
-    rooted: dict[str, str] = {}
+    layers = layers or {}
+    rooted: dict[str, tuple[tuple, str]] = {}
     scoped: dict[str, str] = {}
     for pass_theme in ("", theme) if theme else ("",):
         for sheet in sheets:
             for d in sheet.declarations:
                 if not d.is_custom_property or d.theme != pass_theme:
                     continue
-                sel = d.themed_selector or d.selector
-                parts = split_selector_list(sel)
-                on_page = any(_PAGE_SEL.match(p) or matches_page_element(p, page)
-                              for p in parts)
-                (rooted if on_page else scoped)[d.prop] = d.value
-    return {**scoped, **rooted}
+                spec = _page_specificity(d.selector,
+                                         d.themed_selector or d.selector, page)
+                if spec is None:
+                    scoped[d.prop] = d.value
+                    continue
+                key = _cascade_key(d, spec, layers)
+                current = rooted.get(d.prop)
+                if current is None or key > current[0]:
+                    rooted[d.prop] = (key, d.value)
+    return {**scoped, **{k: v for k, (_key, v) in rooted.items()}}
 
 
 def _scopes_present(sheets: list[Stylesheet], table: dict[str, str]) -> set[str]:
@@ -432,14 +578,20 @@ def extract(bundle: Bundle, *, merge_threshold: float = 0.02,
         if page:
             break
 
-    scopes = (_scopes_present(sheets, build_var_table(sheets, page=page))
-              if themes else set())
+    # The document's `@layer` order, which is a property of the document rather
+    # than of any one sheet — so it is resolved once, here, and handed to both
+    # places that rank declarations.
+    layers = layer_order(sheets)
+
+    scopes = (_scopes_present(
+        sheets, build_var_table(sheets, page=page, layers=layers))
+        if themes else set())
 
     palettes = [
         _build(sheets, bundle.page_url, all_var_refs, theme_id, scope,
                merge_threshold=merge_threshold,
                third_party_weight=third_party_weight,
-               min_score=min_score, flat=flat, page=page)
+               min_score=min_score, flat=flat, page=page, layers=layers)
         for theme_id, scope in _theme_plan(scopes)
     ]
 
@@ -455,7 +607,8 @@ def extract(bundle: Bundle, *, merge_threshold: float = 0.02,
 
     pal = palettes[0]
     pal.warnings.extend(bundle.warnings)
-    triplets = _triplet_warning(sheets, build_var_table(sheets, page=page))
+    triplets = _triplet_warning(
+        sheets, build_var_table(sheets, page=page, layers=layers))
     if triplets:
         pal.warnings.append(triplets)
 
@@ -490,9 +643,11 @@ def extract(bundle: Bundle, *, merge_threshold: float = 0.02,
 def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
            theme_id: str, scope: str, *, merge_threshold: float,
            third_party_weight: float, min_score: float,
-           flat: bool, page: list[PageElement] | None = None) -> Palette:
+           flat: bool, page: list[PageElement] | None = None,
+           layers: dict[str, int] | None = None) -> Palette:
     """One theme's palette: everything scoped to it, plus everything unscoped."""
-    table = build_var_table(sheets, scope, page=page)
+    layers = layers if layers is not None else layer_order(sheets)
+    table = build_var_table(sheets, scope, page=page, layers=layers)
     pal = Palette(page_url=page_url, theme_id=theme_id, theme_scope=scope)
 
     # A theme's own rules shadow the unscoped ones they were written to
@@ -559,14 +714,15 @@ def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
                           source=d.source, weight=w, role=d.role,
                           third_party=sheet.third_party, inert=inert,
                           sheet_order=d.sheet_order, order=d.order,
-                          scope_selector=sel, scoped=bool(d.theme))
+                          scope_selector=sel, important=d.important,
+                          layer=d.layer, theme_media=d.theme_media)
                 )
                 if d.is_custom_property:
                     entry.var_names.add(d.prop)
 
     entries = list(buckets.values())
 
-    pal.ground, pal.ground_source = detect_ground(entries, page)
+    pal.ground, pal.ground_source = detect_ground(entries, page, layers)
     entries = _merge_near_duplicates(entries, merge_threshold, pal.ground)
 
     for e in entries:
@@ -620,27 +776,41 @@ _PAGE_SEL = re.compile(r"^\s*(?:html|body|:root)(?:\s+(?:html|body|:root))*\s*$"
 
 
 def detect_ground(entries: list[Entry],
-                  page: list[PageElement] | None = None) -> tuple[Color, str]:
+                  page: list[PageElement] | None = None,
+                  layers: dict[str, int] | None = None) -> tuple[Color, str]:
     """Find the color the page actually sits on.
 
-    This resolves like the cascade does: among page-level background rules,
-    the last one declared wins. Weighting instead of ordering gets this wrong
-    on any site that loads a framework stylesheet before its own, which is
-    most of them.
-
-    Within a themed extraction the one addition is that a declaration carrying
-    the theme's own marker outranks an unscoped one regardless of order — see
-    `Usage.cascade_key`.
-
-    What counts as a page-level rule is the part `page` changes. A selector
-    qualifies if it *reads* like one (`html`, `body`, `:root`) or if it
+    Two steps, both the cascade's. **Which rules are candidates**: a selector
+    qualifies if it *reads* like a page rule (`html`, `body`, `:root`) or if it
     actually selects this document's `<html>` or `<body>` — which is how a
     utility framework paints the page, with `class="bg-light-primary"` on the
-    body rather than a `body {}` rule. Order alone cannot separate those from
-    the identical-looking utilities sitting on other elements: on ground.news
-    the dark theme's `.dark\\:bg-light-primary` is declared *after* the
-    `.dark\\:bg-dark-primary` that the body actually carries.
+    body rather than a `body {}` rule (invariant 16). **Which candidate wins**:
+    `importance → layer → specificity → document order`, via `_cascade_key`.
+
+    That second step used to be document order alone, which happened to be
+    right on ground.news and was luck: `.bg-light-primary` beats `body` there
+    because it is declared later, and it beats it in a browser because a class
+    outranks an element. A site whose element-matched utility came *earlier*
+    than a competing `body` rule was read wrongly, and that documented limit is
+    what phase 3 lifts. Ordering is still the last term, and still decides
+    every tie — which on the corpus is most of them.
+
+    Matching runs on the selector as it reads inside its own theme, so
+    `html.dark body` counts as the dark theme's page rule; scoring runs on the
+    selector as declared, so the marker earns it the precedence it has in a
+    browser. See `_page_specificity`.
+
+    **Candidates matching `<html>` and ones matching `<body>` are ranked in one
+    pool**, which the cascade never does — it resolves each element separately,
+    and the page's visible color is the body's background where it has one. On
+    this corpus that distinction is unreachable: no site has page-level
+    background candidates on both elements, so grouping by element would sort
+    the same pools in the same order. Left undone rather than written blind; a
+    site where a `:root` background competes with a later `body` one is the
+    case that would need it, and the fix is to resolve within each element
+    first and prefer the body's answer.
     """
+    layers = layers or {}
     candidates = []
     for e in entries:
         if not e.color.opaque:
@@ -650,15 +820,15 @@ def detect_ground(entries: list[Entry],
                 continue
             if u.prop not in ("background", "background-color"):
                 continue
-            # Matched on the selector as it reads inside its own theme, so
-            # `html.dark body` counts as the dark theme's page rule.
-            parts = split_selector_list(u.scope_selector or u.selector)
-            if not any(_PAGE_SEL.match(p) or matches_page_element(p, page)
-                       for p in parts):
+            spec = _page_specificity(u.selector, u.scope_selector, page)
+            if spec is None:
                 continue
-            candidates.append((u.cascade_key, e.color, u))
+            candidates.append((_cascade_key(u, spec, layers), e.color, u))
 
     if candidates:
+        # `max` keeps the first of equal keys, and two colors read out of one
+        # declaration — `light-dark(#fff, #18191b)` on MDN — tie on every term
+        # there is. Which is to say the tie is broken by score, upstream.
         _key, color, u = max(candidates, key=lambda t: t[0])
         return color, f"{u.selector} {{ {u.prop} }} in {u.source}"
 

@@ -663,6 +663,136 @@ class TestUtilityGround(unittest.TestCase):
         self.assertEqual(themes["dark"]["ground"], "#0a0a0a")
 
 
+class TestCascade(unittest.TestCase):
+    """`importance → layer → specificity → document order` (phase 3).
+
+    Every case here is one the previous document-order-only resolution got
+    wrong, and none of them appears on the corpus — which is exactly why they
+    are written out rather than left to a breadth check.
+    """
+
+    def ground_of(self, html, theme="base"):
+        doc = emit.to_document(extract.extract(sources.load_any(
+            write_fixture(html))))
+        return {t["id"]: t for t in doc["themes"]}[theme]
+
+    def test_specificity_beats_a_later_rule_of_lower_specificity(self):
+        """The limit phase 3 lifts, stated as the case that used to fail.
+
+        The body carries `.bg-canvas`, and that utility is declared *before*
+        the `body {}` rule it competes with — the mirror image of ground.news,
+        where the utility happens to come last and document order agreed with
+        specificity by luck. A class outranks an element, so `#eeefe9` is what
+        the page shows; document order alone reports `#ffffff`.
+        """
+        html = """<!DOCTYPE html><html><head><style>
+  .bg-canvas { background-color: #eeefe9; }
+  body { background-color: #ffffff; color: #111111; }
+</style></head><body class="bg-canvas"></body></html>
+"""
+        g = self.ground_of(html)
+        self.assertEqual(g["ground"], "#eeefe9")
+        self.assertIn("bg-canvas", g["groundSource"])
+
+    def test_important_beats_a_later_normal_declaration(self):
+        """Importance is the first term, so order never reaches the question."""
+        html = """<!DOCTYPE html><html><head><style>
+  body { background-color: #123456 !important; color: #111111; }
+  body { background-color: #ffffff; }
+</style></head><body></body></html>
+"""
+        self.assertEqual(self.ground_of(html)["ground"], "#123456")
+
+    def test_an_unlayered_rule_beats_a_layered_one(self):
+        """Per spec, and it is the term most likely to look backwards.
+
+        The layered rule is declared last and is *more* specific, and it still
+        loses: an unlayered declaration outranks every layer, whatever is
+        inside them. Tailwind v4 puts its whole stylesheet in layers, so this
+        decides between the framework and anything written beside it.
+        """
+        html = """<!DOCTYPE html><html><head><style>
+  body { background-color: #eeefe9; color: #111111; }
+  @layer utilities { html body { background-color: #ffffff; } }
+</style></head><body></body></html>
+"""
+        self.assertEqual(self.ground_of(html)["ground"], "#eeefe9")
+
+    def test_a_later_layer_wins_and_the_statement_form_sets_the_order(self):
+        """`@layer base, utilities;` fixes the order before either block exists.
+
+        Both blocks are unlayered-equal on every other term, and `base` is
+        written last. It still loses, because the statement at the top reserved
+        `utilities` the later position — which is the entire reason a site
+        writes that line. Tailwind v4 opens with one.
+        """
+        html = """<!DOCTYPE html><html><head><style>
+  @layer base, utilities;
+  @layer utilities { body { background-color: #eeefe9; } }
+  @layer base { body { background-color: #ffffff; color: #111111; } }
+</style></head><body></body></html>
+"""
+        self.assertEqual(self.ground_of(html)["ground"], "#eeefe9")
+
+    def test_layer_order_reverses_for_important_declarations(self):
+        """The rule that makes importance more than a tiebreak.
+
+        Among `!important` declarations the layer order runs backwards, so the
+        *earlier* layer wins — the opposite of the normal case immediately
+        above. This is why the cascade is all four terms or none: bolting
+        importance on as a final tiebreak gets this exactly wrong.
+
+        The blocks are written in layer order here, so document order picks
+        `utilities` and the reversal is the only thing that can pick `base`.
+        """
+        html = """<!DOCTYPE html><html><head><style>
+  @layer base, utilities;
+  @layer base { body { background-color: #eeefe9 !important; color: #111; } }
+  @layer utilities { body { background-color: #ffffff !important; } }
+</style></head><body></body></html>
+"""
+        self.assertEqual(self.ground_of(html)["ground"], "#eeefe9")
+
+    def test_a_sub_layer_cascades_inside_its_parent(self):
+        """`a.x` belongs between `a` and `b`, however late it is mentioned."""
+        sheet = parse_stylesheet(
+            "@layer a, b; @layer a.x { body { color: #111 } }", "s")
+        order = extract.layer_order([sheet])
+        self.assertEqual(sorted(order, key=order.get), ["a", "a.x", "b"])
+
+    def test_two_anonymous_layers_are_two_layers(self):
+        """`@layer {}` opens a new layer every time, never reopens one."""
+        sheet = parse_stylesheet(
+            "@layer { body { color: #111 } } @layer { body { color: #222 } }",
+            "s")
+        self.assertEqual(len(set(sheet.layers)), 2)
+        self.assertEqual(len({d.layer for d in sheet.declarations}), 2)
+
+    def test_a_media_theme_loses_to_specificity_but_beats_order(self):
+        """Where the theme term sits, and why it sits there.
+
+        A `prefers-color-scheme` block has no specificity advantage over what
+        it overrides, so it needs the term to beat a later unscoped `body`
+        rule. It must not beat a *more specific* unscoped rule the body
+        actually matches, because a browser applying the dark theme still
+        applies `.bg-canvas` on top of it.
+        """
+        html = """<!DOCTYPE html><html><head><style>
+  @media (prefers-color-scheme: dark) {
+    body { background-color: #0b0f14; color: #e8e8ea; }
+  }
+  body { background-color: #ffffff; color: #111111; }
+  .bg-canvas { background-color: #262626; }
+</style></head><body class="bg-canvas"></body></html>
+"""
+        # The unscoped class outranks the media block on specificity …
+        self.assertEqual(self.ground_of(html, "dark")["ground"], "#262626")
+        # … and the media block still outranks the later unscoped `body` rule
+        # when nothing more specific is in play.
+        bare = html.replace(' class="bg-canvas"', "")
+        self.assertEqual(self.ground_of(bare, "dark")["ground"], "#0b0f14")
+
+
 MEDIA_THEMES = """<!DOCTYPE html><html><head><style>
   :root { --bg: #ffffff; --fg: #1a1a1a; --brand: #2563eb; }
   body { background: var(--bg); color: var(--fg); }

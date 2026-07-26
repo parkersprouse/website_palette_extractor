@@ -1,6 +1,6 @@
 # Migration plan: hand-rolled CSS reading → `tinycss2` + `cssselect2`
 
-Status: **phases 1 and 2 landed 2026-07-26.** Phases 3–4 not started. Written
+Status: **phases 1, 2 and 3 landed 2026-07-26.** Phase 4 not started. Written
 2026-07-26.
 
 ## Why
@@ -298,9 +298,76 @@ currently correct, and stays correct for a *different reason*:
 
 ---
 
-## Phase 3 — the actual cascade
+## Phase 3 — the actual cascade — **DONE**
 
-The payoff, and the only phase that changes documented invariants.
+> **Outcome.** 77 tests (69 unchanged, none of their assertions edited, plus a
+> new `TestCascade` of eight), `ruff` clean, reference fixture anchors unmoved,
+> **all eight corpus palettes byte-identical** to a fresh run of the previous
+> commit, module / console-script / zipapp JSON identical, 3.10–3.14 all pass.
+> Cost 4–7% (`getbootstrap.com` 364 → 390 ms), held down by an `lru_cache` on
+> `selector_specificity`.
+>
+> **This phase's invariant list was wrong on three of four, and the errors all
+> ran the same way: they predicted a rule would dissolve into specificity when
+> specificity cannot express it.** Corrected below in place. The generalisable
+> lesson is that *specificity is not the cascade* — it is one term of four, and
+> it only ever runs after the matching step has chosen the candidates.
+>
+> **One acceptance criterion was not met and is not reachable from this phase.**
+> "Corpus inferred count strictly better than 4/12" assumed the cascade would
+> recover a ground somewhere. It cannot: all four inferred grounds are inferred
+> because **no page-level background color is readable at all**, not because the
+> readable ones were ranked wrongly.
+>
+> | inferred ground | why | reachable by |
+> |---|---|---|
+> | ui.shadcn.com, both themes | the only `<body>`/`<html>` backgrounds are `color-mix(in oklab, …)` | phase 4 |
+> | news.ycombinator.com | painted by the presentational attribute `bgcolor="#f6f6ef"`; its `body` rules set no background at all | nothing — it is not CSS |
+> | tailwindcss.com, light | `<html>` carries `dark:bg-gray-950` and no light counterpart; there is no light page-background rule to read | nothing |
+>
+> Written down rather than quietly dropped, because the number is the headline
+> measure in the baseline section and someone will check it. **The honest
+> summary of phase 3 is that it changed no answer on the corpus and changed 12
+> custom-property resolutions, every one of them a fix** — see below. It is
+> insurance against a class of error the corpus does not currently contain,
+> which is a real result but not the one this line promised.
+>
+> **What moved, and why each is a fix.** The readable diff was the ordering
+> key, dumped at both call sites over frozen bundles, old against new. Ground
+> winners: **zero changed**; candidate rank order: **zero changed**. Twelve
+> custom properties resolved differently, in three groups, none of them a color
+> — which is why the palettes are byte-identical:
+>
+> | site | what moved | term responsible |
+> |---|---|---|
+> | getbootstrap.com | 5 `--docsearch-*`: `html[data-theme=dark]` `(0,1,1)` now beats the later `[data-bs-theme=dark]` `(0,1,0)` | specificity |
+> | ui.shadcn.com | 3 `--font-*`: an **unlayered** class on `<html>` now beats `@layer theme`'s `:root`. The old winner was the self-referential `var(--font-sans)`, which resolved to nothing | layer |
+> | developer.mozilla.org | `--sticky-header-height`: `:root{…!important}` now beats a later normal `:root` | importance |
+>
+> **Departures from the plan as written**, beyond the invariant corrections:
+>
+> 1. **`!important` reverses the layer order**, which the plan did not mention.
+>    Among important declarations the earlier layer wins and an unlayered
+>    important declaration is the weakest of them. Implemented, because it is
+>    the reason importance cannot be a simple tiebreak — it changes what the
+>    next term *means*. Nothing on the corpus exercises it; `TestCascade`
+>    does.
+> 2. **`split_selector_list` was kept a third time.** Phase 2 predicted it
+>    would go when "phase 3 gives every selector a compiled form it can rely
+>    on." It does not: `_page_specificity` needs to pair the *matched* form of
+>    a selector list with the *declared* form part by part, and both may be
+>    uncompilable. Its five callers are unchanged. It is not going away; the
+>    note at invariant 17 should stop promising that it will.
+> 3. **Candidates matching `<html>` and `<body>` are still ranked in one pool**,
+>    which the cascade never does. Deliberately deferred: instrumenting every
+>    ground candidate with the element it reaches showed **no corpus site has
+>    page-level background candidates on both elements**, so grouping would
+>    sort the same pools in the same order. Recorded at `detect_ground` with
+>    the shape of the fix, rather than written blind.
+> 4. **`@import url(…) layer(x)` is not modelled**, because `@import` is not
+>    followed. Named at `layer_order` rather than pretended.
+
+### As planned
 
 Implement `importance → layer → specificity → document order` as the ordering
 key in `detect_ground` and `build_var_table`.
@@ -312,31 +379,60 @@ key in `detect_ground` and `build_var_table`.
    order)`.
 3. Collapse the approximations this replaces.
 
-**Invariants that change — read before touching:**
+**Invariants that change — corrected after the fact. Three of the four
+predictions below were wrong; the strikethrough is the prediction and the text
+under it is what actually happened.**
 
 - **Invariant 2** warns that "weighting picks the framework's default
   background." That warning is about `selector_weight`, the *usage heuristic* —
   not about CSS specificity. Real specificity is part of the cascade and does
   not conflict with it. **A future reader will hit invariant 2 and stall here
-  unless this distinction is kept in front of them.**
-- **Invariant 2's theme addendum** (`Usage.cascade_key`'s scoped bit) becomes
-  redundant for selector-scoped themes — `html.dark` genuinely outranks `html`
-  on specificity. It is still needed for `prefers-color-scheme` themes, which
-  have no specificity difference at all. Keep it, narrowed to the media case.
-- **Invariant 13** (theme shadowing on `(selector, prop)`) is a specificity
-  approximation. Re-evaluate; it may survive as a narrower rule or retire.
-- **Invariant 16** becomes "the matcher decides," and its candidate-set framing
-  can be retired — along with the documented limit that it is not a specificity
-  model.
-- **Invariant 19** (page-scoped `var()` definitions outrank off-page ones)
-  becomes a specificity consequence rather than a special case.
+  unless this distinction is kept in front of them.** — **Correct as written.**
+  `selector_weight` is untouched by this phase.
+- **Invariant 2's theme addendum** (the scoped bit) becomes redundant for
+  selector-scoped themes — `html.dark` genuinely outranks `html` on
+  specificity. It is still needed for `prefers-color-scheme` themes, which have
+  no specificity difference at all. Keep it, narrowed to the media case. —
+  **Correct as written**, and now `Usage.theme_media`. The one thing the plan
+  did not say is *where the term goes*: **between specificity and document
+  order**, never above specificity. A media-dark `body` must beat a later
+  unscoped `body` and must lose to an unscoped `.bg-x` the body carries,
+  because a browser does both.
+- ~~**Invariant 13** (theme shadowing on `(selector, prop)`) is a specificity
+  approximation. Re-evaluate; it may survive as a narrower rule or retire.~~ —
+  **Wrong: it is not a specificity approximation at all.** Invariant 13 decides
+  **which colors enter the palette**, and the cascade decides **which value a
+  property resolves to**. Those are different questions and specificity cannot
+  answer the first: no ranking removes a color from a bucket. Kept verbatim,
+  its test untouched and still passing.
+- ~~**Invariant 16** becomes "the matcher decides," and its candidate-set
+  framing can be retired — along with the documented limit that it is not a
+  specificity model.~~ — **Half wrong.** The candidate-set framing *stays*, and
+  `_is_blanket` is why: a real matcher over-matches, and `*` genuinely selects
+  `<html>`. What phase 3 retires is only the **documented limit beneath it** —
+  "a site whose element-matched utility came earlier than a competing `body`
+  rule would still be read wrongly." That is now false, and
+  `test_specificity_beats_a_later_rule_of_lower_specificity` is the case.
+- ~~**Invariant 19** (page-scoped `var()` definitions outrank off-page ones)
+  becomes a specificity consequence rather than a special case.~~ — **Wrong,
+  and the most costly of the three to have believed.** `:root` and
+  `[data-bs-theme=blue]` are **both `(0, 1, 0)`**, so specificity cannot
+  separate them and the blue block is written later. Invariant 19 is a
+  **matching** rule, not a specificity one: the cascade only ranks declarations
+  from rules that match the element, and the document's `<html>` carries no
+  `data-bs-theme=blue`. It survives verbatim. What changed is only how the
+  page-reaching set is resolved among itself — full cascade instead of
+  last-wins. Off-page definitions stay on last-wins, since ranking rules that
+  match *different* elements by specificity is precisely the error above.
 
 Retire each one **consciously and in writing**. A silently deleted invariant is
 how the bug it prevented comes back.
 
-**Acceptance:** corpus inferred count strictly better than 4/12, reference
-fixture unmoved, and every retired invariant's test either still passes or is
-removed with a note in CLAUDE.md saying which rule now covers it.
+**Acceptance:** ~~corpus inferred count strictly better than 4/12~~ (not
+reachable — see the outcome table above), reference fixture unmoved, and every
+retired invariant's test either still passes or is removed with a note in
+CLAUDE.md saying which rule now covers it. **Met, with that one exception
+stated.**
 
 ---
 
@@ -381,6 +477,10 @@ materially wrong on real sites.
       `webencodings` into the staging dir, incantation in CLAUDE.md
 - [x] Phase 2 — `html.parser` shim + `cssselect2` matching — **landed
       2026-07-26** as `dom.py`; grounds and palettes unchanged corpus-wide
-- [ ] Phase 3 — full cascade; retire invariants 13/16/19 in writing
-- [ ] Phase 4 — `color-mix()`, `light-dark()`
+- [x] Phase 3 — full cascade — **landed 2026-07-26**. Invariants 13, 16 and 19
+      were re-read and **kept**: the prediction that they would dissolve into
+      specificity was wrong in all three cases, corrected in writing above.
+      Palettes byte-identical corpus-wide; 12 custom properties resolve better
+- [ ] Phase 4 — `color-mix()`, `light-dark()` — now the only phase that can
+      move a corpus ground, and two of the four inferred ones are waiting on it
 - [ ] Re-run the breadth check in CLAUDE.md after every phase

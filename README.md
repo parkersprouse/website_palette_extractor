@@ -7,8 +7,10 @@ Values are **read from the site's stylesheets**, not sampled from a screenshot,
 so they are the exact declared colors rather than pixels that have been through
 antialiasing and JPEG compression.
 
-Python 3.10+ (tested on 3.10 through 3.14). No dependencies for the core
-today; Pillow and numpy only if you use `--images`.
+Python 3.10+ (tested on 3.10 through 3.14). The core takes two pure-Python
+dependencies — `tinycss2` to tokenise the CSS and `cssselect2` to match and
+weigh selectors — which are installed for you. Pillow and numpy are extra, and
+only if you use `--images`.
 
 If using the system's available Python binary:
 ```bash
@@ -38,7 +40,7 @@ uv run palettekit.pyz site.har -o "palettes/site"
 Or install it, which puts a `palettekit` command on your path:
 
 ```bash
-pip install .              # core, no dependencies
+pip install .              # core: pulls in tinycss2 + cssselect2
 pip install ".[images]"    # adds pillow + numpy for --images
 palettekit site.har -o "palettes/site"
 ```
@@ -134,11 +136,12 @@ measured against the inferred ground, so it is worth knowing.
 ## What it decides, and why
 
 **Ground is resolved by the cascade, not by counting.** The page background is
-whichever background rule that lands on the page comes *last*. Weighting by
-usage instead gets this wrong on any site that loads a framework stylesheet
-before its own — which is most of them. Everything else depends on this, since
-colors with alpha are flattened over the ground and every contrast ratio is
-measured against it.
+whichever background rule that lands on the page wins on
+`importance → @layer → specificity → document order` — the same four terms a
+browser applies, in the same order. Weighting by usage instead gets this wrong
+on any site that loads a framework stylesheet before its own — which is most of
+them. Everything else depends on this, since colors with alpha are flattened
+over the ground and every contrast ratio is measured against it.
 
 "Lands on the page" means the rule actually selects this document's `<html>` or
 `<body>`, not just that it's written `body { … }`. Sites built with a utility
@@ -245,8 +248,14 @@ knowing before you read too much into a status.
 
 ## Example
 
-`example/` holds the output for the page this was first built against, so you
-can open `example/index.html` and see the result without running anything.
+An `example/` directory holding a pre-generated report is intended here, so you
+can see the output without running anything. **It is not in the repository
+yet** — generated output has never been tracked, so there is nothing to ship
+until that changes. Generate your own in the meantime:
+
+```bash
+python3 -m palettekit your-site.har -o example && open example/index.html
+```
 
 ## Tests
 
@@ -254,7 +263,12 @@ can open `example/index.html` and see the result without running anything.
 python3 test_palettekit.py
 ```
 
-93 tests covering the color maths, cascade ordering, theme scoping, ground
+Run it from an environment where the dependencies are installed — `pip install
+-e ".[dev]"`, or `uv run --with tinycss2 --with cssselect2 test_palettekit.py`.
+A bare system `python3` will fail at the `tinycss2` import rather than at an
+assertion.
+
+95 tests covering the color maths, cascade ordering, theme scoping, ground
 detection, the merge rules, and the status classifications. Worth running after
 any edit — several of these exist because the obvious implementation was quietly
 wrong.

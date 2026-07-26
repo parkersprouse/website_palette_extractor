@@ -37,7 +37,7 @@ reached only through `images.py`, behind `--images`.
 
 ```bash
 python3 -m palettekit <target> -o out    # target: .har | URL | .html/.css path
-python3 test_palettekit.py               # 95 tests, all must pass
+python3 test_palettekit.py               # 95 tests, all must pass (needs the deps)
 python3 -m palettekit x.har --no-themes  # collapse a two-theme site into one
 ruff check .                             # must stay clean; config in pyproject
 python3 -m palettekit x.har --list-sources   # diagnose framework noise first
@@ -78,6 +78,33 @@ python3 -m zipapp /tmp/stage -o palettekit.pyz -p "/usr/bin/env python3"
 The package keeps its own `__main__.py` so `python3 -m palettekit` works from a
 checkout. Both builds must produce identical JSON for the same input — worth
 asserting in CI.
+
+### Rebuild the zipapp before a work session is finished
+
+**Process, set by the owner 2026-07-26: a session that changed anything under
+`palettekit/` is not done until `palettekit.pyz` has been rebuilt from it.**
+The tracked artifact is a shipped program, not a build leftover — `README.md`
+tells readers to run it — so leaving it behind ships the previous version of
+the tool under the current version's name.
+
+This is not hypothetical. The committed `.pyz` sat four phases stale: it ran
+the pre-`tinycss2` walker with every parsing bug the migration removed,
+reproduced the reference fixture's anchors *exactly* so no check caught it, and
+crashed on `ground.news.har` under a 3.9 interpreter. See `PLAN.md` **T1** for
+the full diagnosis.
+
+Two things make the rule stick, and both are open work:
+
+- **Automate it** (`PLAN.md` **T12**). A six-command incantation with a
+  silently skippable vendoring step is not something to run from memory — the
+  artifact went stale precisely because a human was meant to remember.
+- **Assert it** (`PLAN.md` **T11**). Module / console-script / zipapp JSON
+  identity is already the rule two paragraphs up; in CI it turns a stale
+  artifact into a failed build instead of a silent one.
+
+Until those land, rebuild by hand, and **verify with an interpreter that has
+neither dependency installed** — on a development machine every interpreter has
+them and a missing vendoring step is invisible.
 
 ## Layout and data flow
 
@@ -865,13 +892,32 @@ cargo.site --images`. Useful as a regression anchor: ground `#151515`,
 as `saved`, `#13330d` as `inert`, 20 tokens, one theme, no warnings. If a
 change moves any of those, understand why before accepting it.
 
-> **The committed copy is stale**, and was already stale before the `tinycss2`
-> swap — `colors`, `stats`, `themes` and `warnings` differ from what HEAD
-> produces, and the imagery now measures 100.0% neutral rather than the 99.7%
-> this file used to claim. So compare a change against a *freshly generated*
-> run of the previous commit, not against the checked-in files. Regenerating it
-> is worth doing; it has not been done here because that would bury a parser
-> change under a large unrelated diff.
+> **There is no committed copy, and there never has been** — `.gitignore`
+> carries `palettes`, so the directory has never been tracked, and it is not on
+> disk in a fresh clone. Earlier revisions of this section described a
+> "committed copy" that is "stale"; that was wrong about *where* the fixture
+> lives, though right that a checked-in one could not be trusted.
+>
+> **So the anchors listed above are the fixture** — they are the only durable
+> form of it, and all of them were re-verified against a fresh run at commit
+> `6507dda`: ground `#151515`, 20 tokens, one theme, no warnings, `#ffc600`
+> `saved`, `#13330d` `inert`, and with `--images` the imagery measures
+> **100.0% neutral** across 2 images and 19,919 pixels sampled (dominant
+> `#3d3d3d` at 74.7%). Compare a change against a *freshly generated* run of
+> the previous commit; there is nothing checked in to diff against.
+>
+> **The fixture is a weak anchor on its own, and it is worth knowing why.** It
+> is a single-theme site with hand-written CSS, so the pre-`tinycss2` parser
+> reproduces every anchor above exactly — measured, by running the tracked
+> `palettekit.pyz`. It cannot detect a parser regression; the breadth check
+> below is what does that.
+>
+> **Regenerating and committing it is still worth doing**, and it now needs two
+> decisions rather than one: `palettes` would have to come out of `.gitignore`
+> (or the fixture move elsewhere), and `fleshandbonedesign.com.har` is
+> `.gitignore`d too, so **a fresh clone cannot regenerate it at all**. That is
+> the same gap the "fixture corpus of small HTML files" entry in the Migration
+> TODO addresses, and it makes that entry more urgent than its checkbox looks.
 
 ## Breadth check
 
@@ -991,21 +1037,31 @@ implementation will otherwise quietly assert the thing that was already true.
 
 ## Migration TODO
 
-Not yet present, needed for a real repo:
+**Moved. `PLAN.md`'s "Outstanding work" section is the authority** for
+everything still to do — fourteen tasks, T1–T14, each with its rationale, its
+prerequisites and the level its change should be *diffed* at.
+
+It lives there rather than here because keeping two lists of the same work in
+two files guarantees one of them goes stale, which is a failure this project
+has already paid for more than once. Add new work there and link to it from
+here if it needs saying twice.
+
+What is settled, and stays recorded here because it describes the repo as it
+is rather than work to do:
 
 - [x] `pyproject.toml` — hatchling backend, version read from
       `palettekit/__init__.py`, console script, `images`/`images-fast`/`dev`
       extras, ruff config. Verified by building and installing the wheel.
-- [ ] `LICENSE` + the `[project.license]` and classifier entries left commented
-      out in `pyproject.toml`, and `.gitignore` (`__pycache__/`, `dist/`,
-      `*.pyz`, `out/`)
-- [ ] Fill in `[project.urls]` and the `authors` entry once the repo exists
-- [ ] CI: run tests on 3.10–3.14, `ruff check`, and assert the package, zipapp
-      and installed-console-script outputs match
-- [ ] `Makefile` or `build.py` for the zipapp incantation above
-- [ ] Move `test_palettekit.py` into `tests/` and split by module
-- [ ] Fixture corpus of small HTML files per site archetype (framework-heavy,
-      page-builder, dark, light, CSS-variable-driven) — the current suite leans
-      on synthetic fixtures inline in the test file
-- [ ] Decide whether `emit.to_document`'s dict shape is a versioned public API
-      before anyone builds on it
+- [x] `[project.urls]` and `authors` — filled in
+      (`github.com/parkersprouse/palettekit`, Parker Sprouse).
+- [x] `.gitignore` — present, and **narrower than earlier revisions of this
+      list specified.** It carries `*.har`, `.DS_Store`, `.remember`, `.venv`,
+      `palettes` and `**/*cache*`. The last covers `__pycache__/` and
+      `.ruff_cache/`; `dist/` and `out/` are **not** ignored, and neither is
+      `*.pyz` — which is why the stale `palettekit.pyz` is tracked at all
+      (`PLAN.md` T1), and why a fresh clone can regenerate no fixture
+      (`PLAN.md` T14).
+
+Still blocked on the owner: **`LICENSE`** and the `[project.license]` /
+classifier entries left commented out in `pyproject.toml`. Nothing about
+publishing moves until a licence is chosen.

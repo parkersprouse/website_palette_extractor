@@ -2,6 +2,11 @@
 
 Status: **all four phases landed 2026-07-26.** Written 2026-07-26.
 
+**The migration is done; the work it left behind is not.** See
+[Outstanding work](#outstanding-work) below — fourteen tasks, three of them
+decisions the owner has since settled, and it is the authority for what is
+left. `CLAUDE.md`'s Migration TODO points there rather than duplicating it.
+
 ## Why
 
 The owner set the priority order on 2026-07-26: **accuracy and breadth first,
@@ -85,8 +90,14 @@ The old floor was 3.9 — never tested, and end-of-life since October 2025.
 
 > Note for whoever schedules the next bump: **3.10 itself reaches end-of-life in
 > October 2026.** Nothing in the codebase needs 3.11+, so this is a calendar
-> decision rather than a technical one; raising to 3.11 costs nothing but is not
-> yet motivated.
+> decision rather than a technical one; ~~raising to 3.11 costs nothing but is
+> not yet motivated.~~
+>
+> **Superseded 2026-07-26: the owner decided to raise the floor to 3.11.** The
+> calendar motivated it — October 2026 is roughly three months out. The section
+> above describes the 3.10 floor **as currently shipped**; it stays as written
+> until the bump lands, at which point every claim in it moves. See
+> **T2** in [Outstanding work](#outstanding-work) for the seven edits.
 
 ## Baseline to measure against
 
@@ -526,6 +537,11 @@ stated.**
 > second time as an orphaned tail, counting every color in it twice. Every hex
 > set, ground and warning on all eight sites is identical; occurrence counts and
 > the token names ranked from them are what moved.
+>
+> That landed as `6507dda` and added two tests, so **the suite is 95, not the
+> 93 this outcome block records** — 93 was the count at phase 4 itself and is
+> left as written. 95 is the number `CLAUDE.md` and `README.md` should agree
+> with, and the number a fresh run produces.
 
 ### As planned
 
@@ -599,7 +615,9 @@ materially wrong on real sites.
 
 ## Checklist
 
-- [x] Decide the Python floor — **3.10, verified across 3.10–3.14**
+- [x] Decide the Python floor — **3.10, verified across 3.10–3.14**.
+      Superseded: the owner raised it to **3.11** on 2026-07-26; shipping that
+      is **T2**
 - [x] Phase 1 — `tinycss2` swap behind the `Declaration` seam
 - [x] Update or retire the zipapp build for a vendored dependency —
       **updated**; `uv pip install --target` vendors `tinycss2` +
@@ -616,3 +634,392 @@ materially wrong on real sites.
       unchanged at 4, and the ~~"two of the four are waiting on this
       phase"~~ claim was wrong — corrected in the acceptance section above
 - [x] Re-run the breadth check in CLAUDE.md after every phase
+
+### Outstanding — see [Outstanding work](#outstanding-work) for each
+
+Decided by the owner 2026-07-26, ready to build:
+
+- [ ] **T1** — rebuild the zipapp (vendored deps + a `sys.version_info` guard),
+      and make rebuilding it part of finishing a session. Needs **T12** first
+- [ ] **T2** — raise the Python floor to 3.11. Seven edits across four files,
+      enumerated in the task; sub-decision on bumping `__version__`
+- [ ] **T3** — `to_document` as a *versioned* public API. Already public; the
+      work is a `schemaVersion` key and a written compatibility promise
+
+Accuracy gaps left by phases 1–4:
+
+- [ ] **T4** — read `initial` as guaranteed-invalid, take the fallback —
+      **highest value; moves token names on tailwindcss.com**
+- [ ] **T5** — evaluate `calc()` in a `color-mix()` percentage (6 declarations)
+- [ ] **T6** — an at-rule nested in a style rule loses its declarations —
+      **the one that grows on its own** as CSS nesting spreads
+- [ ] **T7** — resolve `<html>` and `<body>` in separate pools
+- [ ] **T8** — `@import url(…) layer(x)` should register a layer
+- [ ] **T9** — model scoped custom properties (`@property`, inheritance)
+- [ ] **T10** — read `color-scheme` to confirm a `light-dark()` site is really
+      two-themed — **waiting on a counter-example; do not do this yet**
+
+Repo and process:
+
+- [ ] **T11** — CI: 3.11–3.14, `ruff`, and package/zipapp/console-script JSON
+      identity
+- [ ] **T12** — `Makefile` or `build.py` for the zipapp incantation
+- [ ] **T13** — move `test_palettekit.py` into `tests/`, split by module
+- [ ] **T14** — fixture corpus of small committed HTML files — **unblocks
+      checking every other task**; a fresh clone can currently regenerate
+      nothing
+- [ ] **Blocked on a decision:** `LICENSE` + the `[project.license]` and
+      classifier entries
+
+---
+
+# Outstanding work
+
+**This section is the authority for what is left to do.** `CLAUDE.md`'s
+Migration TODO points here rather than repeating it — two lists of the same
+work is exactly the drift this session was spent finding, and one of them will
+always be the stale one.
+
+Nothing below is a phase. Phases 1–4 were one migration with a shared
+acceptance bar; these are independent, and any of them can land alone.
+
+**Ordering, if you want one.** T4 is worth the most by a wide margin — it is
+the only open item that moves colors and token names on a real site today. T6
+is the one that gets worse on its own, because native CSS nesting is making the
+shape it mishandles more common every year. T14 is the one that unblocks
+*checking* any of the others, since a fresh clone can currently regenerate no
+fixture at all. Everything else is genuine but static.
+
+Each task carries the level its change should be **diffed** at. That is this
+project's most expensive lesson — phase 1 passed the whole suite and the
+reference fixture while mis-filing 124 declarations, phase 2 was byte-identical
+at the palette level while inverting 345, and phase 4's only real finding was a
+*removal*. A test that passes before and after tests nothing about the change.
+
+---
+
+## Decided by the owner, 2026-07-26
+
+These three were open questions until the owner settled them. Recorded as
+decided; the work is described, not re-argued.
+
+### T1 — Rebuild the zipapp, and make rebuilding it part of finishing a session
+
+**Decided: rebuild it, and make it process rather than a thing to remember.**
+
+The tracked `palettekit.pyz` is the **pre-phase-1 program** — no `dom.py`, no
+`tinycss2`, `color.py` at 528 lines against today's 1004. It has three faults
+and they were measured, not inferred:
+
+1. It **runs**, using the old hand-rolled walker with all five parsing bugs the
+   migration existed to remove. On `fleshandbonedesign.com.har` it reproduces
+   every reference anchor exactly, so the fixture cannot detect it.
+2. It **crashes on a real site** — `ground.news.har` exits 1 with `TypeError:
+   zip() takes no keyword arguments`, because a zipapp carries no
+   `requires-python` and it ran under a 3.9 interpreter.
+3. It **falsifies `CLAUDE.md`'s three-way identity check** ("all three must
+   produce identical JSON") against the committed artifact.
+
+**Do:**
+
+- Rebuild with the incantation in `CLAUDE.md`, **vendoring `tinycss2`,
+  `cssselect2` and `webencodings`** into the staging dir. Test the result with
+  an interpreter that has none of them installed — on a development machine
+  every interpreter does, and the bug is invisible.
+- Add a **`sys.version_info` guard** at `__main__` with a readable message.
+  **Read the floor from one place** rather than hard-coding `(3, 10)` — T2
+  raises it to 3.11, and a guard that silently keeps testing the old floor is
+  the same failure mode as the stale artifact it is meant to prevent.
+  Rebuilding does not fix fault 2. Worth knowing exactly why: all eight modules
+  carry `from __future__ import annotations`, so the PEP-604 annotations are
+  strings and the package **imports cleanly on 3.9** — the only 3.10-only
+  runtime construct is `zip(strict=)`, four call sites in `extract.py`. So an
+  unguarded zipapp does not fail at startup; it fails deep in `_align_names`,
+  on two-theme sites only, looking exactly like a bug in the tool.
+- **T12 is the real prerequisite.** "Rebuild after each session" is
+  unenforceable as a human step — the artifact is four phases stale precisely
+  because someone was meant to remember. Land the `Makefile`/`build.py` first,
+  then the process instruction is one command and CI can assert it.
+- Once it is automated, add the rebuild to `CLAUDE.md`'s Commands block and to
+  the end-of-session routine, and have CI assert module / console-script /
+  zipapp JSON identity so a stale artifact fails the build instead of shipping.
+
+> **One tradeoff the decision did not have to weigh, stated once.** A rebuilt
+> `.pyz` tracked in git is a ~144 KB binary churning on every session, and it
+> is the reason `*.pyz` belongs in `.gitignore` in most projects. The
+> alternative is to untrack it, build it in CI, and attach it to releases —
+> which gets the freshness guarantee without the churn. The decision was to
+> rebuild, so T1 is written to rebuild; if the churn becomes annoying, this is
+> the escape hatch and it does not need re-litigating from scratch.
+
+**Diff level:** the built artifact's JSON against `python3 -m palettekit`, on
+every corpus input. Identity is the whole acceptance criterion.
+
+### T2 — Raise the Python floor to 3.11
+
+**Decided: 3.11.** 3.10 reaches end-of-life in **October 2026**, roughly three
+months out, and the matrix should not keep certifying a dead version.
+
+**Name the cost honestly, since the code does not force it.** Nothing in the
+codebase needs 3.11 — the only 3.10-only construct is `zip(strict=)`. So this
+narrows compatibility for no technical gain, and it is a **breaking change for
+anyone installed on 3.10**. That is a reasonable trade against an EOL date and
+a smaller test matrix; it is not a free one.
+
+**Seven edits, four files** — enumerated so nobody re-derives them:
+
+| file | edit |
+|---|---|
+| `pyproject.toml` | `requires-python = ">=3.11"` |
+| `pyproject.toml` | drop the `Programming Language :: Python :: 3.10` classifier |
+| `pyproject.toml` | the verified-floor comment at the top (lines 10–11) |
+| `pyproject.toml` | `[tool.ruff] target-version = "py311"` |
+| `CLAUDE.md` | the `**Python 3.10+, verified**` paragraph |
+| `CLAUDE.md` | the `for v in 3.10 …` matrix loop, and the CI entry in T11 |
+| `README.md` | "Python 3.10+ (tested on 3.10 through 3.14)" |
+
+**Sub-decision left open: bump `__version__` from `1.0.0`.** Narrowing the
+supported interpreter range is the kind of change a version number exists to
+signal, and `palettekit/__init__.py` is the single source of truth
+(`[tool.hatch.version]`). Pair it with T3's schema marker if both land
+together.
+
+**Diff level:** none — this changes no behaviour. Re-run the matrix over
+3.11–3.14 and confirm byte-identical JSON to 3.14 on the reference fixture,
+which is what the old floor's claim rested on.
+
+### T3 — Make `to_document`'s dict a versioned public API
+
+**Decided: make it public.** There is no good reason to keep it private, and
+checking that turned up something worth stating plainly:
+
+**The "public" half is already done.** `emit.to_document` has no underscore, is
+the worked example in `palettekit/__init__.py`'s module docstring, is called by
+`__main__`, and is asserted by roughly a dozen tests. `CLAUDE.md` already calls
+it "the public data contract". Nothing needs opening.
+
+**The word doing the work in the original TODO was *versioned*, and that part
+is real.** A consumer holding this dict has no way to detect a breaking change:
+there is no marker in the document, and `generated` is a timestamp rather than
+a schema stamp. Today's compatibility story is an informal promise in prose —
+that `themes` is always present, and that top-level `ground`/`stats`/`colors`
+mirror `themes[0]` so pre-themes readers keep working.
+
+**Do:**
+
+- Add a **`schemaVersion`** key to the document (an integer is enough) and
+  emit it from `to_document`. It is the one thing that makes the rest
+  checkable.
+
+  **Say in the same breath that it is not the package version.**
+  `palettekit/__init__.py` already carries `__version__ = "1.0.0"`, and a
+  consumer seeing both will ask which one governs the dict. They move on
+  separate schedules: the package version tracks the tool, the schema version
+  tracks this one document shape. Worth stating now, because T2's
+  version-bump sub-decision and this key would otherwise collide the first
+  time either is touched.
+- Write the compatibility promise down where a consumer will find it — the
+  README's Output section, not only `CLAUDE.md` — including the mirroring rule
+  above, which is already load-bearing for anyone who integrated before themes.
+- State what a bump means: additive keys do not bump, removing or re-typing a
+  key does.
+- Assert the shape in a test, so a stray key rename fails loudly rather than
+  silently breaking a downstream reader.
+
+**Diff level:** the document's **key set**, per theme, against HEAD — not the
+values. The only intended change is one added key.
+
+---
+
+## Accuracy gaps left by phases 1–4
+
+All seven are documented under "Known limits" in `CLAUDE.md`, each with its
+diagnosis and fix already worked out. They are transcribed here as tasks
+because a "known limit" reads as a decision not to act, and these are not that
+— they are work that was deliberately kept out of a phase whose blast radius
+was being measured.
+
+### T4 — Read `initial` as the guaranteed-invalid value and take the fallback
+
+**The highest-value open item.** Tailwind v4 guards every registered property
+with `@layer properties { *, ::before, ::after, ::backdrop {
+--tw-gradient-via-stops: initial; … } }`, for browsers with no `@property`. On
+a custom property `initial` **is** the guaranteed-invalid value, so a browser
+resolving `var(--tw-gradient-via-stops, <the stops>)` uses the fallback.
+`resolve_vars` substitutes the literal token `initial` instead and finds no
+color in it.
+
+Cost today: **108 declarations on tailwindcss.com's dark theme**; `violet`
+drops from 137 occurrences to 29 and `teal` from 130 to 22. That is ranking,
+and ranking is what names tokens — so this moves names, not just counts.
+
+Kept out of the invariant-25 change deliberately, so a real behaviour change
+would not ride inside one whose blast radius was being measured. That reason
+has expired.
+
+**Trap:** ui.shadcn.com's 16 `.shimmer` declarations look like the same bug and
+are not — `--shimmer-image` is `initial` in the guard *and* `none` from two
+utilities the shimmering element never carries. Fixing `initial` alone still
+leaves `none` winning by last-wins. That half is T9, and the two should be
+measured separately or neither result is interpretable.
+
+**Diff level:** per-declaration color list, `(sheet_order, order, selector,
+prop) → [hexa]`, per theme. Expect **additions** — this restores colors that
+currently resolve to nothing — which is the opposite direction from phase 4 and
+worth predicting before running.
+
+### T5 — Evaluate `calc()` in a `color-mix()` percentage
+
+Six declarations corpus-wide, all `.shimmer-color-*` on ui.shadcn.com writing
+`color-mix(in oklch, <color> calc(60 * 1%), transparent)`. The mix is skipped
+whole (invariant 22), which is correct — defaulting to 50% would print a color
+the page does not paint.
+
+Needs a small `calc()` evaluator: the corpus only exercises literal arithmetic,
+but `calc()` also takes `var()`, nested calls, and mixed units, so decide the
+supported subset up front and **return `None` outside it**, per the standing
+"parse or return `None`, never guess" convention.
+
+**Diff level:** per-declaration color list on ui.shadcn.com. Six declarations
+is the whole predicted blast radius — if anything else moves, the evaluator is
+reaching further than intended.
+
+### T6 — An at-rule nested inside a style rule loses its declarations
+
+`.a { color: red; @media (min-width:1px) { color: blue } }` yields the `red`
+and not the `blue`. `_walk` descends into an at-rule with no selector, and
+declarations with no selector are read for `var()` references only. The brace
+walker did the same thing for the same reason, so this predates `tinycss2`.
+
+**The fix is small — the selector is simply the enclosing rule's** — and it was
+kept out of phase 1 only so that a real behaviour change would not hide inside
+a swap meant to have none.
+
+**This is the one that grows on its own.** Native CSS nesting makes the shape
+more common every year, and the corpus was frozen in 2026. Re-measure before
+assuming the cost is still low.
+
+**Diff level:** the declaration multiset, `(sheet_order, selector, prop, value,
+theme, at_rules)` — this adds declarations that do not currently exist, so it
+is the one level that shows it.
+
+### T7 — Resolve `<html>` and `<body>` in separate pools
+
+`detect_ground` ranks candidates matching either element in **one pool**, which
+the cascade never does: it resolves each element separately, and the visible
+page color is the body's background where it has one.
+
+Deliberately deferred in phase 3, and measured rather than assumed —
+instrumenting every candidate with the element it reaches showed **no corpus
+site has page-level backgrounds on both**, so grouping would sort the same
+pools in the same order. The fix is stated at `detect_ground`: resolve within
+each element, prefer the body's answer.
+
+**Trap:** because no corpus site exercises it, a test written from the
+implementation will assert something already true. Build a fixture that
+genuinely has competing `<html>` and `<body>` backgrounds and require it to
+fail against HEAD first.
+
+**Diff level:** ground winner and candidate rank per theme. Expect **no corpus
+change at all** — this is insurance, like most of phase 3, and that is a real
+result rather than a no-op.
+
+### T8 — `@import url(…) layer(x)` should register a layer
+
+`layer_order` does not see it, because `@import` is not followed at all. Named
+rather than pretended in phase 3.
+
+**Two pieces of work, and the second is the larger one:** parsing the
+`layer(x)` form out of the prelude is easy; actually *following* an `@import`
+means fetching another stylesheet, which is a `sources.py` concern and touches
+the `Bundle` layer that all four phases deliberately left alone.
+
+The layer position can be reserved without following the import — that is
+strictly better than today and much cheaper. Consider doing only that.
+
+**Diff level:** the layer order list per document, then the cascade key at both
+call sites.
+
+### T9 — Model scoped custom properties
+
+A property redefined on `.card` resolves globally here. `@property` and normal
+inheritance down the tree are both unmodelled.
+
+This is the largest open item and the one most likely to turn into a cascade
+engine, which `CLAUDE.md` is explicit the tool is **not**. Scope it before
+starting: the goal is a property resolving differently for the elements that
+consume it, not computing anyone's styles.
+
+It is also the second half of T4's trap — ui.shadcn.com's `--shimmer-image`
+resolves to `none` from a utility the shimmering element does not carry.
+
+**Diff level:** custom-property resolution table, old winner against new with
+the cascade key's terms printed beside them — phase 3's level, which is the
+only one that showed its twelve moves.
+
+### T10 — Read `color-scheme` to confirm a `light-dark()` site is two-themed
+
+Invariant 23 says a site writing `light-dark()` ships both themes "by
+definition", and flags its own overreach: `light-dark()` resolves against the
+**used** `color-scheme`, whose initial value is `normal` — light. A page that
+writes `light-dark()` and never declares `color-scheme: light dark` renders the
+light branch whatever the OS says, and calling it two-themed is wrong.
+
+The tool cannot currently tell: `color-scheme` is neither a custom property nor
+in `PROPERTY_ROLE`, so `_record` drops it and it never reaches a `Declaration`.
+
+**No corpus site needs this.** Checked rather than assumed — MDN carries nine
+`color-scheme` declarations including `color-scheme:light dark`, so its two
+themes are real, and it is the only corpus site using the function. So this is
+**waiting on a counter-example**, and is the one task here that should probably
+not be done until one turns up.
+
+**Diff level:** theme count and ids per site.
+
+---
+
+## Repo and process
+
+Moved here from `CLAUDE.md`'s Migration TODO, which now points at this section.
+
+### T11 — CI
+
+Run the suite on **3.11–3.14** (per T2), `ruff check`, and assert that the
+package, the zipapp and the installed console script produce identical JSON for
+the same input — that last is the cheapest real regression check the project
+has, and it is the one that would have caught T1's stale artifact.
+
+### T12 — `Makefile` or `build.py` for the zipapp
+
+The staging-dir incantation in `CLAUDE.md` is six commands with a vendoring
+step that is silently skippable on a development machine. **Prerequisite for
+T1's process half** — automate it and "rebuild each session" becomes one
+command that CI can verify.
+
+### T13 — Move `test_palettekit.py` into `tests/` and split by module
+
+1,272 lines and fourteen `TestCase` classes in one file. Mechanical, and worth
+doing before the suite grows further.
+
+### T14 — Fixture corpus of small HTML files per site archetype
+
+Framework-heavy, page-builder, dark, light, CSS-variable-driven.
+
+**More urgent than it looks, and it is the item that unblocks checking every
+other one.** `.gitignore` carries both `*.har` and `palettes`, so **a fresh
+clone can regenerate nothing**: not the reference fixture, not the breadth
+check, not the `example/` directory `README.md` promises. All of it is
+reachable only on the owner's machine. Small committed fixtures are the only
+fix that does not mean committing an 11 MB HAR.
+
+It also addresses a weakness found this session: the reference fixture is a
+single-theme, hand-written-CSS site, and the **pre-`tinycss2` parser reproduces
+all six of its anchors exactly**. It cannot detect a parser regression. The
+breadth check can, and the breadth check needs network and frozen bundles —
+committed fixtures are what make that offline and reviewable.
+
+### Still blocked on a decision
+
+**`LICENSE` + the `[project.license]` and classifier entries.**
+`pyproject.toml` says `TODO(migration): decide a licence` and nothing about
+publishing moves until it is chosen.

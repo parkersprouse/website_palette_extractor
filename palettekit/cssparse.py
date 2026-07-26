@@ -133,6 +133,16 @@ def _not_spans(selector: str) -> list[tuple[int, int]]:
     token block is filed under *light* — 124 declarations of it, including the
     ground. Skipping the negation lets the rule fall through to the media
     query, which says dark, which is what it is.
+
+    **A `:not()` inside an `:is()`/`:where()` is not modelled.** Blanking the
+    inner negation splits the outer function across the span boundary, so
+    `strip_theme_scope('.x:is(.dark, :not(.light))')` leaves `:is( , …)` —
+    the empty-functional-pseudo failure invariant 14 warns about. Left alone
+    because it is unreachable on the corpus: of 1296 distinct themed selectors
+    across the eight sites, including every Tailwind v4 shape, none nests a
+    negation inside a marker's `:is()`. Fixing it properly means matching
+    `_THEME_IS` with balanced parens rather than `[^)]*\\)`, which is worth
+    doing when a real site needs it and not before.
     """
     spans: list[tuple[int, int]] = []
     for m in _NOT_OPEN.finditer(selector):

@@ -433,6 +433,16 @@ Tailwind config should even look like first.
 - **No JavaScript is executed.** A HAR captures runtime-injected styles up to
   export time; a color computed in JS and set as an element property is in no
   stylesheet and will not be found.
+
+- **An at-rule nested *inside* a style rule loses its declarations.**
+  `.a { color: red; @media (min-width:1px) { color: blue } }` yields the `red`
+  and not the `blue`: `_walk` descends into an at-rule with no selector, and
+  declarations with no selector are read for `var()` references only. The brace
+  walker did the same thing for the same reason, so this predates `tinycss2`
+  and phase 1 did not change it. Native CSS nesting makes the shape more common
+  than it used to be, so it is worth fixing — the selector is simply the
+  enclosing rule's — but doing it inside phase 1 would have hidden a real
+  behaviour change inside a swap that was meant to have none.
 - **The cascade is approximated, not implemented.** Ground follows document
   order; `var()` resolution takes the last definition. Specificity, `@layer`
   and scoped custom properties are not modelled — beyond the narrow rules in

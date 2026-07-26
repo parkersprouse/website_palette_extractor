@@ -1111,6 +1111,24 @@ to agree with the layer reversal it meant to check, and it was rewritten until
 it disagreed. Do this — it is cheap, and a test written from a correct
 implementation will otherwise quietly assert the thing that was already true.
 
+**A number that doesn't match the record is a prompt to check your own
+measurement before it is a prompt to explain the world.** Verifying T4
+(invariant 26), a live re-fetch of tailwindcss.com gave occurrence counts that
+didn't match the 137/29 and 130/22 this file records, and the first draft of
+that verification explained the gap as the live site's content having moved on
+in the time since. It had not — the site's source hadn't changed in over a
+week, which the user checked and pointed out. The actual cause was
+found in one more query: the verification had summed occurrences across every
+violet- and teal-hued hex in the corpus (Tailwind ships some thirty shades per
+hue) rather than reading the one dominant token the recorded numbers refer to;
+read that single token and the fresh fetch reproduces 137/29 and 130/22
+exactly, integer for integer. **"The measured world changed" and "my
+methodology doesn't match the prior one" produce the same symptom — a number
+that's off — and only one of them is checkable in seconds.** Rule out the
+cheap explanation (reread what the original number actually counted, rerun the
+comparison the same way) before writing down the expensive one, and don't
+publish an explanation for a discrepancy that itself amounts to a guess.
+
 ## Migration TODO
 
 **Moved. `PLAN.md`'s "Outstanding work" section is the authority** for

@@ -221,6 +221,50 @@ def oklab_to_color(L: float, a: float, b: float, alpha: float = 1.0) -> Color:
     )
 
 
+# CIE Lab, which CSS specifies on a D50 white point — unlike OKLab above, and
+# unlike sRGB, which is D65. Both conversions are needed, so the constants are
+# spelled out rather than folded together: the D50 white point, the Bradford
+# adaptation to D65, and D65 XYZ to linear sRGB, each as given in CSS Color 4.
+_D50 = (0.3457 / 0.3585, 1.0, (1.0 - 0.3457 - 0.3585) / 0.3585)
+_KAPPA = 24389 / 27
+_EPSILON = 216 / 24389
+
+_D50_TO_D65 = (
+    (0.9554734527042182, -0.023098536874261423, 0.0632593086610217),
+    (-0.028369706963208136, 1.0099954580058226, 0.021041398966943008),
+    (0.012314001688319899, -0.020507696433477912, 1.3303659366080753),
+)
+_XYZ_TO_LINEAR_SRGB = (
+    (3.2409699419045226, -1.537383177570094, -0.4986107602930034),
+    (-0.9692436362808796, 1.8759675015077202, 0.04155505740717559),
+    (0.05563007969699366, -0.20397695888897652, 1.0569715142428786),
+)
+
+
+def lab_to_color(L: float, a: float, b: float, alpha: float = 1.0) -> Color:
+    """CIE Lab (D50, as CSS defines it) to sRGB.
+
+    Worth having because Tailwind v4 and friends now ship `lab()` alongside a
+    hex fallback, and the `lab()` form is written second — so on a modern build
+    it is the one that wins the cascade, and skipping it loses the color
+    outright rather than falling back.
+    """
+    fy = (L + 16.0) / 116.0
+    fx = a / 500.0 + fy
+    fz = fy - b / 200.0
+
+    xr = fx ** 3 if fx ** 3 > _EPSILON else (116.0 * fx - 16.0) / _KAPPA
+    yr = ((L + 16.0) / 116.0) ** 3 if L > _KAPPA * _EPSILON else L / _KAPPA
+    zr = fz ** 3 if fz ** 3 > _EPSILON else (116.0 * fz - 16.0) / _KAPPA
+
+    xyz = (xr * _D50[0], yr * _D50[1], zr * _D50[2])
+    d65 = tuple(sum(row[i] * xyz[i] for i in range(3)) for row in _D50_TO_D65)
+    lin = tuple(sum(row[i] * d65[i] for i in range(3))
+                for row in _XYZ_TO_LINEAR_SRGB)
+    return Color(_linear_to_srgb(lin[0]), _linear_to_srgb(lin[1]),
+                 _linear_to_srgb(lin[2]), alpha)
+
+
 def contrast_ratio(a: Color, b: Color) -> float:
     la, lb = a.luminance(), b.luminance()
     hi, lo = max(la, lb), min(la, lb)
@@ -391,6 +435,30 @@ def parse_color(text: str) -> Color | None:
             parts[3] if len(parts) > 3 else None
         )
         return oklab_to_color(L, a_, b_, _alpha(alpha))
+
+    if fn in ("lch", "lab"):
+        # CIE Lab, not OKLab: L runs 0-100 here, and a percentage on the axes
+        # means 125 (or 150 for lch chroma), per CSS Color 4.
+        if len(parts) < 3:
+            return None
+        L = _num(parts[0], 100.0)
+        if L is None:
+            return None
+        if fn == "lch":
+            C = _num(parts[1], 150.0)
+            H = _hue(parts[2])
+            if C is None or H is None:
+                return None
+            a_, b_ = C * math.cos(math.radians(H)), C * math.sin(math.radians(H))
+        else:
+            a_ = _num(parts[1], 125.0)
+            b_ = _num(parts[2], 125.0)
+            if a_ is None or b_ is None:
+                return None
+        alpha = slash_alpha if slash_alpha is not None else (
+            parts[3] if len(parts) > 3 else None
+        )
+        return lab_to_color(L, a_, b_, _alpha(alpha))
 
     return None
 

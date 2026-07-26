@@ -14,12 +14,16 @@ from dataclasses import dataclass, field
 
 from .color import Color, contrast_ratio, delta_ok, hue_name, wcag_label
 from .cssparse import (
+    PageElement,
     Stylesheet,
     is_inert_shadow,
+    matches_page_element,
+    page_elements,
     parse_inline_styles,
     parse_stylesheet,
     resolve_vars,
     selector_weight,
+    split_selector_list,
 )
 from .sources import Bundle
 
@@ -404,11 +408,21 @@ def extract(bundle: Bundle, *, merge_threshold: float = 0.02,
     scopes = (_scopes_present(sheets, build_var_table(sheets))
               if themes else set())
 
+    # The document's own <html>/<body>, so ground detection can tell a utility
+    # class that paints the page from one that paints a card. None when there
+    # is no readable HTML at all — a bare .css input, say — in which case
+    # detect_ground falls back to selectors that read like page rules.
+    page = None
+    for asset in bundle.by_kind("html"):
+        page = page_elements(asset.text)
+        if page:
+            break
+
     palettes = [
         _build(sheets, bundle.page_url, all_var_refs, theme_id, scope,
                merge_threshold=merge_threshold,
                third_party_weight=third_party_weight,
-               min_score=min_score, flat=flat)
+               min_score=min_score, flat=flat, page=page)
         for theme_id, scope in _theme_plan(scopes)
     ]
 
@@ -427,6 +441,23 @@ def extract(bundle: Bundle, *, merge_threshold: float = 0.02,
     triplets = _triplet_warning(sheets, build_var_table(sheets))
     if triplets:
         pal.warnings.append(triplets)
+
+    # Every ratio in a palette is measured against its ground, so a ground that
+    # was inferred rather than read makes all of them provisional. Worth saying
+    # out loud: the numbers look just as authoritative either way. Sites that
+    # paint the page from a wrapper element rather than html/body/:root land
+    # here, and a theme whose ground was guessed can end up measured against
+    # the other theme's background entirely.
+    for p in [pal, pal.alternate]:
+        if p and "{" not in p.ground_source:
+            which = f"The {p.theme_id} theme's " if pal.alternate else "The "
+            pal.warnings.append(
+                f"{which}ground was inferred ({p.ground.hex}, {p.ground_source}) "
+                f"because no html/body/:root rule sets a background this tool "
+                f"can read. Contrast ratios for it are measured against that "
+                f"guess. Common when the page background is painted by a "
+                f"wrapper element."
+            )
     if pal.alternate and pal.appearance == pal.alternate.appearance:
         # Both grounds landed on the same side of the light/dark line. The
         # palettes are still real and still different; only the labels would
@@ -442,7 +473,7 @@ def extract(bundle: Bundle, *, merge_threshold: float = 0.02,
 def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
            theme_id: str, scope: str, *, merge_threshold: float,
            third_party_weight: float, min_score: float,
-           flat: bool) -> Palette:
+           flat: bool, page: list[PageElement] | None = None) -> Palette:
     """One theme's palette: everything scoped to it, plus everything unscoped."""
     table = build_var_table(sheets, scope)
     pal = Palette(page_url=page_url, theme_id=theme_id, theme_scope=scope)
@@ -518,7 +549,7 @@ def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
 
     entries = list(buckets.values())
 
-    pal.ground, pal.ground_source = detect_ground(entries)
+    pal.ground, pal.ground_source = detect_ground(entries, page)
     entries = _merge_near_duplicates(entries, merge_threshold, pal.ground)
 
     for e in entries:
@@ -571,7 +602,8 @@ _PAGE_SEL = re.compile(r"^\s*(?:html|body|:root)(?:\s+(?:html|body|:root))*\s*$"
                        re.I)
 
 
-def detect_ground(entries: list[Entry]) -> tuple[Color, str]:
+def detect_ground(entries: list[Entry],
+                  page: list[PageElement] | None = None) -> tuple[Color, str]:
     """Find the color the page actually sits on.
 
     This resolves like the cascade does: among page-level background rules,
@@ -582,6 +614,15 @@ def detect_ground(entries: list[Entry]) -> tuple[Color, str]:
     Within a themed extraction the one addition is that a declaration carrying
     the theme's own marker outranks an unscoped one regardless of order — see
     `Usage.cascade_key`.
+
+    What counts as a page-level rule is the part `page` changes. A selector
+    qualifies if it *reads* like one (`html`, `body`, `:root`) or if it
+    actually selects this document's `<html>` or `<body>` — which is how a
+    utility framework paints the page, with `class="bg-light-primary"` on the
+    body rather than a `body {}` rule. Order alone cannot separate those from
+    the identical-looking utilities sitting on other elements: on ground.news
+    the dark theme's `.dark\\:bg-light-primary` is declared *after* the
+    `.dark\\:bg-dark-primary` that the body actually carries.
     """
     candidates = []
     for e in entries:
@@ -594,9 +635,9 @@ def detect_ground(entries: list[Entry]) -> tuple[Color, str]:
                 continue
             # Matched on the selector as it reads inside its own theme, so
             # `html.dark body` counts as the dark theme's page rule.
-            parts = [p.strip()
-                     for p in (u.scope_selector or u.selector).split(",")]
-            if not any(_PAGE_SEL.match(p) for p in parts):
+            parts = split_selector_list(u.scope_selector or u.selector)
+            if not any(_PAGE_SEL.match(p) or matches_page_element(p, page)
+                       for p in parts):
                 continue
             candidates.append((u.cascade_key, e.color, u))
 

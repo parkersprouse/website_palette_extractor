@@ -65,11 +65,31 @@ _THEME_MEDIA = re.compile(r"prefers-color-scheme\s*:\s*(light|dark)", re.I)
 # Only whole, known theme class names. `.dark-blue`, `.darken` and
 # `.sidebar-dark` name components, not theme roots, and treating one as a theme
 # would split an ordinary palette in half.
+#
+# A backslash ends the name no less than a letter does, which is why it is in
+# the lookahead: Tailwind compiles `dark:bg-x` to the class *named*
+# `dark:bg-x`, written `.dark\:bg-x`. That is a utility whose name happens to
+# start with "dark", not a theme root, and reading it as one strips the marker
+# out of the middle of a class name and leaves `\:bg-x` behind.
 _THEME_CLASS = re.compile(
     r"\.(?:is-|has-|theme-|mode-|colou?r-mode-|colou?r-scheme-)?"
     r"(light|dark)"
     r"(?:-(?:mode|theme|scheme))?"
-    r"(?![\w-])",
+    r"(?![\w\\-])",
+    re.I,
+)
+
+# The same marker wrapped in `:is()`/`:where()`, which is how Tailwind's `dark:`
+# variant actually states the scope: `.dark\:bg-x:is(.dark *)`. It has to come
+# off as a unit — removing just the `.dark` inside would leave `:is( *)` glued
+# to the selector, which then matches nothing downstream.
+_THEME_IS = re.compile(
+    r":(?:is|where)\(\s*"
+    r"\.(?:is-|has-|theme-|mode-|colou?r-mode-|colou?r-scheme-)?"
+    r"(light|dark)"
+    r"(?:-(?:mode|theme|scheme))?"
+    r"(?![\w\\-])"
+    r"[^)]*\)",
     re.I,
 )
 
@@ -82,6 +102,46 @@ _THEME_ATTR = re.compile(
 
 _WS = re.compile(r"\s+")
 _REDUNDANT_HTML = re.compile(r"^html\s+(?=body\b)", re.I)
+
+
+def split_selector_list(selector: str) -> list[str]:
+    """Split on the commas that separate selectors, not the ones inside them.
+
+    `.a:is(.b, .c), .d` is two selectors, and a bare `split(",")` makes it
+    three broken ones. Functional pseudo-classes made this load-bearing rather
+    than pedantic: Tailwind v4 compiles its dark variant to
+    `.dark\\:bg-x:where(.dark,.dark *)`, and splitting inside the `:where()`
+    leaves `:where(, *)` — a selector that matches nothing, so the theme's
+    rules stop being recognised as the theme's.
+
+    Attribute values are quoted and can contain commas too, so quotes and
+    brackets are tracked alongside parens.
+    """
+    parts, depth, quote, start = [], 0, "", 0
+    i = 0
+    while i < len(selector):
+        ch = selector[i]
+        if quote:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == quote:
+                quote = ""
+        elif ch == "\\":
+            i += 2                      # an escape, never a delimiter
+            continue
+        elif ch in "\"'":
+            quote = ch
+        elif ch in "([":
+            depth += 1
+        elif ch in ")]":
+            depth = max(0, depth - 1)
+        elif ch == "," and depth == 0:
+            parts.append(selector[start:i])
+            start = i + 1
+        i += 1
+    parts.append(selector[start:])
+    return [p.strip() for p in parts if p.strip()]
 
 
 def theme_scope(selector: str, at_rules: tuple[str, ...]) -> str:
@@ -97,7 +157,8 @@ def theme_scope(selector: str, at_rules: tuple[str, ...]) -> str:
     accurate and is not worth the machinery: authors do not mix scoped and
     unscoped selectors in one rule.
     """
-    m = _THEME_CLASS.search(selector) or _THEME_ATTR.search(selector)
+    m = (_THEME_IS.search(selector) or _THEME_CLASS.search(selector)
+         or _THEME_ATTR.search(selector))
     if m:
         return m.group(1).lower()
     for at in at_rules:
@@ -122,8 +183,9 @@ def strip_theme_scope(selector: str) -> str:
     is a root token override, and dropping it would leave no selector at all.
     """
     out = []
-    for part in selector.split(","):
-        cleaned = _THEME_ATTR.sub(" ", _THEME_CLASS.sub(" ", part))
+    for part in split_selector_list(selector):
+        cleaned = _THEME_IS.sub("", part)
+        cleaned = _THEME_ATTR.sub(" ", _THEME_CLASS.sub(" ", cleaned))
         cleaned = _WS.sub(" ", cleaned).strip()
         # `html body` and `body` select the same element, and the marker is
         # usually carried on `html`, so `html.dark body` has to come out as
@@ -183,11 +245,26 @@ def _mask_strings(css: str) -> str:
     """Blank out string contents so `content: "#fff"` is not read as a color.
 
     Length is preserved so offsets stay valid for the caller.
+
+    Outside a string a backslash begins an escape and the next character is
+    literal — never a delimiter. Missing that case is not a small error: a
+    Tailwind arbitrary-value class like
+
+        .bg-\\[url\\(\\"https://…/hero.png\\"\\)\\] { background-image: … }
+
+    carries an escaped quote *in the selector*. Reading it as the start of a
+    string masks everything up to the next quote, which swallows the `{` and
+    leaves the brace walker one level deep for the rest of the file. On the
+    stylesheet that turned this up it cost 178 of 181 themed rules — silently,
+    since the parse still succeeds and simply returns less.
     """
     out = list(css)
     i, n = 0, len(css)
     while i < n:
         ch = css[i]
+        if ch == "\\":
+            i += 2
+            continue
         if ch in "\"'":
             quote = ch
             j = i + 1
@@ -363,7 +440,7 @@ def selector_weight(selector: str, at_rules: tuple[str, ...]) -> float:
     s = selector.lower().strip()
     w = 1.0
 
-    parts = [p.strip() for p in s.split(",") if p.strip()]
+    parts = split_selector_list(s)
     base = parts[0] if parts else s
 
     if re.fullmatch(r"(html|body|:root)(\s*,\s*(html|body|:root))*", s):
@@ -433,6 +510,175 @@ def extract_style_blocks(html: str) -> list[tuple[str, str]]:
         label = f"<style#{ident}>" if ident else f"<style[{i}]>"
         out.append((label, body))
     return out
+
+
+# ------------------------------------------------------------- the page element
+#
+# Ground detection has to know which rules actually land on the element the page
+# is painted on, and a utility framework states that on the element rather than
+# in the stylesheet. ground.news writes `<body class="… bg-light-primary
+# dark:bg-dark-primary …">`, and those two utilities beat the `body {
+# background-color: var(--background) }` rule in the site's own CSS on
+# specificity — so the palette's ground is `#eeefe9`/`#262626`, not the
+# `#ffffff`/`#0a0a0a` that `--background` resolves to.
+#
+# Nothing in the stylesheet distinguishes `.bg-light-primary` (on the body) from
+# `.bg-dark-primary` (on some card); the class attribute is the only place that
+# information exists. This is still reading CSS — it just reads which rules the
+# document selects, rather than assuming only `html`/`body`/`:root` can.
+
+
+@dataclass
+class PageElement:
+    """`<html>` or `<body>` as the document actually wrote it."""
+    tag: str
+    id: str = ""
+    classes: frozenset = frozenset()
+    attrs: dict = field(default_factory=dict)
+
+
+_TAG_ATTR = re.compile(r"""([\w:-]+)\s*(?:=\s*(?:(["'])(.*?)\2|([^\s"'>]+)))?""",
+                       re.S)
+_IDENT_ESC = re.compile(r"\\(?:([0-9a-fA-F]{1,6})[ \t\r\n]?|(.))", re.S)
+
+
+def unescape_ident(name: str) -> str:
+    """A CSS identifier as the HTML class attribute spells it.
+
+    Selectors escape anything that would otherwise be syntax, so Tailwind's
+    `dark:bg-x` class is *written* `.dark\\:bg-x` — and both escape forms turn
+    up in the wild, `\\:` and the hex `\\3a `. Comparing without unescaping
+    fails to match and silently falls back to a worse ground.
+    """
+    def sub(m: re.Match) -> str:
+        hexits, ch = m.group(1), m.group(2)
+        if hexits:
+            cp = int(hexits, 16)
+            # A null escape is a replacement character per CSS Syntax 3.
+            return chr(cp) if cp else "�"
+        return ch or ""
+    return _IDENT_ESC.sub(sub, name)
+
+
+def page_elements(html: str) -> list[PageElement] | None:
+    """`<html>` and `<body>` as this document wrote them, or None.
+
+    None means the tags could not be read at all — a truncated or non-HTML
+    document. That is deliberately distinct from an element with no classes:
+    the second says the body carries nothing, and the first says we do not
+    know, and treating "unknown" as "nothing" would state a ground confidently
+    on no evidence.
+    """
+    found = []
+    for tag in ("html", "body"):
+        m = re.search(rf"<{tag}\b([^>]*)>", html, re.I)
+        if not m:
+            continue
+        el = PageElement(tag=tag)
+        for am in _TAG_ATTR.finditer(m.group(1)):
+            name = am.group(1).lower()
+            value = am.group(3) if am.group(3) is not None else (am.group(4) or "")
+            if name == "class":
+                el.classes = frozenset(value.split())
+            elif name == "id":
+                el.id = value
+            else:
+                el.attrs[name] = value
+        found.append(el)
+    return found or None
+
+
+# One simple selector at a time. A combinator — or anything else this does not
+# know — simply fails to match at its position, which ends the walk and rejects
+# the selector. That is the intended behaviour: `.foo .bar` is a rule about a
+# descendant of the body, not about the body.
+_SIMPLE = re.compile(r"""
+      (?P<tag>^[A-Za-z][\w-]*)
+    | \.(?P<cls>(?:[\w-]|\\[0-9a-fA-F]{1,6}[ \t]?|\\.)+)
+    | \#(?P<id>(?:[\w-]|\\[0-9a-fA-F]{1,6}[ \t]?|\\.)+)
+    | \[\s*(?P<attr>[\w:-]+)\s*
+      (?:(?P<op>[~|^$*]?=)\s*(?P<val>"[^"]*"|'[^']*'|[^\]]*?)\s*)?\]
+    | (?P<pseudo>::?[\w-]+(?:\([^)]*\))?)
+""", re.X)
+
+
+def matches_page_element(selector: str,
+                         elements: list[PageElement] | None) -> bool:
+    """Does this selector select `<html>` or `<body>` in this document?
+
+    Narrow on purpose. It answers only for a single compound with no
+    combinator, and rejects any pseudo-class other than `:root`, because a rule
+    that applies on `:hover` is not the page's resting background. Anything
+    less certain than "this definitely paints the page element" should return
+    False and let the ordinary page-selector pattern have the last word.
+    """
+    if not elements:
+        return False
+
+    sel = selector.strip()
+    if not sel:
+        return False
+
+    tag = ""
+    ids: set = set()
+    classes: set = set()
+    attrs: list = []
+    pos = 0
+    while pos < len(sel):
+        m = _SIMPLE.match(sel, pos)
+        if not m:
+            return False           # a combinator, or syntax we do not model
+        if m.group("tag"):
+            tag = m.group("tag").lower()
+        elif m.group("cls"):
+            classes.add(unescape_ident(m.group("cls")))
+        elif m.group("id"):
+            ids.add(unescape_ident(m.group("id")))
+        elif m.group("attr"):
+            val = (m.group("val") or "").strip("\"'")
+            attrs.append((m.group("attr").lower(), m.group("op"), val))
+        else:
+            pseudo = m.group("pseudo").lower()
+            if pseudo != ":root":
+                return False       # conditional, or an element we cannot see
+            tag = tag or "html"
+        pos = m.end()
+
+    if tag and tag not in ("html", "body"):
+        return False
+
+    for el in elements:
+        if tag and tag != el.tag:
+            continue
+        if not classes <= el.classes:
+            continue
+        if ids and ids != {el.id}:
+            continue
+        if any(not _attr_matches(el, *a) for a in attrs):
+            continue
+        return True
+    return False
+
+
+def _attr_matches(el: PageElement, name: str, op: str | None, val: str) -> bool:
+    have = el.id if name == "id" else el.attrs.get(name)
+    if have is None:
+        return False
+    if op is None:
+        return True
+    if op == "=":
+        return have == val
+    if op == "~=":
+        return val in have.split()
+    if op == "|=":
+        return have == val or have.startswith(val + "-")
+    if op == "^=":
+        return have.startswith(val)
+    if op == "$=":
+        return have.endswith(val)
+    if op == "*=":
+        return val in have
+    return False
 
 
 def extract_stylesheet_links(html: str) -> list[str]:

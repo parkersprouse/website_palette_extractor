@@ -19,11 +19,15 @@ from palettekit.color import (
 )
 from palettekit.cssparse import (
     is_inert_shadow,
+    matches_page_element,
+    page_elements,
     parse_stylesheet,
     resolve_vars,
     selector_weight,
+    split_selector_list,
     strip_theme_scope,
     theme_scope,
+    unescape_ident,
 )
 
 
@@ -41,6 +45,34 @@ class TestParsing(unittest.TestCase):
         self.assertEqual(parse_color("hsl(0 100% 50%)").hex, "#ff0000")
         self.assertEqual(parse_color("hsl(120deg 100% 25%)").hex, "#008000")
         self.assertEqual(parse_color("oklab(0.628 0.225 0.126)").hex, "#ff0000")
+
+    def test_cie_lab_and_lch(self):
+        """CIE Lab is D50 and 0-100, unlike the OKLab pair right next to it.
+
+        Tailwind v4 emits `lab()` *after* a hex fallback, so it wins the
+        cascade and skipping it loses the color rather than degrading to the
+        fallback. Values below are the sRGB primaries round-tripped through
+        CSS Color 4.
+        """
+        cases = {
+            "lab(100% 0 0)": "#ffffff",
+            "lab(100 0 0)": "#ffffff",
+            "lab(0% 0 0)": "#000000",
+            "lab(53.585% 0 0)": "#808080",
+            "lab(54.291% 80.805 69.891)": "#ff0000",
+            "lab(87.818% -79.271 80.99)": "#00ff00",
+            "lab(29.568% 68.299 -112.03)": "#0000ff",
+            "lch(54.291% 106.839 40.858)": "#ff0000",
+            "lch(100% 0 0)": "#ffffff",
+        }
+        for text, want in cases.items():
+            self.assertEqual(parse_color(text).hex, want, text)
+        self.assertAlmostEqual(parse_color("lab(50% 0 0 / 0.5)").a, 0.5)
+
+    def test_lab_agrees_with_the_fallback_authored_beside_it(self):
+        """A real build wrote both forms for the same token; they must match."""
+        self.assertEqual(parse_color("lab(2.75381% 0 0)").hex,
+                         parse_color("#0a0a0a").hex)
 
     def test_named_and_nonsense(self):
         self.assertEqual(parse_color("rebeccapurple").hex, "#663399")
@@ -123,6 +155,26 @@ class TestCss(unittest.TestCase):
         self.assertTrue(is_inert_shadow("box-shadow", "0 0 0 #000"))
         self.assertFalse(is_inert_shadow("box-shadow", "0 2px 4px #000"))
         self.assertFalse(is_inert_shadow("color", "#000"))
+
+    def test_escaped_quote_in_a_selector_does_not_swallow_the_rest(self):
+        r"""Tailwind arbitrary values put escaped quotes in the *selector*.
+
+        `.bg-\[url\(\"…\"\)\]` is not a string. Read as one, masking runs to
+        the next quote, swallows the `{`, and leaves the brace walker a level
+        deep for the remainder of the file. The parse still succeeds and
+        simply returns less, which is why this went unnoticed: on one real
+        stylesheet it cost 178 of 181 themed rules and two thirds of every
+        declaration.
+        """
+        css = (
+            r'.bg-\[url\(\"https://x/y.png\"\)\] { background-image: '
+            r'url(https://x/y.png); }'
+            "\n.after { color: #abcdef; }\nbody { background: #123456; }"
+        )
+        sheet = parse_stylesheet(css, "t")
+        found = [c.hex for d in sheet.declarations for c in find_colors(d.value)]
+        self.assertIn("#abcdef", found, "rules after the escaped quote were lost")
+        self.assertIn("#123456", found)
 
     def test_page_selectors_outweigh_components(self):
         self.assertGreater(selector_weight("body", ()),
@@ -320,6 +372,159 @@ class TestThemeScopes(unittest.TestCase):
         }
         for sel, want in cases.items():
             self.assertEqual(strip_theme_scope(sel), want, sel)
+
+    def test_selector_list_splits_outside_parens_only(self):
+        """A comma inside `:is()`/`:where()`/`[]` does not start a selector."""
+        cases = {
+            ".a:is(.b, .c), .d": [".a:is(.b, .c)", ".d"],
+            'a[data-x="p,q"], b': ['a[data-x="p,q"]', "b"],
+            ":nth-child(2n, 3n).y, .z": [":nth-child(2n, 3n).y", ".z"],
+            "h1, h2 , h3": ["h1", "h2", "h3"],
+            # An escaped comma is part of the class name, not a separator.
+            r".a\,b, .c": [r".a\,b", ".c"],
+            ".x": [".x"],
+        }
+        for sel, want in cases.items():
+            self.assertEqual(split_selector_list(sel), want, sel)
+
+    def test_tailwind_v4_dark_variant_survives_the_split(self):
+        """Tailwind v4 puts a comma inside the scope: `:where(.dark,.dark *)`.
+
+        Splitting there leaves `:where(, *)`, which matches nothing — so the
+        theme's own rules stop being recognised as the theme's, and its ground
+        falls back to a guess. v3's `:is(.dark *)` has no comma, which is why
+        this survived a site built on v3.
+        """
+        v4 = r".dark\:bg-gray-950:where(.dark,.dark *)"
+        self.assertEqual(theme_scope(v4, ()), "dark")
+        self.assertEqual(strip_theme_scope(v4), r".dark\:bg-gray-950")
+
+    def test_tailwind_variant_class_is_not_a_theme_root(self):
+        """`.dark\\:bg-x` is a class *named* `dark:bg-x`, not a theme root.
+
+        The scope is stated by the `:is(.dark *)` beside it. Reading the name
+        as the marker strips it out of the middle of the class and leaves
+        `\\:bg-x` — which then matches nothing, including the body's own class.
+        """
+        sel = r".dark\:bg-dark-primary:is(.dark *)"
+        self.assertEqual(theme_scope(sel, ()), "dark")
+        self.assertEqual(strip_theme_scope(sel), r".dark\:bg-dark-primary")
+        # The name alone, with no :is() to scope it, is not a theme at all.
+        self.assertEqual(theme_scope(r".dark\:bg-dark-primary", ()), "")
+
+
+class TestPageElement(unittest.TestCase):
+    """Which rules actually land on the element the page is painted on.
+
+    A utility framework says this on the element, not in the stylesheet, so
+    the class attribute is the only place the information exists.
+    """
+
+    HTML = ('<html lang="en-US"><body id="pg" '
+            'class="flex bg-light-primary dark:bg-dark-primary">')
+
+    def test_unescape_both_escape_forms(self):
+        # Tailwind emits either depending on version and what is escaped.
+        self.assertEqual(unescape_ident(r"dark\:bg-x"), "dark:bg-x")
+        self.assertEqual(unescape_ident(r"dark\3a bg-x"), "dark:bg-x")
+
+    def test_matches_only_what_selects_the_page_element(self):
+        els = page_elements(self.HTML)
+        cases = {
+            ".bg-light-primary": True,
+            r".dark\:bg-dark-primary": True,
+            r".dark\3a bg-dark-primary": True,
+            "body": True, "html": True, ":root": True,
+            "body.flex": True, "#pg": True, '[lang="en-US"]': True,
+            # The same utility sitting on some other element.
+            ".bg-dark-primary": False,
+            # A descendant of the body is not the body.
+            ".flex .bg-light-primary": False,
+            ".flex > .x": False,
+            # A hover state is not the page's resting background.
+            ".bg-light-primary:hover": False,
+            ".bg-light-primary:before": False,
+            "body.nope": False, "#other": False, "div.flex": False,
+        }
+        for sel, want in cases.items():
+            self.assertIs(matches_page_element(sel, els), want, sel)
+
+    def test_unreadable_document_is_not_an_empty_one(self):
+        """None means "could not tell", which is not "carries no classes"."""
+        self.assertIsNone(page_elements("no html here"))
+        self.assertIs(matches_page_element(".bg-light-primary", None), False)
+        # Read, and genuinely bare — the reference fixture's shape.
+        bare = page_elements('<html><body style="opacity:0">')
+        self.assertEqual([e.classes for e in bare], [frozenset(), frozenset()])
+
+
+UTILITY_GROUND = """<!DOCTYPE html><html><head><style>
+  :root { --background: #ffffff; }
+  .dark { --background: #0a0a0a; }
+  body { background-color: var(--background); color: #333333; }
+  .bg-light-primary { background-color: #eeefe9; }
+  .bg-dark-primary { background-color: #262626; }
+  .dark\\:bg-dark-primary:is(.dark *) { background-color: #262626; }
+  .dark\\:bg-light-primary:is(.dark *) { background-color: #eeefe9; }
+</style></head>
+<body class="bg-light-primary dark:bg-dark-primary"></body></html>
+"""
+
+
+class TestUtilityGround(unittest.TestCase):
+    """A page painted by utility classes on <body>, not by a `body {}` rule."""
+
+    def doc(self):
+        return emit.to_document(extract.extract(sources.load_any(
+            write_fixture(UTILITY_GROUND))))
+
+    def test_utility_on_body_outranks_the_body_rule(self):
+        """`.bg-light-primary` beats `body {}` — and is what the page shows."""
+        themes = {t["id"]: t for t in self.doc()["themes"]}
+        self.assertEqual(themes["base"]["ground"], "#eeefe9")
+        # Reached by the right path: named for the class, not for `body`.
+        self.assertIn("bg-light-primary", themes["base"]["groundSource"])
+
+    def test_a_later_utility_the_body_lacks_does_not_win(self):
+        """The case document order alone gets wrong.
+
+        `.dark\\:bg-light-primary` is declared *after* the
+        `.dark\\:bg-dark-primary` the body actually carries, so ordering picks
+        it unless the class list is consulted. Only the body's own classes
+        separate the two.
+        """
+        themes = {t["id"]: t for t in self.doc()["themes"]}
+        self.assertEqual(themes["dark"]["ground"], "#262626")
+
+    def test_tailwind_v4_shape_on_the_html_element(self):
+        """The other real shape: v4's `:where(.dark,.dark *)`, marker on <html>.
+
+        Trimmed from tailwindcss.com, which is where the comma split showed up.
+        """
+        html = """<!DOCTYPE html><html class="antialiased dark:bg-gray-950">
+<head><style>
+  body { background-color: #ffffff; color: #111111; }
+  .dark\\:bg-gray-950:where(.dark,.dark *) { background-color: #030712; }
+  .dark\\:bg-gray-800:where(.dark,.dark *) { background-color: #1e2939; }
+</style></head><body></body></html>
+"""
+        doc = emit.to_document(extract.extract(sources.load_any(
+            write_fixture(html))))
+        themes = {t["id"]: t for t in doc["themes"]}
+        self.assertEqual(themes["base"]["ground"], "#ffffff")
+        self.assertEqual(themes["dark"]["ground"], "#030712")
+        # From the html element's own class, not from a guess.
+        self.assertIn("bg-gray-950", themes["dark"]["groundSource"])
+
+    def test_a_bare_body_still_uses_the_body_rule(self):
+        """No classes on <body> must leave the old path exactly as it was."""
+        html = UTILITY_GROUND.replace(
+            '<body class="bg-light-primary dark:bg-dark-primary">', "<body>")
+        doc = emit.to_document(extract.extract(sources.load_any(
+            write_fixture(html))))
+        themes = {t["id"]: t for t in doc["themes"]}
+        self.assertEqual(themes["base"]["ground"], "#ffffff")
+        self.assertEqual(themes["dark"]["ground"], "#0a0a0a")
 
 
 MEDIA_THEMES = """<!DOCTYPE html><html><head><style>

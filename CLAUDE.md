@@ -14,7 +14,7 @@ and reached only through `images.py`, behind `--images`.
 
 ```bash
 python3 -m palettekit <target> -o out    # target: .har | URL | .html/.css path
-python3 test_palettekit.py               # 44 tests, all must pass
+python3 test_palettekit.py               # 62 tests, all must pass
 python3 -m palettekit x.har --no-themes  # collapse a two-theme site into one
 ruff check .                             # must stay clean; config in pyproject
 python3 -m palettekit x.har --list-sources   # diagnose framework noise first
@@ -55,10 +55,10 @@ sources.py   →  cssparse.py  →  extract.py  →  emit.py
 
 | File | Lines | Holds |
 |---|---:|---|
-| `color.py` | 460 | `Color`, parsing, sRGB↔OKLab, contrast, hue names |
-| `cssparse.py` | 448 | Declaration walker, `var()`, `selector_weight`, roles, theme scopes |
+| `color.py` | 528 | `Color`, parsing, sRGB↔OKLab, CIE Lab/LCH, contrast, hue names |
+| `cssparse.py` | 694 | Declaration walker, `var()`, `selector_weight`, roles, theme scopes, page element |
 | `sources.py` | 292 | `load_har` / `load_url` / `load_paths` → `Bundle` |
-| `extract.py` | 793 | `extract()`, per-theme `_build`, ground, merging, statuses, naming |
+| `extract.py` | 897 | `extract()`, per-theme `_build`, ground, merging, statuses, naming |
 | `emit.py` | 942 | Emitters; `_HTML` is the report template |
 | `images.py` | 148 | Optional image quantisation, not part of the token set |
 | `__main__.py` | 248 | CLI |
@@ -91,6 +91,9 @@ because the obvious implementation produced plausible but wrong output.
    is the near-universal convention that the override is written after what it
    overrides. On an unthemed site every declaration is unscoped and the tuple
    degrades to the plain `(sheet, order)` pair, so the base path is untouched.
+
+   Resolution is cascade order and nothing else. What invariant 16 changes is
+   the *candidate set*, not how the winner is picked among them.
 
 3. **Stylesheets are collected in document order** (`collect_sheets`,
    `_document_order`), walking `<style>` and `<link rel=stylesheet>` together
@@ -127,6 +130,16 @@ because the obvious implementation produced plausible but wrong output.
    (`_mask_strings`, `strip_comments`). `content: "#fff"` is not a color.
    `_mask_strings` preserves length so offsets stay valid.
 
+   **A backslash outside a string is an escape, and the next character is
+   never a delimiter.** Tailwind arbitrary values put escaped quotes in the
+   *selector* — `.bg-\[url\(\"…\"\)\]` — and reading one as a string opener
+   masks through the following `{`, leaving the brace walker a level deep for
+   the rest of the file. The parse still succeeds and quietly returns less,
+   which is the worst way for this to fail: on `ground.news.har` it cost 178 of
+   181 themed rules and two thirds of every declaration, and made a site with
+   two obvious themes look like it had one. Test:
+   `test_escaped_quote_in_a_selector_does_not_swallow_the_rest`.
+
 10. **Code emitters ship `live` colors only** by default (`_for_code`). What
     you paste into a project should be what the site paints; `saved` and
     `inert` stay in the JSON and the report, labelled. `--include-unused`
@@ -160,6 +173,16 @@ because the obvious implementation produced plausible but wrong output.
     anchored on whole names so `.dark-blue`, `.darken` and `.sidebar-dark` are
     not theme roots. Tests: `TestThemeScopes`.
 
+    **A backslash ends a class name too**, which is why it is in the anchor's
+    lookahead. Tailwind compiles `dark:bg-x` to a class *named* `dark:bg-x`,
+    written `.dark\:bg-x:is(.dark *)`. The scope is the `:is()`; the name is
+    just a name. Reading the name as the marker strips it out of the middle of
+    the class and leaves `\:bg-x`, which then matches nothing — including the
+    body's own class, which is how invariant 16 finds the ground. The `:is()`
+    form has to come off as a unit for the same reason: removing only the
+    `.dark` inside it leaves `:is( *)` glued to the selector. Test:
+    `test_tailwind_variant_class_is_not_a_theme_root`.
+
 15. **The two themes share one set of token names** (`_align_names`), paired by
     rank *within a group, against each theme's own ground*. The
     highest-contrast ink in a light theme is the same token as the
@@ -168,6 +191,54 @@ because the obvious implementation produced plausible but wrong output.
     alignment the toggle swaps one list of names for an unrelated one and
     `--c-ink-1` means two different things in the emitted CSS. Test:
     `test_names_align_across_themes`.
+
+16. **A rule is page-level if it *selects* `<html>`/`<body>`, not only if it
+    reads like it** (`page_elements`, `matches_page_element`). A utility
+    framework paints the page from the element: ground.news writes
+    `<body class="… bg-light-primary dark:bg-dark-primary …">`, and those beat
+    its own `body { background-color: var(--background) }` on specificity. Match
+    on `html|body|:root` alone and the reported ground is `#ffffff`/`#0a0a0a`
+    — the value `--background` resolves to, which the page never paints —
+    instead of `#eeefe9`/`#262626`.
+
+    The class attribute is the only place this information exists; nothing in
+    the stylesheet distinguishes `.bg-light-primary` on the body from
+    `.bg-dark-primary` on a card. **Document order cannot substitute for it**:
+    on ground.news the dark theme's `.dark\:bg-light-primary` is declared
+    *after* the `.dark\:bg-dark-primary` the body actually carries, so ordering
+    alone picks the wrong one. Test:
+    `test_a_later_utility_the_body_lacks_does_not_win`.
+
+    The matcher is deliberately narrow — one compound, no combinators, no
+    pseudo-class but `:root` — because anything less certain than "this paints
+    the page element" should defer to `_PAGE_SEL`. `.foo .bar` is a rule about
+    a descendant; `.foo:hover` is not a resting background. Selector escapes
+    are unescaped before comparing (`unescape_ident`, both `\:` and `\3a `),
+    since CSS writes `.dark\:bg-x` for the class HTML spells `dark:bg-x`.
+
+    `page_elements` returns `None` when it could not read the tags at all,
+    which is **not** the same as an element with no classes. Treating unknown
+    as empty would state a ground confidently on no evidence. Test:
+    `test_unreadable_document_is_not_an_empty_one`.
+
+17. **A selector list splits on commas at depth zero** (`split_selector_list`),
+    never on the ones inside `:is()`, `:where()`, `:not()`, `:nth-child()`, an
+    attribute value, or an escape. `.a:is(.b, .c), .d` is two selectors and a
+    bare `split(",")` makes it three broken ones.
+
+    This is load-bearing rather than pedantic because **Tailwind v4 compiles
+    its dark variant to `.dark\:bg-x:where(.dark,.dark *)`** — with a comma
+    inside the scope. Splitting there leaves `:where(, *)`, the theme's own
+    rules stop being recognised as the theme's, and its ground silently falls
+    back to a guess. Tailwind v3 emits `:is(.dark *)`, no comma, which is why
+    this survived a corpus of one v3 site. Tests:
+    `test_selector_list_splits_outside_parens_only`,
+    `test_tailwind_v4_dark_variant_survives_the_split`,
+    `test_tailwind_v4_shape_on_the_html_element`.
+
+    Note the deliberate asymmetry: `theme_scope` does **not** split, because it
+    judges a list as a whole (see its docstring). `strip_theme_scope`,
+    `selector_weight` and `detect_ground` all do.
 
 ## Status vocabulary
 
@@ -234,11 +305,35 @@ Tailwind config should even look like first.
   export time; a color computed in JS and set as an element property is in no
   stylesheet and will not be found.
 - **The cascade is approximated, not implemented.** Ground follows document
-  order; `var()` resolution takes the last definition. Specificity and scoped
-  custom properties are not modelled — beyond the two narrow theme rules in
-  invariants 2 and 13, which exist because getting theme overrides wrong
-  produces a whole second palette of colors the site never paints. Fine for
-  gathering a palette, wrong for predicting computed styles.
+  order; `var()` resolution takes the last definition. Specificity, `@layer`
+  and scoped custom properties are not modelled — beyond the narrow rules in
+  invariants 2, 13 and 16, which exist because getting theme overrides or the
+  ground wrong produces a whole palette of colors the site never paints. Fine
+  for gathering a palette, wrong for predicting computed styles.
+
+  Invariant 16 is a candidate-set rule, not a specificity model. It happens to
+  land right on ground.news because the utility is declared after the `body`
+  rule it beats, so document order agrees with specificity there. A site whose
+  element-matched utility came *earlier* than a competing `body` rule would
+  still be read wrongly.
+
+  **Why not just compute specificity.** Specificity alone is computable from
+  the selector — it is a mechanical `(ids, classes, elements)` count. It is
+  also not enough on its own. The real cascade is
+  `importance → layer → specificity → document order`, and a single page
+  (tailwindcss.com) exercises all four: `!important` in values, `@layer` used
+  structurally by Tailwind v4, `:where()` contributing zero specificity while
+  `:is()`/`:not()`/`:has()` take the max of their arguments. Adding specificity
+  *without* layers makes layered sites worse than document order does, because
+  an unlayered rule beats any layered one regardless of how specific it is. So
+  the options are all four or none, and all four is a cascade engine — which
+  contradicts both the stated limit above and the stdlib-only core.
+
+  The narrow version worth considering if a real case turns up: `!important` as
+  a tiebreak *inside `detect_ground` only*, where the candidate set is already
+  small and filtered. One bit, unambiguous, testable. Not implemented — no site
+  in the corpus changes answer with it, and adding cascade machinery on
+  speculation is how invariant 2 earned its warning.
 
 - **A bare channel triplet used raw paints nothing, and is reported rather than
   parsed.** The shadcn/ui convention writes `--background: 0 0% 3.9%` and
@@ -246,20 +341,38 @@ Tailwind config should even look like first.
   `hsl(var(--x) / 50%)`, `rgb(var(--x))` — it parses here and always has; that
   path is covered by `TestChannelTriplets` because nothing advertised it.
 
-  Used raw, as `background-color: var(--background)`, it is **not a colour we
+  Used raw, as `background-color: var(--background)`, it is **not a color we
   are failing to read**. It is invalid CSS: verified against a real engine,
   `CSS.supports('background-color', '0 0% 100%')` is `false` and the computed
   value is `rgba(0,0,0,0)`. Reading a color out of it would invent one the page
   never shows. Do not "fix" this by teaching `find_colors` about loose
-  triplets — an earlier note in this file suggested exactly that, before the
-  computed-style evidence existed.
+  triplets. `_triplet_warning` names the situation instead, in one aggregated
+  note, so a site written this way does not look like an extraction failure.
 
-  `_triplet_warning` names the situation instead, in one aggregated note, so a
-  site written this way does not look like an extraction failure.
-  `ground.news.har` is the local reproduction: 53 `.dark` declarations are
-  detected and the var table diverges correctly across 23 properties, and the
-  palette is still nearly identical across themes — correctly, because those
-  declarations paint nothing. 11 properties trip the warning.
+  **`ground.news.har` is no longer an example of this**, and the story of why
+  is worth keeping, because getting there took three passes and the first two
+  answers were both wrong in the same way.
+
+  It looked like a triplet site: the light and dark palettes came out nearly
+  identical and the visible `--background: 0 0% 100%` seemed to explain it. It
+  did not. The parse had been truncated by the `_mask_strings` escape bug in
+  invariant 9, and two thirds of the declarations — including the `--background`
+  hex definitions and their `lab()` equivalents — were being dropped.
+
+  Fixing that gave `#ffffff` / `#0a0a0a`, which was still wrong, just less
+  obviously: those are what `--background` resolves to, and `body {
+  background-color: var(--background) }` really is in the CSS. But the page
+  never paints it. `<body class="bg-light-primary dark:bg-dark-primary">`
+  overrides it from the element, and the real grounds are `#eeefe9` / `#262626`
+  — invariant 16.
+
+  Two lessons, and the second is the one that cost the most. **Confirm the parse
+  is complete before explaining a thin palette**, because a truncated parse
+  produces a plausible wrong theory and there was one ready to hand. And **a
+  ground that resolves cleanly is not thereby correct** — `#ffffff` came from a
+  real rule, by a defensible mechanism, and was still not the color on the
+  screen. Both wrong answers were self-consistent. What settled it each time was
+  evidence from outside the parse: a screenshot of the running site.
 - **Scoring is a heuristic** (`selector_weight`). Treat ordering as a hint.
 - **Framework CSS cannot be reliably auto-detected** when it is inlined in the
   document, which is the common case for page builders. This is deliberately
@@ -276,6 +389,29 @@ anchor: ground `#151515`, `rgba(255,255,255,.75)` flattening to exactly
 `#c4c4c4` at 10.47:1, `#ffc600` as `saved`, `#13330d` as `inert`, and the
 imagery measuring 99.7% neutral. If a change moves any of those, understand why
 before accepting it.
+
+## Breadth check
+
+One site cannot tell you whether a parser change is general. Two of the bugs
+above were found only by running a spread of stacks and diffing the grounds
+before and after:
+
+```bash
+for u in getbootstrap.com ui.shadcn.com www.djangoproject.com \
+         news.ycombinator.com developer.mozilla.org tailwindcss.com; do
+  python3 -m palettekit "https://$u" -o "out/$u"
+done
+```
+
+Bootstrap, shadcn/Next, a classic server-rendered site, plain hand-written CSS,
+Tailwind v4, and a docs site — deliberately not all one framework. Expect most
+grounds to be *unchanged* by any given fix; a change on a site you were not
+targeting is the signal worth chasing. `tailwindcss.com` earns its place
+specifically because it is **Tailwind v4** and `ground.news.har` is v3: v4's
+`:where(.dark,.dark *)` broke invariant 17 in a way no v3 site could reveal.
+
+URL fetches run no JavaScript, so several of these land on the inferred-ground
+fallback. That is fine — the point is the *diff*, not the absolute answer.
 
 ## Migration TODO
 

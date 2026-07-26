@@ -112,25 +112,37 @@ default theme only.**
 A site with no theme scopes produces exactly what it did before — one palette,
 no toggle. `--no-themes` forces that.
 
-A caveat worth knowing, if a site stores its theme colors as bare channel
-triplets (`--background: 0 0% 3.9%`, the shadcn/ui pattern). Assembled at the
-point of use — `hsl(var(--background))`, including `hsl(var(--x) / 50%)` and
+One caveat, for sites storing theme colors as bare channel triplets
+(`--background: 0 0% 3.9%`, the shadcn/ui pattern). Assembled at the point of
+use — `hsl(var(--background))`, including `hsl(var(--x) / 50%)` and
 `rgb(var(--x))` — those read normally and end up in the palette.
 
 Used raw, as `background-color: var(--background)`, they do not, and that is
 correct: `background-color: 0 0% 3.9%` is invalid CSS, so a browser discards it
 and paints nothing. Reading a color there would put something in your palette
-that the page never shows. When this happens you get a note saying so, rather
-than a silently thin result.
+that the page never shows. You get a note saying so, rather than a silently
+thin result.
+
+You also get a note when a theme's ground had to be inferred — when nothing
+sets a readable background on `html`, `body` or `:root`, usually because the
+page is painted from a wrapper element. Every contrast ratio in that theme is
+measured against the inferred ground, so it is worth knowing.
 
 ## What it decides, and why
 
 **Ground is resolved by the cascade, not by counting.** The page background is
-whichever `html`/`body`/`:root` background rule comes *last*. Weighting by usage
-instead gets this wrong on any site that loads a framework stylesheet before its
-own — which is most of them. Everything else depends on this, since colors with
-alpha are flattened over the ground and every contrast ratio is measured
-against it.
+whichever background rule that lands on the page comes *last*. Weighting by
+usage instead gets this wrong on any site that loads a framework stylesheet
+before its own — which is most of them. Everything else depends on this, since
+colors with alpha are flattened over the ground and every contrast ratio is
+measured against it.
+
+"Lands on the page" means the rule actually selects this document's `<html>` or
+`<body>`, not just that it's written `body { … }`. Sites built with a utility
+framework paint the page from the element — `<body class="bg-light-primary
+dark:bg-dark-primary">` — and those classes beat the stylesheet's own `body`
+rule. Reading the class attribute is the only way to tell that utility from the
+identical-looking one sitting on a card.
 
 **Colors declared with alpha are reported both ways** — flattened to the hex
 you actually see, and as originally declared, under `source.declaredAs`.
@@ -212,14 +224,16 @@ knowing before you read too much into a status.
   you exported, which covers most of it, but a color computed in JS and applied
   to an element property is not in any stylesheet and will not be found.
 - **The cascade is approximated, not implemented.** Ground detection follows
-  document order, and `var()` resolution takes the last definition. Specificity
-  and scoped custom properties are not modelled, apart from two narrow rules
-  for theme overrides. This is fine for gathering a palette and wrong for
-  predicting exact computed styles.
+  document order, and `var()` resolution takes the last definition. Specificity,
+  `@layer` and scoped custom properties are not modelled, apart from a few
+  narrow rules for theme overrides and for the page background. This is fine for
+  gathering a palette and wrong for predicting exact computed styles.
 - **Ranking is a heuristic.** Score reflects where a color is used, not just
   how often. Treat the order as a strong hint, not a measurement.
 - `color-mix()`, `light-dark()` and relative color syntax are not evaluated;
-  such values are skipped rather than guessed at.
+  such values are skipped rather than guessed at. `lab()` and `lch()` **are**
+  read — modern Tailwind emits them after a hex fallback, so they win the
+  cascade and skipping them would drop the color entirely.
 
 ## Example
 
@@ -232,9 +246,10 @@ can open `example/index.html` and see the result without running anything.
 python3 test_palettekit.py
 ```
 
-30 tests covering the color maths, cascade ordering, the merge rules, and the
-status classifications. Worth running after any edit — several of these exist
-because the obvious implementation was quietly wrong.
+62 tests covering the color maths, cascade ordering, theme scoping, ground
+detection, the merge rules, and the status classifications. Worth running after
+any edit — several of these exist because the obvious implementation was quietly
+wrong.
 
 ## Licence note
 

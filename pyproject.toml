@@ -17,7 +17,6 @@ requires-python = ">=3.11"
 # Single source of truth is palettekit/__init__.py; see [tool.hatch.version].
 dynamic = ["version"]
 
-# TODO(migration): fill in before publishing anywhere.
 authors = [{ name = "Parker Sprouse" }]
 keywords = ["css", "color", "design-tokens", "extractor", "har", "oklab", "palette"]
 
@@ -85,7 +84,8 @@ packages = ["palettekit"]
 [tool.hatch.build.targets.sdist]
 # Ship the tests and the docs. The reference fixture described in CLAUDE.md
 # lives in palettes/fleshandbonedesign.com/ and is deliberately *not* shipped:
-# the committed copy is stale, and regenerating it is a separate change.
+# there is no committed copy at all — `palettes` is .gitignore'd — so there is
+# nothing here to include or exclude.
 include = [
   "/palettekit",
   "/test_palettekit.py",

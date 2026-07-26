@@ -27,8 +27,37 @@ GROUP_BLURBS = {
 }
 
 
+def _theme_document(pal: Palette) -> dict:
+    """One theme's half of the document.
+
+    `id` names the rule that produced the theme, `appearance` says what it
+    looks like. They disagree on a dark-by-default site whose alternate is the
+    light one, so both are carried: the id addresses the theme, the appearance
+    labels it.
+    """
+    return {
+        "id": pal.theme_id,
+        "appearance": pal.appearance,
+        "scope": pal.theme_scope,
+        "ground": pal.ground.hex,
+        "groundSource": pal.ground_source,
+        "stats": pal.stats,
+        "colors": [describe(e, pal.ground) for e in pal.entries],
+    }
+
+
 def to_document(pal: Palette) -> dict:
-    colors = [describe(e, pal.ground) for e in pal.entries]
+    """The dict the JSON file holds, and the report reads.
+
+    `themes` is always present and always holds at least one entry. The
+    top-level `ground`, `stats` and `colors` mirror the default theme — the
+    first entry — so that everything reading this document before themes
+    existed keeps working unchanged.
+    """
+    themes = [_theme_document(pal)]
+    if pal.alternate:
+        themes.append(_theme_document(pal.alternate))
+
     doc = {
         "name": _title_for(pal),
         "source": pal.page_url,
@@ -39,11 +68,19 @@ def to_document(pal: Palette) -> dict:
         ),
         "stats": pal.stats,
         "warnings": pal.warnings,
-        "colors": colors,
+        "defaultTheme": pal.theme_id,
+        "themes": themes,
+        "colors": themes[0]["colors"],
     }
     if pal.image_report:
         doc["images"] = pal.image_report
     return doc
+
+
+def _alt_theme(doc: dict) -> dict | None:
+    """The non-default theme, if the site shipped one."""
+    themes = doc.get("themes") or []
+    return themes[1] if len(themes) > 1 else None
 
 
 def _title_for(pal: Palette) -> str:
@@ -83,6 +120,39 @@ def _for_code(doc: dict, include_unused: bool) -> list[dict]:
     return [c for c in doc["colors"] if c["status"] == "live"]
 
 
+CODE_GROUPS = ["ground", "surface", "ink", "line", "neutral", "chroma"]
+
+
+def _css_tokens(cols: list[dict], prefix: str, indent: str) -> list[str]:
+    """The `--prefix-name: value;` lines for one theme, grouped and commented."""
+    lines: list[str] = []
+    by_group: dict[str, list[dict]] = {}
+    for c in cols:
+        by_group.setdefault(c["group"], []).append(c)
+
+    for g in CODE_GROUPS:
+        if g not in by_group:
+            continue
+        lines.append(f"{indent}/* {GROUP_TITLES.get(g, g)} */")
+        for c in sorted(by_group[g], key=lambda c: _natural(c["name"])):
+            note = "" if c["status"] == "live" else f"  /* {c['status']} */"
+            lines.append(f"{indent}--{prefix}-{c['name']}: {c['hex']};{note}")
+        lines.append("")
+
+    alphas = sorted((c for c in cols if "source" in c),
+                    key=lambda c: _natural(c["name"]))
+    if alphas:
+        lines.append(f"{indent}/* Declared with alpha — use over the ground "
+                     "for real transparency */")
+        for c in alphas:
+            lines.append(
+                f"{indent}--{prefix}-{c['name']}-a: {c['source']['declaredAs']};"
+            )
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
+
+
 def emit_css(doc: dict, prefix: str, include_unused: bool = False) -> str:
     lines = [
         "/* " + doc["name"],
@@ -94,32 +164,41 @@ def emit_css(doc: dict, prefix: str, include_unused: bool = False) -> str:
         "",
         ":root {",
     ]
-    cols = _for_code(doc, include_unused)
-    by_group: dict[str, list[dict]] = {}
-    for c in cols:
-        by_group.setdefault(c["group"], []).append(c)
-
-    for g in ["ground", "surface", "ink", "line", "neutral", "chroma"]:
-        if g not in by_group:
-            continue
-        lines.append(f"  /* {GROUP_TITLES.get(g, g)} */")
-        for c in sorted(by_group[g], key=lambda c: _natural(c["name"])):
-            note = "" if c["status"] == "live" else f"  /* {c['status']} */"
-            lines.append(f"  --{prefix}-{c['name']}: {c['hex']};{note}")
-        lines.append("")
-
-    alphas = sorted((c for c in cols if "source" in c),
-                    key=lambda c: _natural(c["name"]))
-    if alphas:
-        lines.append("  /* Declared with alpha — use over the ground for real "
-                     "transparency */")
-        for c in alphas:
-            lines.append(
-                f"  --{prefix}-{c['name']}-a: {c['source']['declaredAs']};"
-            )
-    if lines[-1] == "":
-        lines.pop()
+    lines += _css_tokens(_for_code(doc, include_unused), prefix, "  ")
     lines.append("}")
+
+    alt = _alt_theme(doc)
+    if alt:
+        alt_cols = _for_code(alt, include_unused)
+        look = alt["appearance"]
+        lines += [
+            "",
+            f"/* {look.title()} theme — ground {alt['ground']}.",
+            " * Token names match the block above, so a theme switch is only a",
+            " * question of which block wins. Written twice because there is no",
+            " * telling which mechanism the consuming project uses: the media",
+            " * query follows the visitor's system setting, the attribute",
+            " * selector follows an explicit toggle.",
+            " */",
+        ]
+        # A media query is only meaningful when the two themes actually sit on
+        # opposite sides of the light/dark line. When they do not, the toggle
+        # is the only honest switch.
+        if look != doc["themes"][0]["appearance"]:
+            lines += [
+                f"@media (prefers-color-scheme: {look}) {{",
+                "  :root {",
+                *_css_tokens(alt_cols, prefix, "    "),
+                "  }",
+                "}",
+                "",
+            ]
+        lines += [
+            f'[data-theme="{alt["id"]}"] {{',
+            *_css_tokens(alt_cols, prefix, "  "),
+            "}",
+        ]
+
     lines.append("")
     return "\n".join(lines)
 
@@ -272,6 +351,36 @@ def _pick_report_theme(doc: dict) -> dict:
     }
 
 
+_UI_VARS = ["ground", "strong", "body", "muted", "accent", "line", "checker",
+            "toastBg", "toastFg"]
+
+
+def _ui_var(name: str) -> str:
+    return "--ui-" + re.sub(r"(?<!^)([A-Z])", r"-\1", name).lower()
+
+
+def _ui_theme_css(themes: list[dict]) -> str:
+    """The report's own reading colors, one set per theme.
+
+    The report is rendered in the palette it documents, so a theme switch has
+    to restyle the page itself and not just the swatches. Every value the page
+    uses goes through these variables — including the toast, which used to be
+    written straight into its rule and would otherwise have kept the first
+    theme's colors after a toggle.
+
+    The default theme is also written to bare `:root` so the page is styled
+    before any script runs.
+    """
+    blocks: list[str] = []
+    for i, t in enumerate(themes):
+        ui = _pick_report_theme(t)
+        decls = "\n".join(f"    {_ui_var(k)}: {ui[k]};" for k in _UI_VARS)
+        if i == 0:
+            blocks.append("  :root {\n" + decls + "\n  }")
+        blocks.append(f'  :root[data-pk-theme="{t["id"]}"] {{\n{decls}\n  }}')
+    return "\n".join(blocks)
+
+
 _HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -280,15 +389,7 @@ _HTML = """<!DOCTYPE html>
 <title>__TITLE__ · palette</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; }
-  :root {
-    --ui-ground: __GROUND__;
-    --ui-strong: __STRONG__;
-    --ui-body: __BODY__;
-    --ui-muted: __MUTED__;
-    --ui-accent: __ACCENT__;
-    --ui-line: __LINE__;
-    --ui-checker: __CHECKER__;
-  }
+__UI_THEMES__
   body {
     margin: 0; padding: 2rem 1.5rem 5rem;
     background: var(--ui-ground); color: var(--ui-body);
@@ -327,6 +428,8 @@ _HTML = """<!DOCTYPE html>
                                      color: var(--ui-ground); font-weight: 700; }
   .seg button:focus-visible { outline: 2px solid var(--ui-accent);
                               outline-offset: -2px; }
+  .seg.cap button { text-transform: capitalize; }
+  [hidden] { display: none !important; }
 
   section { margin-bottom: 2.6rem; }
   h2 { font-size: .72rem; font-weight: 700; letter-spacing: .14em;
@@ -398,8 +501,8 @@ _HTML = """<!DOCTYPE html>
            color: var(--ui-muted); }
 
   #toast { position: fixed; left: 50%; bottom: 1.4rem;
-    transform: translate(-50%, 160%); background: __TOASTBG__;
-    color: __TOASTFG__; font-weight: 700; font-size: .84rem;
+    transform: translate(-50%, 160%); background: var(--ui-toast-bg);
+    color: var(--ui-toast-fg); font-weight: 700; font-size: .84rem;
     padding: .5rem 1rem; transition: transform .18s ease-out; z-index: 50; }
   #toast.show { transform: translate(-50%, 0); }
   @media (prefers-reduced-motion: reduce) {
@@ -420,6 +523,9 @@ _HTML = """<!DOCTYPE html>
 <div id="warnings"></div>
 
 <div class="controls">
+  <label id="theme-label" hidden>Theme</label>
+  <div class="seg cap" role="group" aria-labelledby="theme-label" id="theme"
+       hidden></div>
   <label id="fmt-label">Copy as</label>
   <div class="seg" role="group" aria-labelledby="fmt-label" id="fmt"></div>
   <label id="show-label" style="margin-left:auto">Show</label>
@@ -468,6 +574,31 @@ _HTML = """<!DOCTYPE html>
   var fmt = "hex";
   var filter = "live";
 
+  /* Always at least one entry, so everything below has one code path whether
+     or not the site shipped a second theme. Each carries its own ground, and
+     every contrast figure in it was measured against that ground — which is
+     why switching themes redraws rather than recolours. */
+  var THEMES = doc.themes;
+  var themeIx = 0;
+
+  /* A report about two themes should open in the one the reader is set up
+     for, exactly as the site itself would. */
+  if (THEMES.length > 1 && window.matchMedia) {
+    var want = window.matchMedia("(prefers-color-scheme: dark)").matches
+      ? "dark" : "light";
+    for (var i = 0; i < THEMES.length; i++) {
+      if (THEMES[i].appearance === want) { themeIx = i; break; }
+    }
+  }
+
+  function theme() { return THEMES[themeIx]; }
+
+  function applyTheme() {
+    /* Swaps the report's own reading colors. The swatches are redrawn by
+       render(), since their values and ratios differ per theme. */
+    document.documentElement.setAttribute("data-pk-theme", theme().id);
+  }
+
   function el(tag, cls, text) {
     var n = document.createElement(tag);
     if (cls) n.className = cls;
@@ -483,7 +614,7 @@ _HTML = """<!DOCTYPE html>
   }
 
   function visible() {
-    return doc.colors.filter(function (c) {
+    return theme().colors.filter(function (c) {
       return filter === "all" ? true : c.status === "live";
     });
   }
@@ -496,10 +627,14 @@ _HTML = """<!DOCTYPE html>
     s.appendChild(document.createTextNode(" " + label));
     stats.appendChild(s);
   }
-  stat("tokens", doc.colors.length);
-  stat("declarations scanned", doc.stats.declarationsScanned);
-  stat("stylesheets", doc.stats.stylesheets);
-  stat("distinct colors before merge", doc.stats.distinctColors);
+  function renderStats() {
+    stats.textContent = "";
+    var t = theme();
+    stat("tokens", t.colors.length);
+    stat("declarations scanned", t.stats.declarationsScanned);
+    stat("stylesheets", t.stats.stylesheets);
+    stat("distinct colors before merge", t.stats.distinctColors);
+  }
 
   /* ---------- warnings ---------- */
   if (doc.warnings && doc.warnings.length) {
@@ -512,6 +647,30 @@ _HTML = """<!DOCTYPE html>
   }
 
   /* ---------- controls ---------- */
+  if (THEMES.length > 1) {
+    var themeHost = document.getElementById("theme");
+    /* Label by appearance, which is what a reader recognises. When both
+       themes land on the same side of the light/dark line the appearance is
+       no longer a distinction, so fall back to the rule that defines each —
+       two buttons both reading "dark" would be worse than no toggle. */
+    var sameLook = THEMES[0].appearance === THEMES[1].appearance;
+    THEMES.forEach(function (t, i) {
+      var b = el("button", null, sameLook ? t.id : t.appearance);
+      b.setAttribute("aria-pressed", String(i === themeIx));
+      b.addEventListener("click", function () {
+        themeIx = i;
+        themeHost.querySelectorAll("button").forEach(function (x, j) {
+          x.setAttribute("aria-pressed", String(j === themeIx));
+        });
+        applyTheme();
+        render();
+      });
+      themeHost.appendChild(b);
+    });
+    themeHost.hidden = false;
+    document.getElementById("theme-label").hidden = false;
+  }
+
   var FORMATS = [["hex", "hex"], ["rgb", "rgb"], ["hsl", "hsl"],
                  ["oklch", "oklch"], ["declared", "as declared"]];
   var fmtHost = document.getElementById("fmt");
@@ -597,8 +756,11 @@ _HTML = """<!DOCTYPE html>
       host.appendChild(sec);
     });
 
+    renderStats();
     renderPairs(cols);
     renderProv(cols);
+    renderReport();
+    renderFooter();
   }
 
   function renderPairs(cols) {
@@ -606,7 +768,9 @@ _HTML = """<!DOCTYPE html>
     host.textContent = "";
     cols.forEach(function (c) {
       var d = el("div", "pair");
-      d.style.background = doc.ground;
+      /* The active theme's ground, not the document's — the ratio printed
+         beside each sample was measured against this exact background. */
+      d.style.background = theme().ground;
       var demo = el("div", "demo", "Sample text");
       demo.style.color = c.source ? c.source.declaredAs : c.hex;
       var lab = el("div", "lab mono",
@@ -637,57 +801,73 @@ _HTML = """<!DOCTYPE html>
 
   /* ---------- report ---------- */
   var rep = document.getElementById("report");
-  var dl = el("table");
-  var tbody = el("tbody");
-  function row(k, v) {
-    var tr = el("tr");
-    tr.appendChild(el("th", null, k));
-    tr.appendChild(el("td", "mono", v));
-    tbody.appendChild(tr);
-  }
-  row("Source", doc.source || "(local files)");
-  row("Ground", doc.ground + "  (" + doc.groundSource + ")");
-  row("Generated", doc.generated);
-  row("Custom properties", doc.stats.customProperties + " declared, " +
-      doc.stats.customPropertiesReferenced + " referenced");
-  if (doc.images) {
-    row("Images sampled", doc.images.imageCount + " (" +
-        doc.images.neutralSharePct + "% of pixels visually neutral)");
-  }
-  dl.appendChild(tbody);
-  rep.appendChild(dl);
 
-  if (doc.stats.sources && doc.stats.sources.length) {
-    rep.appendChild(el("p", null, "Stylesheets read:"));
-    var st = el("table");
-    var sh = el("thead");
-    var shr = el("tr");
-    ["Source", "Declarations", "Third party"].forEach(function (h) {
-      shr.appendChild(el("th", null, h));
-    });
-    sh.appendChild(shr);
-    st.appendChild(sh);
-    var stb = el("tbody");
-    doc.stats.sources.forEach(function (s) {
+  function renderReport() {
+    rep.textContent = "";
+    var t = theme();
+    var dl = el("table");
+    var tbody = el("tbody");
+    function row(k, v) {
       var tr = el("tr");
-      tr.appendChild(el("td", "mono", s.source));
-      tr.appendChild(el("td", "mono", String(s.declarations)));
-      tr.appendChild(el("td", "mono", s.thirdParty ? "yes" : "no"));
-      stb.appendChild(tr);
-    });
-    st.appendChild(stb);
-    rep.appendChild(st);
+      tr.appendChild(el("th", null, k));
+      tr.appendChild(el("td", "mono", v));
+      tbody.appendChild(tr);
+    }
+    row("Source", doc.source || "(local files)");
+    if (THEMES.length > 1) {
+      row("Theme", t.id + " (" + t.appearance + ")" +
+          (t.scope ? " \\u2014 from rules scoped to " + t.scope : " \\u2014 " +
+           "from rules belonging to no theme"));
+    }
+    row("Ground", t.ground + "  (" + t.groundSource + ")");
+    row("Generated", doc.generated);
+    row("Custom properties", t.stats.customProperties + " declared, " +
+        t.stats.customPropertiesReferenced + " referenced");
+    if (doc.images) {
+      row("Images sampled", doc.images.imageCount + " (" +
+          doc.images.neutralSharePct + "% of pixels visually neutral)");
+    }
+    dl.appendChild(tbody);
+    rep.appendChild(dl);
+
+    if (t.stats.sources && t.stats.sources.length) {
+      rep.appendChild(el("p", null, "Stylesheets read:"));
+      var st = el("table");
+      var sh = el("thead");
+      var shr = el("tr");
+      ["Source", "Declarations", "Third party"].forEach(function (h) {
+        shr.appendChild(el("th", null, h));
+      });
+      sh.appendChild(shr);
+      st.appendChild(sh);
+      var stb = el("tbody");
+      t.stats.sources.forEach(function (s) {
+        var tr = el("tr");
+        tr.appendChild(el("td", "mono", s.source));
+        tr.appendChild(el("td", "mono", String(s.declarations)));
+        tr.appendChild(el("td", "mono", s.thirdParty ? "yes" : "no"));
+        stb.appendChild(tr);
+      });
+      st.appendChild(stb);
+      rep.appendChild(st);
+    }
   }
 
   /* ---------- footer ---------- */
-  var f = document.getElementById("footer");
-  f.appendChild(document.createTextNode(
-    "Ground " + doc.ground + ". Values are read from the site's stylesheets, " +
-    "not sampled from pixels. \\u201csaved\\u201d means a custom property nothing " +
-    "references; \\u201cinert\\u201d means a declaration that paints nothing. " +
-    "Colors themselves are not copyrightable, but fonts and images on the " +
-    "source page are licensed separately."
-  ));
+  function renderFooter() {
+    var f = document.getElementById("footer");
+    f.textContent =
+      "Ground " + theme().ground + ". Values are read from the site's " +
+      "stylesheets, not sampled from pixels. \\u201csaved\\u201d means a custom " +
+      "property nothing references; \\u201cinert\\u201d means a declaration that " +
+      "paints nothing. " +
+      (THEMES.length > 1
+        ? "The site ships two themes; each was extracted separately, so every " +
+          "ratio above is measured against that theme's own ground. "
+        : "") +
+      "Colors themselves are not copyrightable, but fonts and images on the " +
+      "source page are licensed separately.";
+  }
 
   /* ---------- copy ---------- */
   var toast = document.getElementById("toast");
@@ -717,6 +897,7 @@ _HTML = """<!DOCTYPE html>
     }
   }
 
+  applyTheme();
   render();
 })();
 </script>
@@ -726,8 +907,8 @@ _HTML = """<!DOCTYPE html>
 
 
 def emit_html(doc: dict, pal: Palette) -> str:
-    theme = _pick_report_theme(doc)
     title = doc["name"]
+    themes = doc["themes"]
     n_live = len([c for c in doc["colors"] if c["status"] == "live"])
     n_other = len(doc["colors"]) - n_live
 
@@ -738,6 +919,10 @@ def emit_html(doc: dict, pal: Palette) -> str:
         + ". Read from the site's own stylesheets, not sampled from a "
           "screenshot. Click any swatch to copy it."
     )
+    if len(themes) > 1:
+        looks = " and ".join(t["appearance"] for t in themes)
+        sub += (f" The site ships two themes ({looks}) — switch between them "
+                "above; every value and ratio is re-read for the one shown.")
     if doc.get("source"):
         src = htmlmod.escape(doc["source"])
         sub += f' Source: <a href="{src}">{src}</a>.'
@@ -750,9 +935,8 @@ def emit_html(doc: dict, pal: Palette) -> str:
     out = out.replace("__TITLE__", htmlmod.escape(title))
     out = out.replace("__TITLE_HTML__", htmlmod.escape(title))
     out = out.replace("__SUBTITLE__", sub)
+    out = out.replace("__UI_THEMES__", _ui_theme_css(themes))
     out = out.replace("__DATA__", payload)
     out = out.replace("__GROUP_TITLES__", json.dumps(GROUP_TITLES))
     out = out.replace("__GROUP_BLURBS__", json.dumps(GROUP_BLURBS))
-    for k, v in theme.items():
-        out = out.replace("__" + k.upper() + "__", v)
     return out

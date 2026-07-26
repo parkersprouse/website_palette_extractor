@@ -14,7 +14,8 @@ and reached only through `images.py`, behind `--images`.
 
 ```bash
 python3 -m palettekit <target> -o out    # target: .har | URL | .html/.css path
-python3 test_palettekit.py               # 30 tests, all must pass
+python3 test_palettekit.py               # 44 tests, all must pass
+python3 -m palettekit x.har --no-themes  # collapse a two-theme site into one
 ruff check .                             # must stay clean; config in pyproject
 python3 -m palettekit x.har --list-sources   # diagnose framework noise first
 
@@ -48,18 +49,19 @@ asserting in CI.
 ```
 sources.py   →  cssparse.py  →  extract.py  →  emit.py
 (HAR/URL/     (tokenise,      (score, ground,  (JSON/CSS/SCSS/
- local files)  var(), roles)   merge, name)     TS/Tailwind/HTML)
+ local files)  var(), roles,   merge, name —    TS/Tailwind/HTML)
+               theme scopes)   once per theme)
 ```
 
 | File | Lines | Holds |
 |---|---:|---|
-| `color.py` | 461 | `Color`, parsing, sRGB↔OKLab, contrast, hue names |
-| `cssparse.py` | 353 | Declaration walker, `var()`, `selector_weight`, roles |
-| `sources.py` | 293 | `load_har` / `load_url` / `load_paths` → `Bundle` |
-| `extract.py` | 580 | `extract()`, ground, merging, statuses, naming |
-| `emit.py` | 758 | Emitters; `_HTML` is the report template |
+| `color.py` | 460 | `Color`, parsing, sRGB↔OKLab, contrast, hue names |
+| `cssparse.py` | 448 | Declaration walker, `var()`, `selector_weight`, roles, theme scopes |
+| `sources.py` | 292 | `load_har` / `load_url` / `load_paths` → `Bundle` |
+| `extract.py` | 793 | `extract()`, per-theme `_build`, ground, merging, statuses, naming |
+| `emit.py` | 942 | Emitters; `_HTML` is the report template |
 | `images.py` | 148 | Optional image quantisation, not part of the token set |
-| `__main__.py` | 229 | CLI |
+| `__main__.py` | 248 | CLI |
 
 `emit.to_document(palette)` returns the dict the JSON file holds — that dict is
 the public data contract. The HTML report consumes the same dict, inlined into
@@ -81,6 +83,14 @@ because the obvious implementation produced plausible but wrong output.
    its own CSS. Everything downstream depends on this — alpha flattening and
    every contrast ratio are measured against the ground. Test:
    `test_ground_follows_cascade_not_weight`.
+
+   Within a themed extraction there is one addition: a declaration carrying the
+   theme's own marker outranks an unscoped one regardless of order
+   (`Usage.cascade_key`). For a selector-scoped theme that is literal
+   specificity — `html.dark` beats `html`; for a `prefers-color-scheme` block it
+   is the near-universal convention that the override is written after what it
+   overrides. On an unthemed site every declaration is unscoped and the tuple
+   degrades to the plain `(sheet, order)` pair, so the base path is untouched.
 
 3. **Stylesheets are collected in document order** (`collect_sheets`,
    `_document_order`), walking `<style>` and `<link rel=stylesheet>` together
@@ -128,6 +138,37 @@ because the obvious implementation produced plausible but wrong output.
     the bar and produced red body text. Tests:
     `test_html_report_is_standalone_and_valid`, `test_report_theme_is_readable`.
 
+12. **A theme is a scope over declarations, so each one is extracted from
+    scratch** (`_build`, once per entry in `_theme_plan`). Tagging colors after
+    a single pass cannot work: each theme has its own ground, and invariants 2
+    and 6 make everything downstream — alpha flattening, every contrast ratio,
+    what merges with what — depend on it.
+
+13. **A theme's own rules shadow the unscoped rules they override**, matched on
+    `(selector as it reads inside the theme, property)` in `_build`. Without
+    this the light `--bg: #fff` and the light `.card` background both turn up
+    in the dark palette as colors the dark theme never paints. It is not
+    general specificity and does not try to be — a `border` shorthand against a
+    `border-color` override still slips through. Test:
+    `test_overridden_values_leave_the_theme_that_replaced_them`.
+
+14. **Themed selectors are normalised before weighting or ground-matching**
+    (`strip_theme_scope`). `html.dark body` has to read as `body`, or
+    `selector_weight` scores the dark theme's page rule as an ordinary class and
+    `detect_ground` never sees it — the dark theme then silently inherits the
+    light ground and every ratio reported for it is wrong. The class matcher is
+    anchored on whole names so `.dark-blue`, `.darken` and `.sidebar-dark` are
+    not theme roots. Tests: `TestThemeScopes`.
+
+15. **The two themes share one set of token names** (`_align_names`), paired by
+    rank *within a group, against each theme's own ground*. The
+    highest-contrast ink in a light theme is the same token as the
+    highest-contrast ink in a dark one, though one is nearly black and the
+    other nearly white — pairing by lightness gets them backwards. Without
+    alignment the toggle swaps one list of names for an unrelated one and
+    `--c-ink-1` means two different things in the emitted CSS. Test:
+    `test_names_align_across_themes`.
+
 ## Status vocabulary
 
 | Status | Means | Detected by |
@@ -135,6 +176,45 @@ because the obvious implementation produced plausible but wrong output.
 | `live` | Actually painted | default |
 | `saved` | Custom property nothing references — usually a design tool's saved swatches | `_status_for` vs `var_refs` |
 | `inert` | Declaration that paints nothing, e.g. `drop-shadow(0 0 0 #13330d)` | `is_inert_shadow` |
+
+## Themes
+
+`theme_scope` recognises two mechanisms: a `prefers-color-scheme` media query,
+and a class or attribute on a wrapper (`.dark`, `.theme-dark`, `.is-light`,
+`[data-theme="dark"]`, `[data-bs-theme=dark]`, …). Both are scopes over
+declarations. Selector-scoped is the common case — Tailwind's `dark:` variant
+compiles to it — so media-query-only detection would miss most modern sites.
+
+`_theme_plan` decides what to build. Unscoped declarations belong to every
+theme, so each palette is those plus one scope's overrides:
+
+| Scopes found | Palettes built |
+|---|---|
+| none | `base` only — output byte-identical to before themes existed |
+| `dark` only | `base` + `dark` |
+| `light` only | `base` + `light` — a dark-by-default site with a light override |
+| both | `light` + `dark`; neither set of unscoped rules is a theme by itself |
+
+A scope carrying no color of its own is not a theme (`_scopes_present`), and a
+scope that produced the same palette anyway is dropped (`_same_palette`).
+
+Each theme carries **both** an `id` — named for the rule that produced it — and
+an `appearance` measured from its ground. They disagree on a dark-by-default
+site, which is why both exist: the id addresses the theme, the appearance
+labels it. When both themes land on the same side of the light/dark line the
+appearance is no longer a distinction, so a warning is emitted and the report
+labels its toggle by id instead.
+
+`to_document` always emits `themes` (a list of one or more) and `defaultTheme`.
+Top-level `ground`, `stats` and `colors` mirror `themes[0]`, so everything that
+read this document before themes existed keeps working.
+
+Themes reach the outputs unevenly, and deliberately: the **JSON** and the
+**HTML report** carry both; the **CSS** carries both, as a `:root` block plus a
+`prefers-color-scheme` media query *and* a `[data-theme]` block, since there is
+no telling which mechanism a consuming project uses; **SCSS, TS and Tailwind
+carry the default theme only**. If that changes, decide what a two-theme
+Tailwind config should even look like first.
 
 ## Conventions
 
@@ -155,8 +235,31 @@ because the obvious implementation produced plausible but wrong output.
   stylesheet and will not be found.
 - **The cascade is approximated, not implemented.** Ground follows document
   order; `var()` resolution takes the last definition. Specificity and scoped
-  custom properties are not modelled. Fine for gathering a palette, wrong for
-  predicting computed styles.
+  custom properties are not modelled — beyond the two narrow theme rules in
+  invariants 2 and 13, which exist because getting theme overrides wrong
+  produces a whole second palette of colors the site never paints. Fine for
+  gathering a palette, wrong for predicting computed styles.
+
+- **A bare channel triplet used raw paints nothing, and is reported rather than
+  parsed.** The shadcn/ui convention writes `--background: 0 0% 3.9%` and
+  assembles it at the point of use. Assembled — `hsl(var(--background))`,
+  `hsl(var(--x) / 50%)`, `rgb(var(--x))` — it parses here and always has; that
+  path is covered by `TestChannelTriplets` because nothing advertised it.
+
+  Used raw, as `background-color: var(--background)`, it is **not a colour we
+  are failing to read**. It is invalid CSS: verified against a real engine,
+  `CSS.supports('background-color', '0 0% 100%')` is `false` and the computed
+  value is `rgba(0,0,0,0)`. Reading a color out of it would invent one the page
+  never shows. Do not "fix" this by teaching `find_colors` about loose
+  triplets — an earlier note in this file suggested exactly that, before the
+  computed-style evidence existed.
+
+  `_triplet_warning` names the situation instead, in one aggregated note, so a
+  site written this way does not look like an extraction failure.
+  `ground.news.har` is the local reproduction: 53 `.dark` declarations are
+  detected and the var table diverges correctly across 23 properties, and the
+  palette is still nearly identical across themes — correctly, because those
+  declarations paint nothing. 11 properties trip the warning.
 - **Scoring is a heuristic** (`selector_weight`). Treat ordering as a hint.
 - **Framework CSS cannot be reliably auto-detected** when it is inlined in the
   document, which is the common case for page builders. This is deliberately

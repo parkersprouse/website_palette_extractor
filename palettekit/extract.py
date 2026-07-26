@@ -45,10 +45,20 @@ class Usage:
     inert: bool = False
     sheet_order: int = 0
     order: int = 0
+    # The selector with any theme marker removed, and whether it had one.
+    scope_selector: str = ""
+    scoped: bool = False
 
     @property
-    def cascade_key(self) -> tuple[int, int]:
-        return (self.sheet_order, self.order)
+    def cascade_key(self) -> tuple[int, int, int]:
+        # Theme-scoped declarations outrank unscoped ones within their own
+        # theme, ahead of document order. For a selector-scoped theme that is
+        # literally true — `html.dark` outweighs `html` on specificity, whatever
+        # the order. For a `prefers-color-scheme` block it is not specificity
+        # but convention: the override block is written after what it overrides.
+        # Outside a themed extraction every declaration is unscoped, so this
+        # degrades to the plain (sheet, order) pair invariant 2 describes.
+        return (1 if self.scoped else 0, self.sheet_order, self.order)
 
 
 @dataclass
@@ -105,6 +115,21 @@ class Palette:
     warnings: list[str] = field(default_factory=list)
     stats: dict = field(default_factory=dict)
     image_report: dict | None = None
+
+    # Themes. `theme_id` is named for the scope that produced the palette
+    # ("base", "light", "dark"); `appearance` is what it actually looks like,
+    # measured from the ground. The two disagree on a dark-by-default site
+    # whose alternate theme is the light one, which is why both exist: the id
+    # is how the palette is addressed, the appearance is how it is labelled.
+    theme_id: str = "base"
+    theme_scope: str = ""
+    alternate: Palette | None = None
+
+    @property
+    def appearance(self) -> str:
+        # Same threshold `_pick_report_theme` uses to decide which way to run
+        # the report's own contrast ramp.
+        return "dark" if self.ground.luminance() < 0.4 else "light"
 
 
 def collect_sheets(bundle: Bundle, include_third_party: bool = True,
@@ -232,18 +257,126 @@ def _match_href(href: str, base_url: str, css_by_url: dict):
     return None
 
 
-def build_var_table(sheets: list[Stylesheet]) -> dict[str, str]:
-    """Map custom property name to its value.
+def build_var_table(sheets: list[Stylesheet], theme: str = "") -> dict[str, str]:
+    """Map custom property name to its value, as seen from within one theme.
 
     Later declarations win, which approximates the cascade well enough for
     resolving a value to a color. It does not model specificity or scoping.
+
+    Theme scoping is the one exception, and it has to be: a site that redefines
+    `--bg` under `.dark` would otherwise hand the dark value to the light
+    palette, since the dark block is usually written last. Unscoped definitions
+    are laid down first, then the ones belonging to this theme on top —
+    declarations scoped to any *other* theme are not visible here at all.
     """
     table: dict[str, str] = {}
+    for pass_theme in ("", theme) if theme else ("",):
+        for sheet in sheets:
+            for d in sheet.declarations:
+                if d.is_custom_property and d.theme == pass_theme:
+                    table[d.prop] = d.value
+    return table
+
+
+def _scopes_present(sheets: list[Stylesheet], table: dict[str, str]) -> set[str]:
+    """Theme scopes that actually carry color.
+
+    A `prefers-color-scheme: dark` block that only flips an image filter is not
+    a second palette. Building one anyway would produce a copy of the base
+    theme under a label promising something different.
+    """
+    found: set[str] = set()
     for sheet in sheets:
         for d in sheet.declarations:
-            if d.is_custom_property:
-                table[d.prop] = d.value
-    return table
+            if d.theme and d.theme not in found and _colors_of(
+                resolve_vars(d.value, table)
+            ):
+                found.add(d.theme)
+    return found
+
+
+def _theme_plan(scopes: set[str]) -> list[tuple[str, str]]:
+    """(theme id, scope) for each palette to build, default theme first.
+
+    Unscoped declarations belong to every theme, so each palette is built from
+    those plus one scope's worth of overrides. When both scopes are explicit
+    neither set of unscoped rules is a theme on its own; when only one is, the
+    unscoped declarations *are* the other theme — which is how a dark-by-default
+    site with a `.light` override is handled.
+    """
+    if not scopes:
+        return [("base", "")]
+    if scopes == {"light", "dark"}:
+        return [("light", "light"), ("dark", "dark")]
+    other = "dark" if "dark" in scopes else "light"
+    return [("base", ""), (other, other)]
+
+
+# A bare channel triplet: `0 0% 3.9%`, `217.2 91.2% 59.8%`, `255 0 0`, with an
+# optional `/ alpha`. Exactly three components — two would not be a color in
+# any function, and allowing more invites false matches on ordinary lengths.
+_NUM = r"[+-]?(?:\d+\.?\d*|\.\d+)%?"
+_TRIPLET = re.compile(rf"^{_NUM}(?:\s+{_NUM}){{2}}(?:\s*/\s*{_NUM})?$")
+_VAR_NAME = re.compile(r"var\(\s*(--[\w-]+)")
+
+
+def _triplet_warning(sheets: list[Stylesheet], table: dict[str, str]) -> str:
+    """Flag custom properties that hold channel triplets and are used raw.
+
+    The shadcn/ui convention stores a color as bare channels — `--background:
+    0 0% 3.9%` — to be assembled at the point of use as `hsl(var(--background))`.
+    Wrapped like that it parses here and always has. Used directly, as
+    `background-color: var(--background)`, it is not a color at all: the
+    declaration is invalid and a browser computes it to `rgba(0,0,0,0)`, so the
+    page paints nothing. Reading a color out of it would invent one the site
+    never shows, which is the whole thing this tool exists not to do.
+
+    So the value is skipped, as any unparseable value is — but silently
+    skipping it leaves a site whose entire theme is written this way looking
+    like an extraction failure. Naming it is the difference between "the tool
+    is broken" and "these declarations paint nothing, here is why".
+
+    The test is deliberately narrow: the consuming declaration must reference a
+    custom property, must resolve to nothing but a triplet, and must yield no
+    color. A property consumed only inside `hsl()` yields a color and is never
+    reported, because nothing is wrong with it.
+    """
+    culprits: dict[str, set[str]] = {}
+    for sheet in sheets:
+        for d in sheet.declarations:
+            if d.is_custom_property or d.role == "other" or "var(" not in d.value:
+                continue
+            resolved = resolve_vars(d.value, table).strip()
+            if _colors_of(resolved) or not _TRIPLET.match(resolved):
+                continue
+            for name in _VAR_NAME.findall(d.value):
+                if _TRIPLET.match(table.get(name, "").strip()):
+                    culprits.setdefault(name, set()).add(d.prop)
+    if not culprits:
+        return ""
+
+    names = sorted(culprits)
+    shown = ", ".join(names[:3])
+    more = f" and {len(names) - 3} more" if len(names) > 3 else ""
+    example = next(iter(culprits[names[0]]))
+    return (
+        f"{len(names)} custom propert"
+        f"{'y holds' if len(names) == 1 else 'ies hold'} a bare channel triplet "
+        f"({shown}{more}) and {'is' if len(names) == 1 else 'are'} used directly "
+        f"in var() — for example `{example}: var({names[0]})`, which resolves to "
+        f"`{table[names[0]].strip()}`. That is not a color: a browser discards "
+        f"the declaration and paints nothing there. Triplets only become colors "
+        f"inside a color function, as `hsl(var({names[0]}))`, and are read "
+        f"normally when written that way. These colors are absent from the "
+        f"palette because the page does not paint them."
+    )
+
+
+def _same_palette(a: Palette, b: Palette) -> bool:
+    """True when a scope turned out not to change anything worth reporting."""
+    return (a.ground.hexa == b.ground.hexa
+            and {e.color.hexa for e in a.entries}
+            == {e.color.hexa for e in b.entries})
 
 
 def extract(bundle: Bundle, *, merge_threshold: float = 0.02,
@@ -252,30 +385,103 @@ def extract(bundle: Bundle, *, merge_threshold: float = 0.02,
             min_score: float = 0.0,
             only: list[str] | None = None,
             exclude: list[str] | None = None,
-            flat: bool = False) -> Palette:
+            flat: bool = False,
+            themes: bool = True) -> Palette:
+    """Build the palette, or both palettes when the site ships two themes.
+
+    Returns the default theme. A second one, when there is one, hangs off it as
+    `.alternate` — the whole pipeline is run again for it, because a theme has
+    its own ground and everything from alpha flattening to contrast ratios is
+    measured against that.
+    """
     sheets = collect_sheets(bundle, include_third_party=include_third_party,
                             only=only, exclude=exclude)
-    table = build_var_table(sheets)
 
     all_var_refs: set[str] = set()
     for s in sheets:
         all_var_refs |= s.var_refs
 
-    pal = Palette(page_url=bundle.page_url)
+    scopes = (_scopes_present(sheets, build_var_table(sheets))
+              if themes else set())
+
+    palettes = [
+        _build(sheets, bundle.page_url, all_var_refs, theme_id, scope,
+               merge_threshold=merge_threshold,
+               third_party_weight=third_party_weight,
+               min_score=min_score, flat=flat)
+        for theme_id, scope in _theme_plan(scopes)
+    ]
+
+    if len(palettes) > 1 and _same_palette(palettes[0], palettes[1]):
+        palettes = palettes[:1]
+        palettes[0].theme_id, palettes[0].theme_scope = "base", ""
+
+    _assign_names(palettes[0].entries, palettes[0].ground)
+    if len(palettes) > 1:
+        _align_names(palettes[0], palettes[1])
+        _assign_names(palettes[1].entries, palettes[1].ground)
+        palettes[0].alternate = palettes[1]
+
+    pal = palettes[0]
     pal.warnings.extend(bundle.warnings)
+    triplets = _triplet_warning(sheets, build_var_table(sheets))
+    if triplets:
+        pal.warnings.append(triplets)
+    if pal.alternate and pal.appearance == pal.alternate.appearance:
+        # Both grounds landed on the same side of the light/dark line. The
+        # palettes are still real and still different; only the labels would
+        # mislead, so say so rather than inventing a distinction.
+        pal.warnings.append(
+            f"Both themes have a {pal.appearance} background "
+            f"({pal.ground.hex} and {pal.alternate.ground.hex}), so they are "
+            f"labelled by the rule that defines them rather than by appearance."
+        )
+    return pal
+
+
+def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
+           theme_id: str, scope: str, *, merge_threshold: float,
+           third_party_weight: float, min_score: float,
+           flat: bool) -> Palette:
+    """One theme's palette: everything scoped to it, plus everything unscoped."""
+    table = build_var_table(sheets, scope)
+    pal = Palette(page_url=page_url, theme_id=theme_id, theme_scope=scope)
+
+    # A theme's own rules shadow the unscoped ones they were written to
+    # override, matched on (selector as it reads inside the theme, property).
+    # That pair is exactly what an author repeats to override something for a
+    # theme, and without this the light `--bg: #fff` and the light `.card`
+    # background both turn up in the dark palette as colors the dark theme
+    # never paints. It is not general specificity — `border` shorthand against
+    # a `border-color` override still slips through — but it removes the whole
+    # class of duplicates that matter here.
+    shadowed: set[tuple[str, str]] = set()
+    if scope:
+        for sheet in sheets:
+            for d in sheet.declarations:
+                if d.theme == scope:
+                    shadowed.add((d.themed_selector, d.prop))
 
     buckets: dict[tuple, Entry] = {}
     n_decls = 0
 
     for sheet in sheets:
         for d in sheet.declarations:
+            if d.theme and d.theme != scope:
+                continue  # belongs to the other theme
+            if not d.theme and (d.selector, d.prop) in shadowed:
+                continue  # this theme overrides it
             n_decls += 1
             value = resolve_vars(d.value, table)
             colors = _colors_of(value)
             if not colors:
                 continue
 
-            w = selector_weight(d.selector, d.at_rules)
+            # Weighted on the selector as it reads inside this theme, so a
+            # themed page rule scores as the page rule it is rather than as
+            # whatever class happens to carry the marker.
+            sel = d.themed_selector
+            w = selector_weight(sel, d.at_rules)
             if sheet.third_party:
                 w *= third_party_weight
             if d.is_custom_property:
@@ -304,7 +510,8 @@ def extract(bundle: Bundle, *, merge_threshold: float = 0.02,
                     Usage(selector=d.selector, prop=d.prop, value=d.value,
                           source=d.source, weight=w, role=d.role,
                           third_party=sheet.third_party, inert=inert,
-                          sheet_order=d.sheet_order, order=d.order)
+                          sheet_order=d.sheet_order, order=d.order,
+                          scope_selector=sel, scoped=bool(d.theme))
                 )
                 if d.is_custom_property:
                     entry.var_names.add(d.prop)
@@ -321,7 +528,7 @@ def extract(bundle: Bundle, *, merge_threshold: float = 0.02,
     entries = [e for e in entries if e.score >= min_score]
     entries.sort(key=lambda e: -e.score)
 
-    _assign_names(entries, pal.ground)
+    _assign_groups(entries, pal.ground)
 
     pal.entries = entries
     pal.stats = {
@@ -355,7 +562,13 @@ def _source_stats(sheets: list[Stylesheet]) -> list[dict]:
     return out
 
 
-_PAGE_SEL = re.compile(r"^\s*(html|body|:root)\s*$", re.I)
+# A chain of page-level elements is still the page: `html body` is where a
+# background belongs just as much as `body` is. Allowing the chain matters for
+# themes, because `html.dark body` normalises to `html body` — anchoring on a
+# single element would drop the dark theme's own ground rule on the floor and
+# leave it inheriting the light one.
+_PAGE_SEL = re.compile(r"^\s*(?:html|body|:root)(?:\s+(?:html|body|:root))*\s*$",
+                       re.I)
 
 
 def detect_ground(entries: list[Entry]) -> tuple[Color, str]:
@@ -365,6 +578,10 @@ def detect_ground(entries: list[Entry]) -> tuple[Color, str]:
     the last one declared wins. Weighting instead of ordering gets this wrong
     on any site that loads a framework stylesheet before its own, which is
     most of them.
+
+    Within a themed extraction the one addition is that a declaration carrying
+    the theme's own marker outranks an unscoped one regardless of order — see
+    `Usage.cascade_key`.
     """
     candidates = []
     for e in entries:
@@ -375,10 +592,10 @@ def detect_ground(entries: list[Entry]) -> tuple[Color, str]:
                 continue
             if u.prop not in ("background", "background-color"):
                 continue
-            if any(a.lower().startswith("@media") and "print" in a.lower()
-                   for a in ()):
-                continue
-            parts = [p.strip() for p in u.selector.split(",")]
+            # Matched on the selector as it reads inside its own theme, so
+            # `html.dark body` counts as the dark theme's page rule.
+            parts = [p.strip()
+                     for p in (u.scope_selector or u.selector).split(",")]
             if not any(_PAGE_SEL.match(p) for p in parts):
                 continue
             candidates.append((u.cascade_key, e.color, u))
@@ -473,11 +690,11 @@ def _status_for(entry: Entry, var_refs: set[str]) -> str:
     return "live"
 
 
-def _assign_names(entries: list[Entry], ground: Color) -> None:
-    """Generate stable, meaningful token names.
+def _assign_groups(entries: list[Entry], ground: Color) -> None:
+    """Sort each color into the family it will be named and displayed under.
 
-    Names describe what a color is and where it sits, because a generated name
-    like `color-7` tells the next reader nothing.
+    Kept apart from naming so that two themes can be grouped, then paired up,
+    then named — see `_align_names`.
     """
     # Grouping uses the rendered color, since that is what a reader sees, and a
     # higher chroma bar than `is_neutral`. Tinted greys — the slate and zinc
@@ -498,10 +715,67 @@ def _assign_names(entries: list[Entry], ground: Color) -> None:
     if matches:
         # The ground often doubles as ink on light blocks; the entry is the
         # same color either way, so label it for the job that defines the page.
-        g = max(matches, key=lambda e: e.score)
-        g.group = "ground"
-        g.name = "ground"
+        max(matches, key=lambda e: e.score).group = "ground"
 
+
+def _align_names(base: Palette, alt: Palette) -> None:
+    """Give one name to the token that plays the same part in each theme.
+
+    Named independently the two palettes share nothing, and toggling the report
+    swaps one list of names for an unrelated one — which makes the comparison
+    the toggle exists to support impossible, and makes a `--c-ink-1` in the
+    emitted CSS mean two different things in two blocks.
+
+    Pairing is by rank within a group, measured against *that theme's own
+    ground*. The highest-contrast ink in a light theme is the same token as the
+    highest-contrast ink in a dark one even though the first is nearly black
+    and the second nearly white; ranking by lightness would pair them
+    backwards. Chroma pairs by hue first, since a brand color generally keeps
+    its hue across themes and only shifts in lightness.
+
+    Only the alternate is renamed. Anything left unpaired — a theme with more
+    inks than its counterpart — keeps a name of its own from the naming pass
+    that follows.
+    """
+    def rank(pal: Palette):
+        def key(e: Entry) -> float:
+            flat = e.color if e.color.opaque else e.color.over(pal.ground)
+            return -contrast_ratio(flat, pal.ground)
+        return key
+
+    for group in ("ground", "surface", "ink", "line", "neutral"):
+        pairs = zip(
+            sorted((e for e in base.entries if e.group == group), key=rank(base)),
+            sorted((e for e in alt.entries if e.group == group), key=rank(alt)),
+        )
+        for be, ae in pairs:
+            ae.name = be.name
+
+    def by_hue(pal: Palette) -> dict[str, list[Entry]]:
+        out: dict[str, list[Entry]] = defaultdict(list)
+        for e in pal.entries:
+            if e.group == "chroma":
+                rendered = (e.color if e.color.opaque
+                            else e.color.over(pal.ground))
+                out[hue_name(rendered)].append(e)
+        for members in out.values():
+            members.sort(key=lambda e: -e.score)
+        return out
+
+    base_hues = by_hue(base)
+    for hue, members in by_hue(alt).items():
+        for be, ae in zip(base_hues.get(hue, []), members):
+            ae.name = be.name
+
+
+def _assign_names(entries: list[Entry], ground: Color) -> None:
+    """Generate stable, meaningful token names.
+
+    Names describe what a color is and where it sits, because a generated name
+    like `color-7` tells the next reader nothing. Entries that already carry a
+    name — paired across themes by `_align_names` — are left alone, and the
+    names they hold are reserved so nothing else takes them.
+    """
     counters: dict[str, int] = defaultdict(int)
     used: set[str] = {e.name for e in entries if e.name}
 

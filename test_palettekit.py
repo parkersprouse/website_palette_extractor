@@ -5,6 +5,7 @@ cascade order, and the merge rules — rather than every code path.
 """
 import json
 import os
+import re
 import tempfile
 import unittest
 
@@ -21,6 +22,8 @@ from palettekit.cssparse import (
     parse_stylesheet,
     resolve_vars,
     selector_weight,
+    strip_theme_scope,
+    theme_scope,
 )
 
 
@@ -258,6 +261,262 @@ class TestMerging(unittest.TestCase):
         p = write_fixture(html)
         doc = emit.to_document(extract.extract(sources.load_any(p)))
         self.assertEqual([c for c in doc["colors"] if c["role"] == "text"], [])
+
+
+class TestThemeScopes(unittest.TestCase):
+    """The selector matching, which is the cheapest place to be quietly wrong.
+
+    A false positive splits an ordinary palette in half; a false negative
+    leaves the dark theme inheriting the light ground, and every ratio
+    reported for it is then measured against a background it never uses.
+    """
+
+    def test_scope_from_selector(self):
+        cases = {
+            ".dark body": "dark",
+            "html.dark": "dark",
+            ".dark": "dark",
+            ':root[data-theme="dark"]': "dark",
+            "[data-theme='light'] .card": "light",
+            "html[data-bs-theme=dark]": "dark",
+            "[data-color-mode=dark] a": "dark",
+            ".theme-dark .x": "dark",
+            ".dark-mode": "dark",
+            ".is-light": "light",
+            # Component classes that merely contain the word.
+            ".dark-blue": "",
+            ".darken": "",
+            ".sidebar-dark": "",
+            ".highlight": "",
+            ".lighter": "",
+            "body": "",
+        }
+        for sel, want in cases.items():
+            self.assertEqual(theme_scope(sel, ()), want, sel)
+
+    def test_scope_from_media_query(self):
+        self.assertEqual(
+            theme_scope(":root", ("@media (prefers-color-scheme: dark)",)),
+            "dark")
+        self.assertEqual(
+            theme_scope(":root",
+                        ("@media (min-width:600px) and "
+                         "(prefers-color-scheme:light)",)),
+            "light")
+        self.assertEqual(theme_scope(":root", ("@media print",)), "")
+
+    def test_strip_theme_scope(self):
+        cases = {
+            ".dark body": "body",
+            # The marker usually rides on <html>, and `html body` is `body`.
+            "html.dark body": "body",
+            "html.dark": "html",
+            ':root[data-theme="dark"]': ":root",
+            '[data-theme="dark"] body': "body",
+            ".dark .card": ".card",
+            # A compound that was nothing but the marker is the root itself.
+            ".dark": ":root",
+            ".dark h1, .dark h2": "h1, h2",
+        }
+        for sel, want in cases.items():
+            self.assertEqual(strip_theme_scope(sel), want, sel)
+
+
+MEDIA_THEMES = """<!DOCTYPE html><html><head><style>
+  :root { --bg: #ffffff; --fg: #1a1a1a; --brand: #2563eb; }
+  body { background: var(--bg); color: var(--fg); }
+  a { color: var(--brand); }
+  .card { background: #f4f4f5; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0b0f14; --fg: #e8e8ea; --brand: #60a5fa; }
+    .card { background: #16181d; }
+  }
+</style></head><body></body></html>
+"""
+
+CLASS_THEMES = """<!DOCTYPE html><html><head><style>
+  html { background: #ffffff; }
+  body { color: #222222; }
+  .btn { background: #2563eb; }
+  html.dark { background: #101010; }
+  html.dark body { color: #eeeeee; }
+  .dark .btn { background: #60a5fa; }
+</style></head><body></body></html>
+"""
+
+
+class TestThemes(unittest.TestCase):
+    def doc_for(self, html):
+        return emit.to_document(extract.extract(sources.load_any(
+            write_fixture(html))))
+
+    def test_media_query_themes_get_their_own_ground(self):
+        doc = self.doc_for(MEDIA_THEMES)
+        self.assertEqual([t["ground"] for t in doc["themes"]],
+                         ["#ffffff", "#0b0f14"])
+        self.assertEqual([t["appearance"] for t in doc["themes"]],
+                         ["light", "dark"])
+
+    def test_class_scoped_themes_get_their_own_ground(self):
+        """`html.dark` has to be recognised as the dark theme's page rule."""
+        doc = self.doc_for(CLASS_THEMES)
+        self.assertEqual([t["ground"] for t in doc["themes"]],
+                         ["#ffffff", "#101010"])
+
+    def test_top_level_mirrors_the_default_theme(self):
+        """The pre-themes shape of the document has to keep working."""
+        doc = self.doc_for(MEDIA_THEMES)
+        self.assertEqual(doc["ground"], doc["themes"][0]["ground"])
+        self.assertEqual(doc["colors"], doc["themes"][0]["colors"])
+        self.assertEqual(doc["defaultTheme"], "base")
+
+    def test_overridden_values_leave_the_theme_that_replaced_them(self):
+        """The light `--bg` must not appear as a color of the dark theme."""
+        dark = self.doc_for(MEDIA_THEMES)["themes"][1]
+        hexes = {c["hex"] for c in dark["colors"]}
+        self.assertIn("#0b0f14", hexes)
+        self.assertNotIn("#ffffff", hexes)
+        self.assertNotIn("#f4f4f5", hexes)
+
+    def test_names_align_across_themes(self):
+        """The same token name has to mean the same job in both themes."""
+        doc = self.doc_for(CLASS_THEMES)
+        light = {c["name"]: c["hex"] for c in doc["themes"][0]["colors"]}
+        dark = {c["name"]: c["hex"] for c in doc["themes"][1]["colors"]}
+        self.assertEqual(set(light), set(dark))
+        self.assertEqual(light["ground"], "#ffffff")
+        self.assertEqual(dark["ground"], "#101010")
+        # Body text: nearly black on the light theme, nearly white on the
+        # dark one, and one token either way.
+        ink = [n for n in light if light[n] == "#222222"]
+        self.assertEqual(len(ink), 1)
+        self.assertEqual(dark[ink[0]], "#eeeeee")
+
+    def test_unthemed_site_reports_one_theme(self):
+        doc = emit.to_document(extract.extract(sources.load_any(
+            write_fixture(FIXTURE))))
+        self.assertEqual(len(doc["themes"]), 1)
+        self.assertEqual(doc["themes"][0]["id"], "base")
+
+    def test_themes_can_be_switched_off(self):
+        pal = extract.extract(sources.load_any(write_fixture(MEDIA_THEMES)),
+                              themes=False)
+        self.assertIsNone(pal.alternate)
+
+    def test_a_scope_that_paints_nothing_new_is_not_a_theme(self):
+        """A media block with no color of its own is not a second palette."""
+        html = """<style>
+          body { background: #ffffff; color: #222222; }
+          @media (prefers-color-scheme: dark) { img { filter: invert(1); } }
+        </style>"""
+        self.assertEqual(len(self.doc_for(html)["themes"]), 1)
+
+    def test_css_carries_both_themes_under_matching_names(self):
+        doc = self.doc_for(MEDIA_THEMES)
+        css = emit.emit_css(doc, "c")
+        self.assertIn("@media (prefers-color-scheme: dark)", css)
+        self.assertIn('[data-theme="dark"]', css)
+        self.assertIn("--c-ground: #ffffff;", css)
+        self.assertIn("--c-ground: #0b0f14;", css)
+
+    def test_report_toggles_and_restyles_itself(self):
+        doc = self.doc_for(MEDIA_THEMES)
+        html = emit.emit_html(doc, None)
+        # Reading colors for both themes, so a toggle restyles the page and
+        # not just the swatches.
+        self.assertIn(':root[data-pk-theme="base"]', html)
+        self.assertIn(':root[data-pk-theme="dark"]', html)
+        # The toast used to have its colors written straight into its rule,
+        # which left it on the first theme's colors after a switch.
+        self.assertIn("--ui-toast-bg", html)
+        self.assertNotIn("__TOASTBG__", html)
+        self.assertEqual(re.findall(r"__[A-Z_]+__", html), [])
+        # Still standalone.
+        self.assertNotIn("fetch(", html)
+        self.assertNotIn("<link", html)
+
+    def test_both_report_themes_are_readable(self):
+        for theme in self.doc_for(MEDIA_THEMES)["themes"]:
+            ui = emit._pick_report_theme(theme)
+            g = parse_color(ui["ground"])
+            for role, floor in (("strong", 7.0), ("body", 4.5), ("muted", 3.0)):
+                ratio = contrast_ratio(parse_color(ui[role]), g)
+                self.assertGreaterEqual(
+                    ratio, floor,
+                    f"{theme['id']} {role} only {ratio:.2f}:1 on its ground")
+
+
+class TestChannelTriplets(unittest.TestCase):
+    """The shadcn/ui convention: `--background: 0 0% 3.9%`.
+
+    A bare triplet is not a color. It becomes one only when a color function
+    assembles it at the point of use. Both halves of that are asserted here,
+    because the tempting "fix" — reading a color out of the bare form — would
+    invent colors the page never paints.
+    """
+
+    TABLE = {"--bg": "0 0% 3.9%", "--brand": "217.2 91.2% 59.8%",
+             "--chan": "255 0 0"}
+
+    def test_triplet_assembled_by_a_color_function_is_read(self):
+        cases = {
+            "hsl(var(--bg))": "#0a0a0aff",
+            "hsl(var(--brand))": "#3b82f6ff",
+            "hsl(var(--bg) / 50%)": "#0a0a0a80",
+            "hsla(var(--bg) / 0.5)": "#0a0a0a80",
+            "rgb(var(--chan))": "#ff0000ff",
+            "rgb(var(--chan) / 0.5)": "#ff000080",
+            "1px solid hsl(var(--brand))": "#3b82f6ff",
+        }
+        for value, want in cases.items():
+            got = [c.hexa for c in find_colors(resolve_vars(value, self.TABLE))]
+            self.assertEqual(got, [want], value)
+
+    def test_bare_triplet_is_not_a_color(self):
+        """Correct by design, not a gap waiting to be filled.
+
+        `background-color: var(--bg)` where `--bg` is `0 0% 3.9%` resolves to
+        `background-color: 0 0% 3.9%`, which is invalid: a browser computes it
+        to rgba(0,0,0,0) and paints nothing. Verified against a real engine
+        with CSS.supports and getComputedStyle. Reading a color here would put
+        a color in the palette that the page never shows.
+        """
+        self.assertEqual(find_colors(resolve_vars("var(--bg)", self.TABLE)), [])
+        self.assertIsNone(parse_color("0 0% 3.9%"))
+
+    def test_bare_triplet_use_is_reported(self):
+        html = """<style>
+          :root { --bg: 0 0% 100%; --fg: 0 0% 3.9%; }
+          body { background-color: var(--bg); color: var(--fg); }
+        </style>"""
+        pal = extract.extract(sources.load_any(write_fixture(html)))
+        notes = " ".join(pal.warnings)
+        self.assertIn("bare channel triplet", notes)
+        self.assertIn("--bg", notes)
+        # One aggregated note, not one per property.
+        self.assertEqual(len([w for w in pal.warnings
+                              if "bare channel triplet" in w]), 1)
+
+    def test_triplet_used_correctly_is_not_reported(self):
+        """Nothing is wrong with a triplet a color function consumes."""
+        html = """<style>
+          :root { --bg: 0 0% 100%; }
+          body { background-color: hsl(var(--bg)); }
+        </style>"""
+        pal = extract.extract(sources.load_any(write_fixture(html)))
+        self.assertEqual([w for w in pal.warnings
+                          if "bare channel triplet" in w], [])
+        self.assertIn("#ffffff", [e.color.hex for e in pal.entries])
+
+    def test_ordinary_values_are_not_mistaken_for_triplets(self):
+        """The detector must not fire on lengths or on real colors."""
+        html = """<style>
+          :root { --pad: 1px 2px 3px; --edge: #abcdef; }
+          body { background: #ffffff; border: var(--pad) solid var(--edge); }
+        </style>"""
+        pal = extract.extract(sources.load_any(write_fixture(html)))
+        self.assertEqual([w for w in pal.warnings
+                          if "bare channel triplet" in w], [])
 
 
 class TestBadInput(unittest.TestCase):

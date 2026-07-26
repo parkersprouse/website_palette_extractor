@@ -73,6 +73,56 @@ The page lets you switch the copy format between hex, rgb, hsl, oklch and
 as-declared, toggle unrendered colors, and see the selector each color came
 from. Click any swatch to copy it.
 
+## Light and dark themes
+
+When a site ships two themes, both are extracted and the report gets a toggle.
+
+Two mechanisms are recognised: a `prefers-color-scheme` media query, and a
+class or attribute on a wrapper element — `.dark`, `.theme-dark`, `.is-light`,
+`[data-theme="dark"]`, `[data-bs-theme=dark]`. The second is the common one,
+since Tailwind's `dark:` variant compiles to it.
+
+Each theme is extracted from scratch rather than tagged onto one pass, because
+a theme has its own ground — so every contrast ratio you see is measured
+against the background that theme actually uses, and colors with alpha are
+flattened over the right one. Switching the toggle restyles the whole report,
+not just the swatches.
+
+The two palettes share one set of token names, paired by rank within each group
+against that theme's own ground. So `ink-2` is the strongest body text in both,
+and you can read a theme switch as one value changing rather than two unrelated
+lists. The `.css` file uses this directly:
+
+```css
+:root                                  { --c-ground: #ffffff; … }
+@media (prefers-color-scheme: dark) {
+  :root                                { --c-ground: #0b0f14; … }
+}
+[data-theme="dark"]                    { --c-ground: #0b0f14; … }
+```
+
+Both forms are written because there is no telling which one your project uses
+— delete the one you don't want.
+
+The JSON grows a `themes` array and a `defaultTheme`; the top-level `ground`,
+`stats` and `colors` still mirror the default theme, so anything already
+reading the file keeps working. **The scss, ts and tailwind outputs carry the
+default theme only.**
+
+A site with no theme scopes produces exactly what it did before — one palette,
+no toggle. `--no-themes` forces that.
+
+A caveat worth knowing, if a site stores its theme colors as bare channel
+triplets (`--background: 0 0% 3.9%`, the shadcn/ui pattern). Assembled at the
+point of use — `hsl(var(--background))`, including `hsl(var(--x) / 50%)` and
+`rgb(var(--x))` — those read normally and end up in the palette.
+
+Used raw, as `background-color: var(--background)`, they do not, and that is
+correct: `background-color: 0 0% 3.9%` is invalid CSS, so a browser discards it
+and paints nothing. Reading a color there would put something in your palette
+that the page never shows. When this happens you get a note saying so, rather
+than a silently thin result.
+
 ## What it decides, and why
 
 **Ground is resolved by the cascade, not by counting.** The page background is
@@ -147,6 +197,7 @@ knowing before you read too much into a status.
 --only TEXT           only read stylesheets matching TEXT (repeatable)
 --exclude TEXT        skip stylesheets matching TEXT (repeatable)
 --list-sources        show the stylesheets found, then exit
+--no-themes           treat a two-theme site as one theme
 --all                 do not down-weight third-party stylesheets
 --no-third-party      ignore other-origin stylesheets entirely
 --include-unused      put saved/inert colors in the code outputs too
@@ -162,8 +213,9 @@ knowing before you read too much into a status.
   to an element property is not in any stylesheet and will not be found.
 - **The cascade is approximated, not implemented.** Ground detection follows
   document order, and `var()` resolution takes the last definition. Specificity
-  and scoped custom properties are not modelled. This is fine for gathering a
-  palette and wrong for predicting exact computed styles.
+  and scoped custom properties are not modelled, apart from two narrow rules
+  for theme overrides. This is fine for gathering a palette and wrong for
+  predicting exact computed styles.
 - **Ranking is a heuristic.** Score reflects where a color is used, not just
   how often. Treat the order as a strong hint, not a measurement.
 - `color-mix()`, `light-dark()` and relative color syntax are not evaluated;

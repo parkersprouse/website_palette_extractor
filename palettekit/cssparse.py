@@ -51,6 +51,90 @@ PROPERTY_ROLE = {
 }
 
 
+# ---------------------------------------------------------------- theme scopes
+#
+# A site that ships two themes says so in one of two ways: a
+# `prefers-color-scheme` media query, or a class/attribute on a wrapper element
+# that the site toggles. Both are *scopes over declarations*, which is why they
+# are detected here rather than downstream: extract.py runs the whole pipeline
+# once per scope, because each theme has its own ground and every contrast
+# ratio and alpha flattening is measured against it.
+
+_THEME_MEDIA = re.compile(r"prefers-color-scheme\s*:\s*(light|dark)", re.I)
+
+# Only whole, known theme class names. `.dark-blue`, `.darken` and
+# `.sidebar-dark` name components, not theme roots, and treating one as a theme
+# would split an ordinary palette in half.
+_THEME_CLASS = re.compile(
+    r"\.(?:is-|has-|theme-|mode-|colou?r-mode-|colou?r-scheme-)?"
+    r"(light|dark)"
+    r"(?:-(?:mode|theme|scheme))?"
+    r"(?![\w-])",
+    re.I,
+)
+
+# [data-theme="dark"], [data-bs-theme=dark], [data-color-mode=dark], [theme=dark]
+_THEME_ATTR = re.compile(
+    r"\[\s*(?:data-)?[\w-]*(?:theme|scheme|mode|appearance)\s*"
+    r"[~|^$*]?=\s*[\"']?(light|dark)[\"']?\s*[a-z]?\s*\]",
+    re.I,
+)
+
+_WS = re.compile(r"\s+")
+_REDUNDANT_HTML = re.compile(r"^html\s+(?=body\b)", re.I)
+
+
+def theme_scope(selector: str, at_rules: tuple[str, ...]) -> str:
+    """`light`, `dark`, or `""` for a declaration that belongs to no theme.
+
+    The selector is consulted before the media query. A rule written `.dark .x`
+    inside a `prefers-color-scheme: light` block is contradictory and
+    vanishingly rare, and the explicit class is the stronger statement of the
+    two.
+
+    A selector *list* is judged as a whole, so `.dark .a, .b` is treated as
+    dark-scoped even though `.b` is not. Splitting the list would be more
+    accurate and is not worth the machinery: authors do not mix scoped and
+    unscoped selectors in one rule.
+    """
+    m = _THEME_CLASS.search(selector) or _THEME_ATTR.search(selector)
+    if m:
+        return m.group(1).lower()
+    for at in at_rules:
+        m = _THEME_MEDIA.search(at)
+        if m:
+            return m.group(1).lower()
+    return ""
+
+
+def strip_theme_scope(selector: str) -> str:
+    """The selector as it reads from inside its own theme.
+
+    `html.dark body` describes the dark theme's page background exactly as
+    `html body` describes the light one's, so the marker has to come off before
+    the selector is weighted or matched against the page-level pattern.
+    Without this, `selector_weight` scores a themed page rule as an ordinary
+    class and `detect_ground` never sees it at all — the dark theme then
+    silently inherits the light ground and every ratio reported for it is
+    wrong.
+
+    A compound left empty by the removal becomes `:root`: `.dark { --bg: #000 }`
+    is a root token override, and dropping it would leave no selector at all.
+    """
+    out = []
+    for part in selector.split(","):
+        cleaned = _THEME_ATTR.sub(" ", _THEME_CLASS.sub(" ", part))
+        cleaned = _WS.sub(" ", cleaned).strip()
+        # `html body` and `body` select the same element, and the marker is
+        # usually carried on `html`, so `html.dark body` has to come out as
+        # plain `body` if it is to be recognised as the override of `body` that
+        # it is. Only themed selectors pass through here, so this cannot
+        # perturb an unthemed site.
+        cleaned = _REDUNDANT_HTML.sub("", cleaned)
+        out.append(cleaned or ":root")
+    return ", ".join(out)
+
+
 @dataclass
 class Declaration:
     selector: str
@@ -60,6 +144,7 @@ class Declaration:
     at_rules: tuple[str, ...] = ()
     order: int = 0          # position within its own stylesheet
     sheet_order: int = 0    # position of the stylesheet in the document
+    theme: str = ""         # "light" / "dark" / "" for unscoped
 
     @property
     def is_custom_property(self) -> bool:
@@ -70,6 +155,11 @@ class Declaration:
         if self.is_custom_property:
             return "token"
         return PROPERTY_ROLE.get(self.prop, "other")
+
+    @property
+    def themed_selector(self) -> str:
+        """The selector with its theme marker removed, if it had one."""
+        return strip_theme_scope(self.selector) if self.theme else self.selector
 
 
 @dataclass
@@ -178,6 +268,10 @@ _DECL = re.compile(r"^\s*([\w-]+|--[\w-]+)\s*:\s*(.+?)\s*$", re.S)
 def _collect(sheet: Stylesheet, selector: str, body: str, source: str,
              at_rules: tuple[str, ...]) -> None:
     # Nested blocks were handled by the walker; only flat declarations here.
+    selector = " ".join(selector.split())
+    # Resolved once per block rather than per declaration: the scope is a
+    # property of the rule, and the regexes are not free.
+    theme = theme_scope(selector, at_rules)
     for chunk in body.split(";"):
         m = _DECL.match(chunk)
         if not m:
@@ -190,13 +284,14 @@ def _collect(sheet: Stylesheet, selector: str, body: str, source: str,
             continue
         sheet.declarations.append(
             Declaration(
-                selector=" ".join(selector.split()),
+                selector=selector,
                 prop=prop,
                 value=" ".join(value.split()),
                 source=source,
                 at_rules=at_rules,
                 order=len(sheet.declarations),
                 sheet_order=sheet.sheet_order,
+                theme=theme,
             )
         )
 

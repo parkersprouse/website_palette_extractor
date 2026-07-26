@@ -3,3 +3,4 @@
 .remember
 .venv
 palettes
+**/*cache*

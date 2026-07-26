@@ -64,6 +64,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="one token per distinct color, instead of separating "
                         "a color used for text from the same color used for "
                         "a background")
+    p.add_argument("--no-themes", action="store_true",
+                   help="treat the site as having one theme, even where it "
+                        "scopes rules to prefers-color-scheme or a .dark class")
     p.add_argument("--include-unused", action="store_true",
                    help="also put saved/inert colors in the css, scss, ts and "
                         "tailwind files (they are always in the json)")
@@ -111,10 +114,14 @@ def main(argv: list[str] | None = None) -> int:
         only=args.only,
         exclude=args.exclude,
         flat=args.flat,
+        themes=not args.no_themes,
     )
 
-    if args.limit and len(pal.entries) > args.limit:
-        pal.entries = pal.entries[: args.limit]
+    if args.limit:
+        # Applied per theme, so the two stay comparable.
+        for p in [pal, pal.alternate]:
+            if p and len(p.entries) > args.limit:
+                p.entries = p.entries[: args.limit]
 
     if not pal.entries:
         print("error: no colors found. If the target was a URL, the page may "
@@ -187,18 +194,19 @@ def _list_sources(bundle, args) -> None:
     print("\n  Narrow with --only TEXT or --exclude TEXT (substring match).\n")
 
 
-def _summarise(doc: dict, pal, written: list[str]) -> None:
-    live = [c for c in doc["colors"] if c["status"] == "live"]
-    other = [c for c in doc["colors"] if c["status"] != "live"]
+def _summarise_theme(t: dict, label: bool) -> None:
+    live = [c for c in t["colors"] if c["status"] == "live"]
+    other = [c for c in t["colors"] if c["status"] != "live"]
 
-    print(f"\n{doc['name']}")
-    print(f"  ground {doc['ground']}  ({doc['groundSource']})")
-    print(f"  scanned {doc['stats']['declarationsScanned']} declarations in "
-          f"{doc['stats']['stylesheets']} stylesheets")
-    print(f"  {doc['stats']['distinctColors']} distinct colors -> "
-          f"{len(doc['colors'])} tokens after merging\n")
+    if label:
+        print(f"\n  [{t['id']}]")
+    print(f"  ground {t['ground']}  ({t['groundSource']})")
+    print(f"  scanned {t['stats']['declarationsScanned']} declarations in "
+          f"{t['stats']['stylesheets']} stylesheets")
+    print(f"  {t['stats']['distinctColors']} distinct colors -> "
+          f"{len(t['colors'])} tokens after merging\n")
 
-    width = max((len(c["name"]) for c in doc["colors"]), default=8)
+    width = max((len(c["name"]) for c in t["colors"]), default=8)
     for c in live:
         flag = "" if c["contrastOnGround"] >= 4.5 else "  low contrast"
         print(f"  {c['name']:<{width}}  {c['hex']}  {c['role']:<8} "
@@ -207,6 +215,17 @@ def _summarise(doc: dict, pal, written: list[str]) -> None:
         print()
         for c in other:
             print(f"  {c['name']:<{width}}  {c['hex']}  [{c['status']}]")
+
+
+def _summarise(doc: dict, pal, written: list[str]) -> None:
+    themes = doc["themes"]
+    print(f"\n{doc['name']}")
+    if len(themes) > 1:
+        print("  two themes: " + ", ".join(
+            f"{t['id']} ({t['appearance']}, ground {t['ground']})"
+            for t in themes))
+    for t in themes:
+        _summarise_theme(t, len(themes) > 1)
 
     if doc.get("images"):
         im = doc["images"]

@@ -37,7 +37,7 @@ reached only through `images.py`, behind `--images`.
 
 ```bash
 python3 -m palettekit <target> -o out    # target: .har | URL | .html/.css path
-python3 test_palettekit.py               # 93 tests, all must pass
+python3 test_palettekit.py               # 95 tests, all must pass
 python3 -m palettekit x.har --no-themes  # collapse a two-theme site into one
 ruff check .                             # must stay clean; config in pyproject
 python3 -m palettekit x.har --list-sources   # diagnose framework noise first
@@ -92,11 +92,11 @@ sources.py   →  cssparse.py  →  extract.py  →  emit.py
 
 | File | Lines | Holds |
 |---|---:|---|
-| `color.py` | 999 | `Color`, parsing, sRGB↔OKLab/CIE Lab/XYZ both ways, `color-mix()`, `light-dark()`, contrast, hue names |
-| `cssparse.py` | 745 | `tinycss2` integration, `var()`, `selector_weight`, roles, theme scopes, `@layer` names |
+| `color.py` | 1004 | `Color`, parsing, sRGB↔OKLab/CIE Lab/XYZ both ways, `color-mix()`, `light-dark()`, contrast, hue names |
+| `cssparse.py` | 803 | `tinycss2` integration, `var()`, `selector_weight`, roles, theme scopes, `@layer` names |
 | `dom.py` | 300 | `html.parser` → `ElementTree` shim, `cssselect2` matching of `<html>`/`<body>`, specificity |
 | `sources.py` | 292 | `load_har` / `load_url` / `load_paths` → `Bundle` |
-| `extract.py` | 1121 | `extract()`, the cascade, per-theme `_build`, ground, merging, statuses, naming |
+| `extract.py` | 1126 | `extract()`, the cascade, per-theme `_build`, ground, merging, statuses, naming |
 | `emit.py` | 942 | Emitters; `_HTML` is the report template |
 | `images.py` | 148 | Optional image quantisation, not part of the token set |
 | `__main__.py` | 248 | CLI |
@@ -602,6 +602,45 @@ because the obvious implementation produced plausible but wrong output.
     reported nothing where it should report white. Test:
     `test_var_substitution_does_not_glue_two_tokens_into_one`.
 
+25. **A `var()` call is delimited by counting parentheses, because a fallback
+    is a whole value** (`_var_call`, using `color.balanced_end`). The
+    non-greedy regex this replaced stopped at the first `)`, which is the wrong
+    one the moment the fallback contains a function of its own:
+
+    ```css
+    background-image: var(--shimmer-image, linear-gradient(…, color-mix(…) …))
+    ```
+
+    — ui.shadcn.com, cut at the `)` closing `calc(`, leaving a truncated call
+    and the rest of the declaration behind as an orphaned tail.
+
+    **The damage was not mainly the garbage; it was the orphan resolving
+    too.** When the name *is* defined, the fallback is discarded and all the
+    regex leaves behind is a stray `)` — invisible in a hex set. But the tail
+    it cut loose was substituted on the next pass, so **every color in a
+    discarded fallback was counted a second time**: 204 declarations across
+    ground.news, tailwindcss.com and ui.shadcn.com, most of them Tailwind's
+    `--tw-gradient-stops: var(--tw-gradient-via-stops, <the same stops>)`.
+    Right colors, doubled weight.
+
+    That is why this had to be diffed at the per-declaration color list and not
+    at the palette: **every hex set, ground and warning on all eight corpus
+    sites is identical before and after.** What moved was occurrence counts,
+    and through them the ranking that names tokens — on ui.shadcn.com
+    `#378add` goes from `blue-7` to `blue-14` and `#303030` moves from the grey
+    group to surface. A palette-level check would have called this a no-op and
+    a hex-set check would have agreed with it. Tests:
+    `test_a_var_fallback_may_contain_parentheses`,
+    `test_a_discarded_fallback_does_not_come_back_as_a_second_copy`.
+
+    **One scanner, not two**: `_balanced_end` was renamed `balanced_end` and is
+    imported rather than copied. It already honours quotes and escapes, which
+    is the whole reason a regex cannot do this job.
+
+    The removals this diff surfaced — 124 of them — are *not* this bug and are
+    written up under "Known limits": they are `initial` read as a value, and a
+    property resolved from a rule the consuming element never matched.
+
 ## Status vocabulary
 
 | Status | Means | Detected by |
@@ -777,14 +816,37 @@ Tailwind config should even look like first.
   needs a `calc()` evaluator, which is a separate piece of work; defaulting to
   50% would print a color the page does not paint.
 
-- **`var(--x, <fallback containing parens>)` is cut at the first `)`.**
-  `_VAR_CALL` is a non-greedy regex, so
-  `var(--shimmer-image, linear-gradient(…))` resolves to garbage and whatever
-  colors fall out of it are meaningless. Three declarations on ui.shadcn.com.
-  This predates phase 4 and was not changed by it — it produced the same
-  garbage before and after — but it is now the largest remaining `var()`
-  defect. The fix is to match `var(` with balanced parens instead of a regex,
-  the same shape as `_balanced_end` in `color.py`.
+- **A custom property whose winning definition is `initial` — or is a value
+  set on an element the `var()` is not consumed on — resolves to that text.**
+  This is the gap the balanced parse of invariant 25 made visible, and it is
+  two documented limits meeting rather than a new one.
+
+  Tailwind v4 guards every registered property with `@layer properties { *,
+  ::before, ::after, ::backdrop { --tw-gradient-via-stops: initial; … } }`, for
+  browsers with no `@property`. **`initial` on a custom property is the
+  guaranteed-invalid value**, so a browser resolving `var(--tw-gradient-via-stops,
+  <the stops>)` uses the fallback. `resolve_vars` substitutes the literal token
+  `initial` and finds no color in it. 108 declarations on tailwindcss.com's dark
+  theme; `violet` drops from 137 occurrences to 29 and `teal` from 130 to 22.
+
+  ui.shadcn.com's 16 `.shimmer` declarations are the same shape with the second
+  limit on top: `--shimmer-image` is defined three times — `initial` in the
+  guard, and `none` by the `.shimmer-none` and `.md\:shimmer-none` utilities —
+  and since none of the three reaches the page element, `build_var_table` falls
+  back to last-wins and takes `none` from a class the shimmering element does
+  not carry. That is the **scoped custom properties are not modelled** limit
+  below, and it is what makes `background-image: var(--shimmer-image, …)` read
+  as `none`.
+
+  **Neither is a regression.** HEAD reported those colors only because the
+  truncated call left an orphaned tail that resolved separately — the same
+  accident that double-counted 204 other declarations. No hex left any palette:
+  all eight corpus sites keep identical hex sets, grounds and warnings, and the
+  effect is confined to occurrence counts, which `selector_weight` already
+  calls a hint. The fix is to read `initial` as guaranteed-invalid and take the
+  fallback; it was kept out of the balanced-paren change deliberately, so that
+  a real behaviour change would not ride inside one whose blast radius was
+  being measured.
 
 - **Scoring is a heuristic** (`selector_weight`). Treat ordering as a hint.
 - **Framework CSS cannot be reliably auto-detected** when it is inlined in the

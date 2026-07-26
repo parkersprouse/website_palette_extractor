@@ -725,11 +725,16 @@ def mix_colors(space: str, c1: Color, p1: float, c2: Color, p2: float,
 
 # ------------------------------------------------------ color-mix, light-dark
 
-def _balanced_end(text: str, start: int) -> int:
+def balanced_end(text: str, start: int) -> int:
     """Index just past the `)` closing the `(` at `start`, or -1.
 
     Quotes and escapes are honoured because a function argument can hold either
     — `url("a)b")` closes nothing.
+
+    Public within the package because `cssparse.resolve_vars` needs the same
+    answer for `var(--x, <fallback with parens>)`. One scanner, not two: a
+    second copy would drift from this one, and the whole reason it exists is
+    that the parenthesis-counting a regex can do is not enough.
     """
     depth, quote, i = 0, "", start
     while i < len(text):
@@ -809,7 +814,7 @@ def _split_component(text: str) -> tuple[str, str] | None:
         return (text[lead.end():].strip(), lead.group(0))
 
     if _LEADING_FUNC.match(text):
-        end = _balanced_end(text, text.index("("))
+        end = balanced_end(text, text.index("("))
         if end < 0:
             return None
     else:
@@ -940,7 +945,7 @@ def _whole_value_spans(value: str) -> list[tuple[int, int]]:
     for m in _WHOLE_VALUE_FUNCS.finditer(value):
         if spans and m.start() < spans[-1][1]:
             continue
-        end = _balanced_end(value, m.end() - 1)
+        end = balanced_end(value, m.end() - 1)
         if end > 0:
             spans.append((m.start(), end))
     return spans

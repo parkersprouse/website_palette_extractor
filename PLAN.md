@@ -515,6 +515,17 @@ stated.**
 > first `)` and the rest of the value is left as garbage. It produced garbage
 > before this phase and after it, on three declarations of one site. It is a
 > `var()` bug, not a `color-mix()` one, and folding it in would bury it.
+>
+> **Fixed since, and it was three declarations of one site only where the
+> garbage was visible.** `_var_call` now counts parentheses with
+> `color.balanced_end` (invariant 25). Predicted from the frozen bundles before
+> any code was written: 102 distinct affected calls on **five** sites, not one
+> — so "only ui.shadcn.com moves" was falsified in advance rather than
+> discovered afterwards. The per-declaration color diff then found the real
+> shape of it: 204 declarations whose *discarded* fallback had been resolving a
+> second time as an orphaned tail, counting every color in it twice. Every hex
+> set, ground and warning on all eight sites is identical; occurrence counts and
+> the token names ranked from them are what moved.
 
 ### As planned
 

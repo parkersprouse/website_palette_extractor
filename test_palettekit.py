@@ -162,6 +162,54 @@ class TestCss(unittest.TestCase):
         out = resolve_vars("var(--a)", {"--a": "var(--b)", "--b": "var(--a)"})
         self.assertIsInstance(out, str)
 
+    def test_a_var_fallback_may_contain_parentheses(self):
+        """A fallback is a whole value, so it can hold functions of its own.
+
+        The non-greedy regex this replaced stopped at the first `)`, which is
+        the wrong one the moment the fallback contains a function — it cut the
+        call short and left the rest of the declaration behind as an orphaned
+        tail. ui.shadcn.com writes
+        `background-image: var(--shimmer-image, linear-gradient(…))`, and what
+        HEAD made of that was `none), currentColor calc(50% - 5rem)), …`.
+
+        The known-name case is the one that discriminates: the fallback is
+        discarded, so all that is left of the regex's mistake is a stray `)`,
+        and nothing but the string itself shows it.
+        """
+        self.assertEqual(
+            resolve_vars("var(--a, linear-gradient(red, blue))",
+                         {"--a": "#123456"}),
+            "#123456",
+        )
+        table = {"--angle": "90deg", "--base": "#000000", "--spread": "5rem",
+                 "--highlight": "#378add"}
+        value = ("var(--shimmer-image, linear-gradient("
+                 "calc(90deg + var(--angle)), "
+                 "var(--base) calc(50% - var(--spread)), "
+                 "color-mix(in oklch, var(--highlight), var(--base) 50%) 50%))")
+        self.assertEqual(
+            resolve_vars(value, table),
+            "linear-gradient(calc(90deg + 90deg), #000000 calc(50% - 5rem), "
+            "color-mix(in oklch, #378add, #000000 50%) 50%)",
+        )
+
+    def test_a_discarded_fallback_does_not_come_back_as_a_second_copy(self):
+        """The largest class the balanced parse fixed, and it double-counted.
+
+        Tailwind v4 writes `--tw-gradient-stops: var(--tw-gradient-via-stops,
+        <the same stops written out>)`, and a `.via-*` utility defines the
+        name. Cut at the first `)`, the call resolved from the table *and* the
+        orphaned tail resolved as well, so every color in the fallback was
+        counted twice — 204 declarations across three corpus sites. The colors
+        were right and their weight was doubled, which is invisible in a hex
+        set and visible in every ranking built from it.
+        """
+        table = {"--stops": "var(--from) 0%, var(--to) 100%",
+                 "--from": "#ff0000", "--to": "#0000ff"}
+        value = "var(--stops, var(--pos), var(--from) 0%, var(--to) 100%)"
+        self.assertEqual([c.hex for c in find_colors(resolve_vars(value, table))],
+                         ["#ff0000", "#0000ff"])
+
     def test_var_substitution_does_not_glue_two_tokens_into_one(self):
         """CSS substitutes tokens; this substitutes text, so it has to pad.
 

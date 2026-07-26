@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 
 import tinycss2
 
-from .color import Color, find_colors
+from .color import Color, balanced_end, find_colors
 
 # Properties whose values carry color, mapped to the role the color plays.
 PROPERTY_ROLE = {
@@ -560,11 +560,45 @@ def _record(sheet: Stylesheet, node, value: str, selector: str, source: str,
     )
 
 
-_VAR_CALL = re.compile(r"var\(\s*(--[\w-]+)\s*(?:,\s*(.*?)\s*)?\)", re.S)
+_VAR_NAME = re.compile(r"\s*(--[\w-]+)\s*")
 
 
 _GLUE_LEFT = "(,/ \t\n"
 _GLUE_RIGHT = "),/; \t\n"
+
+
+def _var_call(text: str, i: int) -> tuple[int, str, str | None] | None:
+    """Read the `var(` starting at `i`: `(end, name, fallback or None)`.
+
+    `end` is the index just past the closing `)`, found by counting parens
+    rather than by stopping at the first one — **a fallback is a whole value
+    and may contain parentheses of its own.** ui.shadcn.com writes
+
+    ```css
+    background-image: var(--shimmer-image, linear-gradient(…, color-mix(…) …))
+    ```
+
+    and a non-greedy regex cut that at the `)` closing `calc(`, leaving both a
+    truncated fallback and an orphaned tail of the declaration. Whatever colors
+    fell out of the two halves were noise.
+
+    `None` when the call cannot be read as one — an unterminated `var(`, or a
+    body that is not a custom-property name optionally followed by `,` and a
+    fallback. The caller leaves such text exactly as it stands, which is what
+    the regex did by failing to match.
+    """
+    end = balanced_end(text, i + 3)
+    if end < 0:
+        return None
+    m = _VAR_NAME.match(text, i + 4, end - 1)
+    if not m:
+        return None
+    rest = text[m.end():end - 1]
+    if not rest:
+        return (end, m.group(1), None)
+    if rest[0] != ",":
+        return None
+    return (end, m.group(1), rest[1:].strip())
 
 
 def resolve_vars(value: str, table: dict[str, str], depth: int = 0) -> str:
@@ -572,6 +606,11 @@ def resolve_vars(value: str, table: dict[str, str], depth: int = 0) -> str:
 
     Falls back to the declared default when a name is unknown, and gives up
     after a few levels so a circular definition cannot hang the run.
+
+    **Each call is delimited by counting parentheses, not by a regex** — see
+    `_var_call`. The non-greedy regex this replaced stopped at the first `)`,
+    which is the wrong one whenever the fallback contains a function; the fix
+    is `color.balanced_end`, the same scanner `color-mix()` is read with.
 
     **A substitution that would abut its neighbour is padded with a space**,
     because CSS substitutes *tokens* and this substitutes *text*. Tailwind v4
@@ -591,30 +630,49 @@ def resolve_vars(value: str, table: dict[str, str], depth: int = 0) -> str:
     if depth > 8 or "var(" not in value:
         return value
 
-    def sub(m: re.Match) -> str:
-        name, default = m.group(1), m.group(2)
-        if name in table:
-            out = resolve_vars(table[name], table, depth + 1)
-        elif default:
-            out = resolve_vars(default, table, depth + 1)
-        else:
-            return ""
-        if not out:
-            return out
-        text = m.string
-        before = text[m.start() - 1] if m.start() else ""
-        after = text[m.end():m.end() + 1]
-        if before and before not in _GLUE_LEFT and not out[0].isspace():
-            out = " " + out
-        if after and after not in _GLUE_RIGHT and not out[-1].isspace():
-            out = out + " "
-        return out
+    def one_pass(text: str) -> str:
+        """Every `var()` in `text`, replaced left to right.
+
+        Padding is decided against `text` — the input to this pass — and a
+        replacement is never rescanned, so one pass sees exactly the calls that
+        were written. That was `re.sub`'s behaviour and the padding depends on
+        it: the neighbour a substitution must not be glued to is the one in the
+        source, not one another substitution just put there.
+        """
+        parts, copied, i = [], 0, 0
+        while True:
+            i = text.find("var(", i)
+            if i < 0:
+                break
+            call = _var_call(text, i)
+            if call is None:
+                i += 4  # unreadable; leave it as written and carry on
+                continue
+            end, name, default = call
+            if name in table:
+                out = resolve_vars(table[name], table, depth + 1)
+            elif default:
+                out = resolve_vars(default, table, depth + 1)
+            else:
+                out = ""
+            if out:
+                before = text[i - 1] if i else ""
+                after = text[end:end + 1]
+                if before and before not in _GLUE_LEFT and not out[0].isspace():
+                    out = " " + out
+                if after and after not in _GLUE_RIGHT and not out[-1].isspace():
+                    out = out + " "
+            parts.append(text[copied:i])
+            parts.append(out)
+            copied = i = end
+        parts.append(text[copied:])
+        return "".join(parts)
 
     prev = None
     out = value
     for _ in range(4):
         prev = out
-        out = _VAR_CALL.sub(sub, out)
+        out = one_pass(out)
         if out == prev:
             break
     return out

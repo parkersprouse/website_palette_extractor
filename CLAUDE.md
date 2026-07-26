@@ -736,12 +736,14 @@ because the obvious implementation produced plausible but wrong output.
     modelled" limit below, not this one.
 
     **Verified against a frozen `tailwindcss.com` bundle**, old code against
-    new: dark-theme `violet` and `teal` each gained exactly **+108**
-    occurrences, the light theme moved by +1/+1, no ground moved, and total
-    token count was unchanged in both themes — usages restored on existing
-    entries, no hue invented. `ground.news.har` and
-    `fleshandbonedesign.com.har` are byte-identical before and after (neither
-    uses this guard shape). Test: `test_initial_custom_property_falls_back`,
+    new: the dark theme's dominant `violet` token (`#ad46ff`) goes from 29 to
+    137 occurrences and its dominant `teal` token (`#00d5be`) goes from 22 to
+    130 — an exact match to the numbers this invariant's fix was predicted
+    against, reproduced on a fresh fetch. No ground moved, and total token
+    count was unchanged in both themes — usages restored on existing entries,
+    no hue invented. `ground.news.har` and `fleshandbonedesign.com.har` are
+    byte-identical before and after (neither uses this guard shape). Test:
+    `test_initial_custom_property_falls_back`,
     required to fail against the prior implementation before it was trusted.
 
     **ui.shadcn.com's `--shimmer-image` looks like the same bug and is only

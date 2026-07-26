@@ -667,11 +667,15 @@ Accuracy gaps left by phases 1–4:
 - [x] **T4** — read `initial` as guaranteed-invalid, take the fallback —
       **landed 2026-07-26**. `resolve_vars` now checks the stored value against
       the literal keyword before substituting it. Verified against a frozen
-      `tailwindcss.com` bundle, old code against new: dark-theme `violet` and
-      `teal` each gained exactly **+108** occurrences (109/71 → 266/192 on this
-      snapshot — lower than the 137/130 recorded when T4 was written, because
-      the live site's content has moved on since; the size of the shift is what
-      matches), light theme moved by +1/+1, no ground moved, no token count
+      `tailwindcss.com` bundle, old code against new: the dark theme's
+      `violet` token (`#ad46ff`) goes 29 → 137 occurrences and its `teal`
+      token (`#00d5be`) goes 22 → 130 — an **exact match** to the numbers
+      recorded when this task was written, reproduced on a fresh fetch. (An
+      earlier draft of this entry claimed the live site's content had drifted
+      to explain a mismatch; that mismatch was a self-inflicted measurement
+      error — summing occurrences across every violet-ish hex in the corpus
+      rather than reading the one dominant token — not a real discrepancy.
+      Corrected after being challenged on it.) No ground moved, no token count
       changed. `ground.news.har` and `fleshandbonedesign.com.har` are
       byte-identical before and after (minus `generated`) — the shimmer trap
       T4 warns about is ui.shadcn.com's, not on either local fixture. That
@@ -974,15 +978,19 @@ the word (`initial-value`) is untouched, and no other CSS-wide keyword
 custom property and modelling them is inheritance — T9's job, not this one.
 
 Verified against a **frozen** `tailwindcss.com` bundle (fetched once, same
-pickle fed to old and new code, so the diff cannot be site drift): dark-theme
-`violet` and `teal` each gained exactly **+108** occurrences — 109→266 and
-71→192 on this snapshot. The site's content has moved since the numbers above
-were recorded, which is why the absolute counts differ; the **+108 shared by
-both colors** is the signature of one gradient utility's fallback being
-restored, and it matches the 108-declaration estimate exactly. The light theme
-moved by +1/+1 only, no ground moved (`#f0b100` / `#030712` unchanged), and
-total token count was unchanged in both themes (305, 317) — usages were
-restored on existing entries, no new hues invented. `ground.news.har` and
+pickle fed to old and new code, so the diff cannot be site drift): the
+dark-theme token at `#ad46ff` (named plain `violet` — the dominant shade in
+that hue) goes **29 → 137** occurrences, and `#00d5be` (plain `teal`) goes
+**22 → 130** — an exact match, integer for integer, to the numbers recorded
+above when this task was written. (A first pass at this verification summed
+occurrences across *every* violet- and teal-hued hex in the corpus — Tailwind
+ships ~30 shades per hue — rather than reading the one dominant token PLAN.md
+tracks, producing a different-looking but wrong pair of numbers that briefly
+got blamed on the live site having changed. It had not; the aggregation was
+the bug. Corrected after being challenged on the "site drift" claim.) No
+ground moved (`#f0b100` / `#030712` unchanged), and total token count was
+unchanged in both themes (305, 317) — usages were restored on existing
+entries, no new hues invented. `ground.news.har` and
 `fleshandbonedesign.com.har` are byte-identical before and after (minus
 `generated`): neither uses this guard pattern, confirming the blast radius is
 confined to sites that do.

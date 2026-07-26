@@ -279,7 +279,7 @@ Run it from an environment where the dependencies are installed — `pip install
 A bare system `python3` will fail at the `tinycss2` import rather than at an
 assertion.
 
-96 tests covering the color maths, cascade ordering, theme scoping, ground
+97 tests covering the color maths, cascade ordering, theme scoping, ground
 detection, the merge rules, and the status classifications. Worth running after
 any edit — several of these exist because the obvious implementation was quietly
 wrong.

@@ -648,8 +648,11 @@ materially wrong on real sites.
 
 Decided by the owner 2026-07-26, ready to build:
 
-- [ ] **T1** — rebuild the zipapp (vendored deps + a `sys.version_info` guard),
-      and make rebuilding it part of finishing a session. Needs **T12** first
+- [x] **T1** — rebuild the zipapp (vendored deps + a `sys.version_info` guard),
+      and make rebuilding it part of finishing a session — **landed
+      2026-07-26**. `palettekit.PYTHON_FLOOR` guards `main()` before anything
+      else; `python3 build.py` (T12) rebuilds and vendors; verified against an
+      interpreter with neither dependency installed
 - [x] **T2** — raise the Python floor to 3.11 — **landed 2026-07-26**. All
       seven edits made; suite re-verified on 3.11–3.14 (95 tests) and JSON
       byte-identical to 3.14 on the reference fixture. `__version__` bumped to
@@ -676,7 +679,8 @@ Repo and process:
 
 - [ ] **T11** — CI: 3.11–3.14, `ruff`, and package/zipapp/console-script JSON
       identity
-- [ ] **T12** — `Makefile` or `build.py` for the zipapp incantation
+- [x] **T12** — `Makefile` or `build.py` for the zipapp incantation —
+      **landed 2026-07-26** as `build.py`
 - [ ] **T13** — move `test_palettekit.py` into `tests/`, split by module
 - [ ] **T14** — fixture corpus of small committed HTML files — **unblocks
       checking every other task**; a fresh clone can currently regenerate
@@ -717,6 +721,51 @@ These three were open questions until the owner settled them. Recorded as
 decided; the work is described, not re-argued.
 
 ### T1 — Rebuild the zipapp, and make rebuilding it part of finishing a session
+
+> **Outcome — landed 2026-07-26.** Both faults fixed and diffed at the level
+> this section names:
+>
+> - **Fault 1 (stale walker)** — `build.py` (T12) rebuilds from current source.
+>   Module / console-script / zipapp JSON is identical on `ground.news.har`
+>   (the two-theme site) and on `fleshandbonedesign.com.har --images` (the
+>   reference fixture: ground `#151515`, 20 tokens, one theme, no warnings —
+>   all unmoved), each diffed with `generated` dropped.
+> - **Fault 2 (crashes under an old interpreter)** — `palettekit.PYTHON_FLOOR =
+>   (3, 11)` in `__init__.py` is the one place the floor lives; `main()`
+>   checks it before `build_parser()` runs, so a version guard fires at
+>   start-up rather than the failure surfacing four calls deep in
+>   `_align_names`. Confirmed both directions: `uv run --python 3.10
+>   --no-project python palettekit.pyz ground.news.har …` now prints `error:
+>   palettekit requires Python 3.11+ (running 3.10.20).` and exits 1 — no
+>   `TypeError`; `uv run --python 3.11 --no-project python palettekit.pyz
+>   fleshandbonedesign.com.har …` (neither dependency installed) runs clean and
+>   reproduces the fixture anchors.
+> - **Fault 3 (falsified identity check)** — no longer falsified; see above.
+>
+> **"Read the floor from one place" turned out to mean two places, not one**,
+> and the plan as written only named the first: `PYTHON_FLOOR` on its own can
+> still drift from `pyproject.toml`'s `requires-python` if one is bumped and
+> not the other. Closed with a test rather than a comment —
+> `test_pyproject_floor_matches_python_floor` reads `requires-python` via
+> `tomllib` (stdlib at this floor) and asserts it against `PYTHON_FLOOR`, so a
+> mismatch fails the suite instead of waiting to be noticed. 96 → 97 tests.
+>
+> **The guard sits inside `main()`, not at module scope above the imports.**
+> The plan didn't specify where; module scope would put an `if` block ahead of
+> `import argparse` / `from . import emit, extract, …`, which is exactly what
+> ruff's `E402` (import-not-at-top) exists to flag, and `ruff check .` is
+> required to stay clean. It doesn't cost anything: the actual failure is
+> `zip(strict=)` at runtime, not at import — `extract.py` and friends still
+> import cleanly on 3.9 because of `from __future__ import annotations` — so a
+> guard at the top of `main()`, before any real work starts, catches it with
+> no `noqa` needed.
+>
+> **Diffed at the level this section named**: built artifact's JSON against
+> `python3 -m palettekit`, module vs. console-script vs. zipapp, on every
+> corpus input available locally. Not diffed at the byte level —
+> `zipapp.create_archive` embeds mtimes, so two builds of identical source are
+> never byte-identical, and that was never the claim; the claim is
+> **output** identity, which held.
 
 **Decided: rebuild it, and make it process rather than a thing to remember.**
 
@@ -1035,7 +1084,42 @@ package, the zipapp and the installed console script produce identical JSON for
 the same input — that last is the cheapest real regression check the project
 has, and it is the one that would have caught T1's stale artifact.
 
+**Compare JSON output, not archive bytes.** `python3 build.py` (T12) calls
+`zipapp.create_archive`, which embeds each entry's mtime; two builds of
+identical source are never byte-identical, and that's fine — it was never the
+freshness guarantee. Whatever CI job implements this should run `python3
+build.py` then diff `to_document()` output (with `generated` dropped) between
+`python3 -m palettekit`, the installed `palettekit` script, and `python3
+palettekit.pyz`, the same way T1 was verified locally in the absence of this
+task.
+
 ### T12 — `Makefile` or `build.py` for the zipapp
+
+> **Outcome — landed 2026-07-26** as `build.py` (root of the repo). Stages,
+> vendors (`uv pip install --target`, falling back to `sys.executable -m pip`
+> when `uv` isn't on `PATH` — a uv-managed venv's own interpreter has no `pip`
+> module, so the fallback direction can't be assumed away), strips build
+> metadata, and zips — one command, `python3 build.py`, replacing the six-step
+> incantation this section describes.
+>
+> **Departure from "smoke-test the result":** verification is a structural
+> assert that `palettekit`, `tinycss2`, `cssselect2` and `webencodings` are
+> physically present in the archive (`zipfile.ZipFile(...).namelist()`),
+> not a subprocess run of the built `.pyz`. Running it on the machine that
+> built it proves nothing — site-packages is still on `sys.path`, and every
+> dev interpreter has these installed anyway, which is exactly the blind spot
+> the six-command version had. The interpreter-with-neither-dependency check
+> CLAUDE.md calls for stays a separate, manual step (`uv run --python 3.11
+> --no-project python palettekit.pyz …`) — it needs an environment `build.py`
+> doesn't control, so it isn't something the script can assert on its own.
+>
+> **`[project.dependencies]` is read out of `pyproject.toml` via `tomllib`**
+> rather than copied into `build.py` as a literal list — the same "one place"
+> discipline `PYTHON_FLOOR` uses (T1), so the vendored set can't quietly
+> diverge from what `pip install -e .` installs.
+>
+> **Diff level:** the archive's own contents (structural assert above), plus
+> T1's JSON-identity check, which is what actually exercises a rebuild.
 
 The staging-dir incantation in `CLAUDE.md` is six commands with a vendoring
 step that is silently skippable on a development machine. **Prerequisite for

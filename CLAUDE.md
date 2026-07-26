@@ -41,7 +41,7 @@ reached only through `images.py`, behind `--images`.
 
 ```bash
 python3 -m palettekit <target> -o out    # target: .har | URL | .html/.css path
-python3 test_palettekit.py               # 96 tests, all must pass (needs the deps)
+python3 test_palettekit.py               # 97 tests, all must pass (needs the deps)
 python3 -m palettekit x.har --no-themes  # collapse a two-theme site into one
 ruff check .                             # must stay clean; config in pyproject
 python3 -m palettekit x.har --list-sources   # diagnose framework noise first
@@ -49,6 +49,7 @@ python3 -m palettekit x.har --list-sources   # diagnose framework noise first
 pip install -e ".[dev]"                  # editable install + ruff/build/pytest
 pip install -e ".[images]"               # adds pillow+numpy for --images
 python3 -m build                         # wheel + sdist into dist/
+python3 build.py                         # rebuild palettekit.pyz (see below)
 ```
 
 Installing exposes a `palettekit` console script (`[project.scripts]`), so the
@@ -60,28 +61,59 @@ Compare with the `generated` key removed. It holds a wall-clock timestamp, so a
 plain `diff` of two runs fails whenever they straddle a second boundary — which
 looks exactly like a real mismatch and wasted a diagnostic pass once already.
 
-Build the single-file distributable (zipapp refuses a source tree that already
-has `__main__.py`, so it needs a staging dir with a shim). **`tinycss2`,
-`cssselect2` and `webencodings` have to be vendored into the staging dir** — a
-zipapp carries no dependency metadata, so without this the `.pyz` imports fine
-on a machine that happens to have them installed and fails everywhere else.
-Test the built `.pyz` with a Python that has *neither* installed; on a machine
-set up for development every interpreter has them and the bug is invisible:
+Build the single-file distributable with **`build.py`** (`PLAN.md` T12):
 
 ```bash
-rm -rf /tmp/stage && mkdir -p /tmp/stage
-cp -r palettekit /tmp/stage/
-printf 'import sys\nfrom palettekit.__main__ import main\nsys.exit(main())\n' \
-  > /tmp/stage/__main__.py
-uv pip install --quiet --target /tmp/stage tinycss2 cssselect2
-find /tmp/stage \( -name '__pycache__' -o -name '*.dist-info' \) -prune \
-  -exec rm -rf {} +
-python3 -m zipapp /tmp/stage -o palettekit.pyz -p "/usr/bin/env python3"
+python3 build.py
 ```
 
+It does what used to be a six-command incantation copied from here into a
+terminal: stages `palettekit/` into a temp dir with the `__main__.py` shim
+zipapp requires (zipapp refuses a source tree that already has one), vendors
+`tinycss2`, `cssselect2` and `webencodings` into that staging dir via `uv pip
+install --target` (or plain `pip` if `uv` isn't on `PATH`) — a zipapp carries
+no dependency metadata, so without this the `.pyz` imports fine on a machine
+that happens to have them installed and fails everywhere else — strips
+`__pycache__`/`*.dist-info`/uv's `.lock` marker, and zips the result. It then
+**structurally asserts** all four vendored top-level packages
+(`palettekit`, `tinycss2`, `cssselect2`, `webencodings`) are physically inside
+the archive rather than smoke-testing by running it: running the built `.pyz`
+on the same machine that built it would pass whether or not vendoring
+happened, since site-packages is still on `sys.path` and a dev interpreter has
+these installed regardless. That structural check is what actually catches a
+skipped vendoring step — the failure mode the six-command version was silently
+exposed to.
+
+Reading `[project.dependencies]` out of `pyproject.toml` (via `tomllib`, free
+at this project's floor) means the dependency list can't drift from the one
+`pip install -e .` uses, the same discipline `PYTHON_FLOOR` applies to the
+version guard below.
+
+**Still a manual step, and still required**: run the built `.pyz` on an
+interpreter that has *neither* dependency installed —
+
+```bash
+uv run --python 3.11 --no-project python palettekit.pyz <target> -o out
+```
+
+— because that is the one thing `build.py` cannot check from inside the same
+environment it just built in. On a development machine every interpreter has
+`tinycss2`/`cssselect2` already, so a broken vendoring step is invisible to it.
+
 The package keeps its own `__main__.py` so `python3 -m palettekit` works from a
-checkout. Both builds must produce identical JSON for the same input — worth
-asserting in CI.
+checkout. Module / console-script / zipapp builds must produce identical JSON
+for the same input — worth asserting in CI (`PLAN.md` T11).
+
+**`main()` guards the Python floor before doing anything else**
+(`palettekit.PYTHON_FLOOR`, read from one place and checked by
+`test_pyproject_floor_matches_python_floor` against `pyproject.toml`'s
+`requires-python`). A zipapp carries no `requires-python` of its own, so
+without this an old interpreter used to fail deep inside `extract.py`'s
+`zip(strict=)` calls — on two-theme sites only, looking exactly like a bug in
+the tool — instead of at start-up with a readable message. Verified: `uv run
+--python 3.10 --no-project python palettekit.pyz …` now prints `error:
+palettekit requires Python 3.11+ (running 3.10.20).` and exits 1, instead of
+the `TypeError` `PLAN.md` T1 diagnosed.
 
 ### Rebuild the zipapp before a work session is finished
 
@@ -97,18 +129,20 @@ reproduced the reference fixture's anchors *exactly* so no check caught it, and
 crashed on `ground.news.har` under a 3.9 interpreter. See `PLAN.md` **T1** for
 the full diagnosis.
 
-Two things make the rule stick, and both are open work:
+Two things make the rule stick:
 
-- **Automate it** (`PLAN.md` **T12**). A six-command incantation with a
-  silently skippable vendoring step is not something to run from memory — the
-  artifact went stale precisely because a human was meant to remember.
-- **Assert it** (`PLAN.md` **T11**). Module / console-script / zipapp JSON
-  identity is already the rule two paragraphs up; in CI it turns a stale
-  artifact into a failed build instead of a silent one.
+- **Automate it** (`PLAN.md` **T12** — done). `python3 build.py` replaces the
+  six-command incantation, and its structural vendoring check replaces the
+  silently-skippable step that let a human forget it.
+- **Assert it** (`PLAN.md` **T11** — still open). Module / console-script /
+  zipapp JSON identity is already the rule two paragraphs up; in CI it turns a
+  stale artifact into a failed build instead of a silent one.
 
-Until those land, rebuild by hand, and **verify with an interpreter that has
-neither dependency installed** — on a development machine every interpreter has
-them and a missing vendoring step is invisible.
+Until T11 lands, rebuild with `python3 build.py` at the end of a session that
+touched `palettekit/`, and **verify with an interpreter that has neither
+dependency installed** — on a development machine every interpreter has them
+and a missing vendoring step is invisible to a smoke test, though not to
+`build.py`'s own structural check.
 
 ## Layout and data flow
 
@@ -130,7 +164,7 @@ sources.py   →  cssparse.py  →  extract.py  →  emit.py
 | `extract.py` | 1126 | `extract()`, the cascade, per-theme `_build`, ground, merging, statuses, naming |
 | `emit.py` | 942 | Emitters; `_HTML` is the report template |
 | `images.py` | 148 | Optional image quantisation, not part of the token set |
-| `__main__.py` | 248 | CLI |
+| `__main__.py` | 255 | CLI; `main()` guards `PYTHON_FLOOR` before anything else |
 
 `emit.to_document(palette)` returns the dict the JSON file holds — that dict is
 the public data contract. The HTML report consumes the same dict, inlined into

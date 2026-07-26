@@ -7,9 +7,11 @@ import json
 import os
 import re
 import tempfile
+import tomllib
 import unittest
+from pathlib import Path
 
-from palettekit import emit, extract, sources
+from palettekit import PYTHON_FLOOR, emit, extract, sources
 from palettekit.color import (
     contrast_ratio,
     delta_ok,
@@ -1279,6 +1281,26 @@ class TestBadInput(unittest.TestCase):
     def test_unknown_target(self):
         with self.assertRaises(RuntimeError):
             sources.load_any("/nonexistent/thing.xyz")
+
+
+class TestPackaging(unittest.TestCase):
+    def test_pyproject_floor_matches_python_floor(self):
+        """PLAN.md T1/T2: one number, not two copies that can drift.
+
+        __main__.main()'s version guard and build.py both read
+        palettekit.PYTHON_FLOOR; this is what keeps that constant honest
+        against pyproject.toml's requires-python instead of trusting
+        whoever last bumped one of them to also bump the other.
+
+        The exact-string comparison is deliberate, not a shortcut to
+        replace with a version parse — this project writes exactly one
+        floor string (">=3.11"), so matching it precisely is stricter
+        than parsing would be.
+        """
+        root = Path(__file__).parent
+        data = tomllib.loads((root / "pyproject.toml").read_text())
+        requires = data["project"]["requires-python"]
+        self.assertEqual(requires, ">={}.{}".format(*PYTHON_FLOOR))
 
 
 if __name__ == "__main__":

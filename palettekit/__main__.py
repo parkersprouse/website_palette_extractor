@@ -14,7 +14,7 @@ import json
 import os
 import sys
 
-from . import emit, extract, images, sources
+from . import PYTHON_FLOOR, emit, extract, images, sources
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -82,6 +82,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    if sys.version_info < PYTHON_FLOOR:
+        have = ".".join(map(str, sys.version_info[:3]))
+        need = ".".join(map(str, PYTHON_FLOOR))
+        print(f"error: palettekit requires Python {need}+ (running {have}).",
+              file=sys.stderr)
+        return 1
+
     args = build_parser().parse_args(argv)
     want = {f.strip().lower() for f in args.formats.split(",") if f.strip()}
 

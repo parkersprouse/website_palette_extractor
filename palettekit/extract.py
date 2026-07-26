@@ -261,25 +261,42 @@ def _match_href(href: str, base_url: str, css_by_url: dict):
     return None
 
 
-def build_var_table(sheets: list[Stylesheet], theme: str = "") -> dict[str, str]:
+def build_var_table(sheets: list[Stylesheet], theme: str = "",
+                    page: list[PageElement] | None = None) -> dict[str, str]:
     """Map custom property name to its value, as seen from within one theme.
 
     Later declarations win, which approximates the cascade well enough for
-    resolving a value to a color. It does not model specificity or scoping.
+    resolving a value to a color. It does not model specificity.
 
-    Theme scoping is the one exception, and it has to be: a site that redefines
-    `--bg` under `.dark` would otherwise hand the dark value to the light
-    palette, since the dark block is usually written last. Unscoped definitions
-    are laid down first, then the ones belonging to this theme on top —
-    declarations scoped to any *other* theme are not visible here at all.
+    Theme scoping is the first exception, and it has to be: a site that
+    redefines `--bg` under `.dark` would otherwise hand the dark value to the
+    light palette, since the dark block is usually written last. Unscoped
+    definitions are laid down first, then the ones belonging to this theme on
+    top — declarations scoped to any *other* theme are not visible here at all.
+
+    The second is *where* a property is defined. A definition on a selector
+    that reaches the page — `:root`, `html`, `body`, or a class the document
+    actually carries — outranks one from a scope we have no reason to think is
+    active, whatever the order. Bootstrap's own docs site ships a
+    `[data-bs-theme=blue]` block setting `--bs-body-bg: var(--bs-blue)`; that
+    is a named theme nobody selected, and last-wins alone reports the page
+    background as Bootstrap blue. Definitions that reach no page element still
+    fall back to last-wins among themselves, because a property consumed only
+    by `.btn` is still worth resolving.
     """
-    table: dict[str, str] = {}
+    rooted: dict[str, str] = {}
+    scoped: dict[str, str] = {}
     for pass_theme in ("", theme) if theme else ("",):
         for sheet in sheets:
             for d in sheet.declarations:
-                if d.is_custom_property and d.theme == pass_theme:
-                    table[d.prop] = d.value
-    return table
+                if not d.is_custom_property or d.theme != pass_theme:
+                    continue
+                sel = d.themed_selector or d.selector
+                parts = split_selector_list(sel)
+                on_page = any(_PAGE_SEL.match(p) or matches_page_element(p, page)
+                              for p in parts)
+                (rooted if on_page else scoped)[d.prop] = d.value
+    return {**scoped, **rooted}
 
 
 def _scopes_present(sheets: list[Stylesheet], table: dict[str, str]) -> set[str]:
@@ -405,18 +422,20 @@ def extract(bundle: Bundle, *, merge_threshold: float = 0.02,
     for s in sheets:
         all_var_refs |= s.var_refs
 
-    scopes = (_scopes_present(sheets, build_var_table(sheets))
-              if themes else set())
-
     # The document's own <html>/<body>, so ground detection can tell a utility
-    # class that paints the page from one that paints a card. None when there
-    # is no readable HTML at all — a bare .css input, say — in which case
-    # detect_ground falls back to selectors that read like page rules.
+    # class that paints the page from one that paints a card, and var()
+    # resolution can tell a definition that reaches the page from one scoped to
+    # a theme nobody selected. None when there is no readable HTML at all — a
+    # bare .css input, say — in which case both fall back to selectors that
+    # merely read like page rules.
     page = None
     for asset in bundle.by_kind("html"):
         page = page_elements(asset.text)
         if page:
             break
+
+    scopes = (_scopes_present(sheets, build_var_table(sheets, page=page))
+              if themes else set())
 
     palettes = [
         _build(sheets, bundle.page_url, all_var_refs, theme_id, scope,
@@ -438,7 +457,7 @@ def extract(bundle: Bundle, *, merge_threshold: float = 0.02,
 
     pal = palettes[0]
     pal.warnings.extend(bundle.warnings)
-    triplets = _triplet_warning(sheets, build_var_table(sheets))
+    triplets = _triplet_warning(sheets, build_var_table(sheets, page=page))
     if triplets:
         pal.warnings.append(triplets)
 
@@ -475,7 +494,7 @@ def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
            third_party_weight: float, min_score: float,
            flat: bool, page: list[PageElement] | None = None) -> Palette:
     """One theme's palette: everything scoped to it, plus everything unscoped."""
-    table = build_var_table(sheets, scope)
+    table = build_var_table(sheets, scope, page=page)
     pal = Palette(page_url=page_url, theme_id=theme_id, theme_scope=scope)
 
     # A theme's own rules shadow the unscoped ones they were written to
@@ -785,9 +804,13 @@ def _align_names(base: Palette, alt: Palette) -> None:
         return key
 
     for group in ("ground", "surface", "ink", "line", "neutral"):
+        # strict=False on purpose: the two themes rarely have the same number of
+        # colors in a group, and stopping at the shorter one is exactly the
+        # intent stated above — the surplus keeps its own name.
         pairs = zip(
             sorted((e for e in base.entries if e.group == group), key=rank(base)),
             sorted((e for e in alt.entries if e.group == group), key=rank(alt)),
+            strict=False,
         )
         for be, ae in pairs:
             ae.name = be.name
@@ -805,7 +828,9 @@ def _align_names(base: Palette, alt: Palette) -> None:
 
     base_hues = by_hue(base)
     for hue, members in by_hue(alt).items():
-        for be, ae in zip(base_hues.get(hue, []), members):
+        # Same reason: a hue present in both themes need not have the same
+        # number of steps in each, and the extras are named independently.
+        for be, ae in zip(base_hues.get(hue, []), members, strict=False):
             ae.name = be.name
 
 

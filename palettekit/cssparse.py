@@ -152,15 +152,30 @@ def theme_scope(selector: str, at_rules: tuple[str, ...]) -> str:
     vanishingly rare, and the explicit class is the stronger statement of the
     two.
 
-    A selector *list* is judged as a whole, so `.dark .a, .b` is treated as
-    dark-scoped even though `.b` is not. Splitting the list would be more
-    accurate and is not worth the machinery: authors do not mix scoped and
-    unscoped selectors in one rule.
+    A selector list is judged per selector, and one unscoped selector makes
+    the whole rule unscoped. Bootstrap 5.3 opens with
+
+        :root,[data-bs-theme=light] { --bs-border-color: #dee2e6; … }
+
+    which defines the site's base tokens *and* its light-theme tokens in one
+    rule. Reading the list as a whole tags every one of those as light-only,
+    they vanish from the base var table, and several hundred `var()`
+    references resolve to nothing.
+
+    Selectors that disagree (`.dark .a, .light .b`) also come back unscoped:
+    the rule cannot be attributed to one theme, and saying so beats picking
+    whichever marker was written first.
     """
-    m = (_THEME_IS.search(selector) or _THEME_CLASS.search(selector)
-         or _THEME_ATTR.search(selector))
-    if m:
-        return m.group(1).lower()
+    parts = split_selector_list(selector)
+    scopes = set()
+    for part in parts:
+        m = (_THEME_IS.search(part) or _THEME_CLASS.search(part)
+             or _THEME_ATTR.search(part))
+        scopes.add(m.group(1).lower() if m else "")
+    if len(scopes) == 1:
+        found = scopes.pop()
+        if found:
+            return found
     for at in at_rules:
         m = _THEME_MEDIA.search(at)
         if m:
@@ -324,13 +339,22 @@ def parse_stylesheet(css: str, source: str, origin: str = "",
                     at_stack.pop()
             i += 1
             continue
-        if ch == ";" and stack:
-            # A declaration inside the current block, or an at-statement.
+        if ch == ";":
             decl = "".join(buf)
             buf = []
-            sel = stack[-1]
-            if sel:
-                _collect(sheet, sel, decl, source, tuple(at_stack))
+            if stack:
+                # A declaration inside the current block.
+                sel = stack[-1]
+                if sel:
+                    _collect(sheet, sel, decl, source, tuple(at_stack))
+            # Otherwise a *statement* at-rule at the top level — `@charset`,
+            # `@import`, `@namespace`, `@layer a, b;`. These end in a semicolon
+            # instead of a block, and dropping the buffer here is the whole
+            # point: left in place it is glued onto the next rule's prelude, so
+            # `@charset "UTF-8"; :root{…}` parses as one selector reading
+            # `@charset "UTF-8"; :root` and the rule is lost. Bootstrap opens
+            # with `@charset`, which cost its entire `:root` token block —
+            # 550 unresolved var() references downstream.
             i += 1
             continue
         buf.append(ch)

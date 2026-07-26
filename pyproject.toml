@@ -7,9 +7,11 @@ name = "palettekit"
 description = "Read a website's color palette out of its stylesheets and render it as an interactive page."
 readme = "README.md"
 
-# Nominal floor. The syntax parses back to 3.7, but the package has only been
-# run on 3.12 — verify across the range before treating this as a promise.
-requires-python = ">=3.9"
+# Verified floor, not a nominal one: the suite passes on 3.10, 3.11, 3.12, 3.13
+# and 3.14, and 3.10 produces byte-identical JSON to 3.14 for the reference
+# fixture. Raised from 3.9 because `tinycss2`/`cssselect2` — the migration in
+# PLAN.md — require 3.10, and 3.9 is end-of-life as of October 2025.
+requires-python = ">=3.10"
 
 # Single source of truth is palettekit/__init__.py; see [tool.hatch.version].
 dynamic = ["version"]
@@ -23,15 +25,22 @@ classifiers = [
   "Environment :: Console",
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Topic :: Software Development :: Build Tools",
   "Topic :: Text Processing :: Markup :: HTML",
   # TODO(migration): add a "License :: ..." classifier and a LICENSE file.
   # Deliberately omitted rather than guessed at — see [project.license] below.
 ]
 
-# The core is stdlib-only, and that is a design constraint rather than an
-# accident. Anything that would need a runtime dependency belongs behind an
-# extra, reached through a capability check that degrades with a message.
+# Stdlib-only today, but no longer a hard constraint: the owner set accuracy
+# and breadth above slimness on 2026-07-26, so a dependency that makes the tool
+# read more sites correctly is welcome. See PLAN.md. Anything merely optional
+# still belongs behind an extra, reached through a capability check that
+# degrades with a message.
 dependencies = []
 
 [project.optional-dependencies]
@@ -77,7 +86,7 @@ include = [
 # mostly written to ~79; tightening to 79 would flag roughly 40 existing lines,
 # so do that as a deliberate pass rather than letting the linter nag from day one.
 line-length = 88
-target-version = "py39"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = [

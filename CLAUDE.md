@@ -5,16 +5,30 @@ interactive HTML report plus JSON/CSS/SCSS/TS/Tailwind. Values are **parsed
 from CSS, never sampled from pixels** — that is the whole premise, and it is
 what makes the output exact rather than approximate.
 
-Python 3.9+ nominal — the syntax actually parses back to 3.7, but it has only
-been *run* on 3.12, so treat the floor as unverified until CI says otherwise.
-**The core is stdlib-only and must stay that way.** Pillow/numpy are optional
-and reached only through `images.py`, behind `--images`.
+**Python 3.10+, verified** — the suite passes on 3.10, 3.11, 3.12, 3.13 and
+3.14, and 3.10 produces byte-identical JSON to 3.14 on the reference fixture.
+Raised from a nominal, never-tested 3.9 because `tinycss2`/`cssselect2`
+(`PLAN.md`) need 3.10 and 3.9 went end-of-life in October 2025. Re-run the
+matrix rather than trusting this line:
+
+```bash
+for v in 3.10 3.11 3.12 3.13 3.14; do
+  uv run --python "$v" --no-project python test_palettekit.py; done
+```
+
+**Priority order, set by the owner (2026-07-26): accuracy and breadth first,
+slimness second.** The core is stdlib-only today and there is no rule that it
+must stay that way — if a dependency makes the tool read more sites correctly,
+take it. This reverses an earlier constraint, and several decisions below were
+made under the old one and should be re-read in that light: the `color-mix()`
+skip, and the argument against modelling the cascade. Pillow/numpy remain
+optional and reached only through `images.py`, behind `--images`.
 
 ## Commands
 
 ```bash
 python3 -m palettekit <target> -o out    # target: .har | URL | .html/.css path
-python3 test_palettekit.py               # 62 tests, all must pass
+python3 test_palettekit.py               # 65 tests, all must pass
 python3 -m palettekit x.har --no-themes  # collapse a two-theme site into one
 ruff check .                             # must stay clean; config in pyproject
 python3 -m palettekit x.har --list-sources   # diagnose framework noise first
@@ -28,6 +42,10 @@ Installing exposes a `palettekit` console script (`[project.scripts]`), so the
 three ways to run it are `python3 -m palettekit`, `palettekit`, and the zipapp.
 **All three must produce identical JSON for the same input** — that is the
 cheapest possible regression check and worth keeping.
+
+Compare with the `generated` key removed. It holds a wall-clock timestamp, so a
+plain `diff` of two runs fails whenever they straddle a second boundary — which
+looks exactly like a real mismatch and wasted a diagnostic pass once already.
 
 Build the single-file distributable (zipapp refuses a source tree that already
 has `__main__.py`, so it needs a staging dir with a shim):
@@ -56,9 +74,9 @@ sources.py   →  cssparse.py  →  extract.py  →  emit.py
 | File | Lines | Holds |
 |---|---:|---|
 | `color.py` | 528 | `Color`, parsing, sRGB↔OKLab, CIE Lab/LCH, contrast, hue names |
-| `cssparse.py` | 694 | Declaration walker, `var()`, `selector_weight`, roles, theme scopes, page element |
+| `cssparse.py` | 718 | Declaration walker, `var()`, `selector_weight`, roles, theme scopes, page element |
 | `sources.py` | 292 | `load_har` / `load_url` / `load_paths` → `Bundle` |
-| `extract.py` | 897 | `extract()`, per-theme `_build`, ground, merging, statuses, naming |
+| `extract.py` | 916 | `extract()`, per-theme `_build`, ground, merging, statuses, naming |
 | `emit.py` | 942 | Emitters; `_HTML` is the report template |
 | `images.py` | 148 | Optional image quantisation, not part of the token set |
 | `__main__.py` | 248 | CLI |
@@ -236,9 +254,35 @@ because the obvious implementation produced plausible but wrong output.
     `test_tailwind_v4_dark_variant_survives_the_split`,
     `test_tailwind_v4_shape_on_the_html_element`.
 
-    Note the deliberate asymmetry: `theme_scope` does **not** split, because it
-    judges a list as a whole (see its docstring). `strip_theme_scope`,
-    `selector_weight` and `detect_ground` all do.
+    Everything that reads a selector list splits it — `theme_scope`,
+    `strip_theme_scope`, `selector_weight`, `detect_ground`, `build_var_table`.
+    An earlier version had `theme_scope` judge the list as a whole, on the
+    reasoning that "authors do not mix scoped and unscoped selectors in one
+    rule." **Bootstrap 5.3 does, in its most important rule** —
+    `:root,[data-bs-theme=light]` holds the entire base token set — so one
+    unscoped selector in a list now makes the whole rule unscoped, and a list
+    whose parts disagree is unscoped too. Test:
+    `test_a_list_mixing_scoped_and_unscoped_is_unscoped`.
+
+18. **A statement at-rule is consumed, not accumulated** (`parse_stylesheet`).
+    `@charset`, `@import`, `@namespace` and `@layer a, b;` end in a semicolon
+    rather than a block. Left in the prelude buffer they are glued onto the
+    next rule's selector, so the *first rule of the sheet is lost*. Bootstrap
+    opens with `@charset "UTF-8";`, which cost its entire `:root` token block
+    and left 550 `var()` references resolving to nothing — printing
+    `color:` and `rgba(,1)` into the palette. Test:
+    `test_statement_at_rules_do_not_eat_the_first_rule`.
+
+19. **A custom property defined on the page outranks one defined off it**
+    (`build_var_table`). `var()` resolution is otherwise last-definition-wins,
+    which is fine until a site ships a named theme nobody selected: Bootstrap's
+    own docs carry `[data-bs-theme=blue] { --bs-body-bg: var(--bs-blue) }`, and
+    last-wins reports the page background as Bootstrap blue. Definitions whose
+    selector reaches `html`/`body`/`:root` — or a class the document actually
+    carries, per invariant 16 — are laid down over the rest. Properties that
+    reach no page element still resolve among themselves, because one consumed
+    only by `.btn` is still worth reading. Test:
+    `test_a_var_defined_off_the_page_does_not_win`.
 
 ## Status vocabulary
 
@@ -289,11 +333,21 @@ Tailwind config should even look like first.
 
 ## Conventions
 
-- No dependencies in the core. Anything needing numpy/Pillow goes in
-  `images.py` behind a capability check that degrades with a message.
+- Anything needing numpy/Pillow goes in `images.py` behind a capability check
+  that degrades with a message. A dependency in the core is now allowed where
+  it buys accuracy — see the priority note at the top — but it should still
+  earn its place against the corpus.
 - Parsers return `None` for anything not understood rather than guessing.
   `color-mix()`, `light-dark()` and relative color syntax are skipped, not
   approximated.
+
+  **`color-mix()` is now the largest single category of skipped color** — 631
+  declarations on tailwindcss.com, 211 on ui.shadcn.com — and unlike a bare
+  channel triplet it is not ambiguous: it is defined interpolation in a named
+  space, and the OKLab/Lab machinery to evaluate it is already in `color.py`.
+  Skipping it was right when slimness ranked first. It is now the highest-value
+  parsing gap. `light-dark()` is two values and a theme choice, which this tool
+  already models, so it is nearly free and directly relevant.
 - Comments explain *why*, especially where a line looks redundant. Most of the
   invariants above are also stated at their call site — keep them in sync.
 - Emitted token names sort naturally (`_natural`): `ink-2` before `ink-10`.
@@ -334,6 +388,12 @@ Tailwind config should even look like first.
   small and filtered. One bit, unambiguous, testable. Not implemented — no site
   in the corpus changes answer with it, and adding cascade machinery on
   speculation is how invariant 2 earned its warning.
+
+  **The "all four or none" argument above assumed a stdlib-only core, which is
+  no longer a constraint.** See **`PLAN.md`** — a phased migration to
+  `tinycss2` + `cssselect2` that makes the full cascade tractable, with the
+  library capabilities probed rather than assumed and the current corpus
+  numbers recorded as its baseline. Proposed, not started.
 
 - **A bare channel triplet used raw paints nothing, and is reported rather than
   parsed.** The shadcn/ui convention writes `--background: 0 0% 3.9%` and
@@ -424,7 +484,7 @@ Not yet present, needed for a real repo:
       out in `pyproject.toml`, and `.gitignore` (`__pycache__/`, `dist/`,
       `*.pyz`, `out/`)
 - [ ] Fill in `[project.urls]` and the `authors` entry once the repo exists
-- [ ] CI: run tests on 3.9–3.13, `ruff check`, and assert the package, zipapp
+- [ ] CI: run tests on 3.10–3.14, `ruff check`, and assert the package, zipapp
       and installed-console-script outputs match
 - [ ] `Makefile` or `build.py` for the zipapp incantation above
 - [ ] Move `test_palettekit.py` into `tests/` and split by module

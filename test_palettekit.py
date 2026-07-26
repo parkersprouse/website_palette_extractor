@@ -130,6 +130,20 @@ class TestColorMaths(unittest.TestCase):
 
 
 class TestCss(unittest.TestCase):
+    def test_statement_at_rules_do_not_eat_the_first_rule(self):
+        """`@charset`/`@import`/`@layer a,b;` end in `;`, not a block.
+
+        Left in the buffer they are glued onto the next rule's prelude, so the
+        first rule of the sheet parses as one long broken selector and is lost.
+        Bootstrap opens with `@charset`, which cost its entire `:root` token
+        block and left 550 `var()` references unresolvable.
+        """
+        for prefix in ('@charset "UTF-8";', "@import url(x.css);",
+                       "@layer base, utilities;", "@namespace svg url(#ns);"):
+            sheet = parse_stylesheet(prefix + " :root{--a:#112233}", "t")
+            got = [(d.selector, d.prop) for d in sheet.declarations]
+            self.assertEqual(got, [(":root", "--a")], prefix)
+
     def test_comments_and_strings_are_not_colors(self):
         css = """
         /* #ff0000 in a comment */
@@ -373,6 +387,21 @@ class TestThemeScopes(unittest.TestCase):
         for sel, want in cases.items():
             self.assertEqual(strip_theme_scope(sel), want, sel)
 
+    def test_a_list_mixing_scoped_and_unscoped_is_unscoped(self):
+        """Bootstrap 5.3 writes `:root,[data-bs-theme=light]` for base tokens.
+
+        Judging the list as a whole tags every root variable light-only, they
+        vanish from the base var table, and several hundred `var()` references
+        resolve to nothing.
+        """
+        self.assertEqual(theme_scope(":root,[data-bs-theme=light]", ()), "")
+        self.assertEqual(theme_scope(".dark .a, .b", ()), "")
+        # All parts scoped the same way is still a theme.
+        self.assertEqual(theme_scope(".dark h1, .dark h2", ()), "dark")
+        self.assertEqual(theme_scope("[data-bs-theme=dark]", ()), "dark")
+        # Contradictory lists cannot be attributed, so they stay unscoped.
+        self.assertEqual(theme_scope(".dark .a, .light .b", ()), "")
+
     def test_selector_list_splits_outside_parens_only(self):
         """A comma inside `:is()`/`:where()`/`[]` does not start a selector."""
         cases = {
@@ -515,6 +544,22 @@ class TestUtilityGround(unittest.TestCase):
         self.assertEqual(themes["dark"]["ground"], "#030712")
         # From the html element's own class, not from a guess.
         self.assertIn("bg-gray-950", themes["dark"]["groundSource"])
+
+    def test_a_var_defined_off_the_page_does_not_win(self):
+        """Bootstrap's docs ship a `[data-bs-theme=blue]` nobody selected.
+
+        It sets `--bs-body-bg: var(--bs-blue)`, and last-definition-wins alone
+        reports the page background as Bootstrap blue.
+        """
+        html = """<!DOCTYPE html><html><head><style>
+  :root { --bg: #ffffff; }
+  [data-bs-theme=blue] { --bg: #0d6efd; }
+  body { background-color: var(--bg); color: #212529; }
+</style></head><body></body></html>
+"""
+        doc = emit.to_document(extract.extract(sources.load_any(
+            write_fixture(html))))
+        self.assertEqual(doc["themes"][0]["ground"], "#ffffff")
 
     def test_a_bare_body_still_uses_the_body_rule(self):
         """No classes on <body> must leave the old path exactly as it was."""

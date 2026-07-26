@@ -7,8 +7,8 @@ Values are **read from the site's stylesheets**, not sampled from a screenshot,
 so they are the exact declared colors rather than pixels that have been through
 antialiasing and JPEG compression.
 
-Python 3.9+. No dependencies for the core. Pillow and numpy only if you use
-`--images`.
+Python 3.10+ (tested on 3.10 through 3.14). No dependencies for the core
+today; Pillow and numpy only if you use `--images`.
 
 If using the system's available Python binary:
 ```bash
@@ -246,7 +246,7 @@ can open `example/index.html` and see the result without running anything.
 python3 test_palettekit.py
 ```
 
-62 tests covering the color maths, cascade ordering, theme scoping, ground
+65 tests covering the color maths, cascade ordering, theme scoping, ground
 detection, the merge rules, and the status classifications. Worth running after
 any edit — several of these exist because the obvious implementation was quietly
 wrong.

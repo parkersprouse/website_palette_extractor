@@ -1155,7 +1155,6 @@ is rather than work to do:
       `*.pyz` — which is why the stale `palettekit.pyz` is tracked at all
       (`PLAN.md` T1), and why a fresh clone can regenerate no fixture
       (`PLAN.md` T14).
-
-Still blocked on the owner: **`LICENSE`** and the `[project.license]` /
-classifier entries left commented out in `pyproject.toml`. Nothing about
-publishing moves until a licence is chosen.
+- [x] **`LICENSE.md`** and the `[project.license]` / classifier entries in
+      `pyproject.toml` — the owner chose the Hippocratic License 3.0 on
+      2026-07-26.

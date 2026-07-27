@@ -20,7 +20,8 @@ dynamic = ["version"]
 authors = [{ name = "Parker Sprouse" }]
 keywords = ["css", "color", "design-tokens", "extractor", "har", "oklab", "palette"]
 
-license = "Hippocratic License 3.0"
+# The SPDX license repository only has v2.1 of the Hippocratic License currently
+license = "LicenseRef-Hippocratic-License-3.0"
 license-file = "LICEN[CS]E.*"
 
 classifiers = [

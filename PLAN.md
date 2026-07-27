@@ -699,8 +699,9 @@ Repo and process:
 - [ ] **T14** — fixture corpus of small committed HTML files — **unblocks
       checking every other task**; a fresh clone can currently regenerate
       nothing
-- [ ] **Blocked on a decision:** `LICENSE` + the `[project.license]` and
-      classifier entries
+- [x] **License** — `LICENSE.md` + the `[project.license]` and classifier
+      entries — **landed 2026-07-26**. Owner chose the Hippocratic License
+      3.0; see "License" under Outstanding work below
 
 ---
 
@@ -884,6 +885,12 @@ which is what the old floor's claim rested on.
 > package is a different cost calculus. `schemaVersion` (T3) stays at `1`
 > regardless, since it is that document's first stamp and moves on its own
 > schedule — see T3.
+>
+> **The licence question this reasoning rests on was itself resolved later
+> the same day** — the owner chose the Hippocratic License 3.0; see
+> "License" under Outstanding work. That does not retroactively change the
+> minor-vs-major call above, which was correct for the state of the repo at
+> the time T2 landed.
 
 ### T3 — Make `to_document`'s dict a versioned public API
 
@@ -1196,8 +1203,11 @@ all six of its anchors exactly**. It cannot detect a parser regression. The
 breadth check can, and the breadth check needs network and frozen bundles —
 committed fixtures are what make that offline and reviewable.
 
-### Still blocked on a decision
+### License
 
-**`LICENSE` + the `[project.license]` and classifier entries.**
-`pyproject.toml` says `TODO(migration): decide a licence` and nothing about
-publishing moves until it is chosen.
+**`LICENSE.md` + the `[project.license]` and classifier entries — landed
+2026-07-26.** The owner chose the Hippocratic License 3.0.
+`pyproject.toml`'s `[project]` table sets `license = "Hippocratic License
+3.0"` and `license-file = "LICEN[CS]E.*"`, the `TODO(migration)` comments are
+gone, and the sdist's `include` list ships `/LICENSE.md`. Nothing else was
+waiting on this, and nothing else changed as a result of it.

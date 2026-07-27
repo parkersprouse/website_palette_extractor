@@ -1067,6 +1067,41 @@ class TestCascade(unittest.TestCase):
         bare = html.replace(' class="bg-canvas"', "")
         self.assertEqual(self.ground_of(bare, "dark")["ground"], "#0b0f14")
 
+    def test_html_and_body_grounds_resolve_in_separate_pools(self):
+        """T7: pooling `<html>` and `<body>` candidates together is luck.
+
+        Both rules are `(0, 0, 1)`, unimportant, unlayered — tied on every
+        cascade term this key has — so a single shared pool falls through to
+        document order and picks whichever was declared last. Here that is
+        `html`. A real browser paints `<body>`'s own background over the
+        `<html>` canvas wherever the body covers it, which is the whole
+        viewport, so the right answer is body's regardless of order. Fails on
+        HEAD's one-pool ranking (`#ffffff`), which is exactly the case
+        `detect_ground`'s docstring names as unreachable on the frozen corpus.
+        """
+        html = """<!DOCTYPE html><html><head><style>
+  body { background-color: #eeefe9; color: #111111; }
+  html { background-color: #ffffff; }
+</style></head><body></body></html>
+"""
+        self.assertEqual(self.ground_of(html)["ground"], "#eeefe9")
+
+    def test_body_ground_wins_even_when_html_outranks_it_on_every_term(self):
+        """The case that actually demonstrates separate pools, not luck.
+
+        `<html>`'s background is `!important`, more specific (an id) and
+        declared later — it would win a single shared pool on every cascade
+        term there is. It still loses, because `<body>` having any resolved
+        background at all takes precedence over whatever `<html>` resolves
+        to; the id and the `!important` never get to compete against it.
+        """
+        html = """<!DOCTYPE html><html id="top"><head><style>
+  body { background-color: #eeefe9; color: #111111; }
+  html#top { background-color: #ffffff !important; }
+</style></head><body></body></html>
+"""
+        self.assertEqual(self.ground_of(html)["ground"], "#eeefe9")
+
 
 MEDIA_THEMES = """<!DOCTYPE html><html><head><style>
   :root { --bg: #ffffff; --fg: #1a1a1a; --brand: #2563eb; }

@@ -696,7 +696,8 @@ Accuracy gaps left by phases 1–4:
 - [x] **T6** — an at-rule nested in a style rule loses its declarations —
       **the one that grows on its own** as CSS nesting spreads. **Landed
       2026-07-27.** See T6's own write-up below
-- [ ] **T7** — resolve `<html>` and `<body>` in separate pools
+- [x] **T7** — resolve `<html>` and `<body>` in separate pools, body
+      preferred. **Landed 2026-07-27.** See T7's own write-up below
 - [ ] **T8** — `@import url(…) layer(x)` should register a layer — parse
       `layer(x)` from `node.prelude`'s `tinycss2` tokens (a `FunctionBlock`
       named `layer`), not a regex over the serialized prelude — see the
@@ -1228,26 +1229,72 @@ it the test that actually discriminates the theme half of this task rather
 than regression coverage for the selector half. 106 → 108 tests, `ruff` clean,
 3.11–3.14 byte-identical.
 
-### T7 — Resolve `<html>` and `<body>` in separate pools
+### T7 — Resolve `<html>` and `<body>` in separate pools (landed 2026-07-27)
 
-`detect_ground` ranks candidates matching either element in **one pool**, which
-the cascade never does: it resolves each element separately, and the visible
-page color is the body's background where it has one.
+`detect_ground` ranked candidates matching either element in **one pool**,
+which the cascade never does: it resolves each element separately, and the
+visible page color is the body's background where it has one.
 
 Deliberately deferred in phase 3, and measured rather than assumed —
 instrumenting every candidate with the element it reaches showed **no corpus
 site has page-level backgrounds on both**, so grouping would sort the same
-pools in the same order. The fix is stated at `detect_ground`: resolve within
-each element, prefer the body's answer.
+pools in the same order. Confirmed again before landing: all four frozen
+bundles produce byte-identical JSON before and after this task.
 
-**Trap:** because no corpus site exercises it, a test written from the
-implementation will assert something already true. Build a fixture that
-genuinely has competing `<html>` and `<body>` backgrounds and require it to
-fail against HEAD first.
+**The trap this task named was real, and caught something the task's own
+framing did not anticipate.** Two fixtures were built to fail against HEAD
+first, per the plan:
 
-**Diff level:** ground winner and candidate rank per theme. Expect **no corpus
-change at all** — this is insurance, like most of phase 3, and that is a real
-result rather than a no-op.
+- `test_html_and_body_grounds_resolve_in_separate_pools` — an unscoped `body`
+  and an unscoped `html`, tied on every cascade term, differing only in that
+  `html` is declared later. One shared pool falls through to document order
+  and picks `html` (`#ffffff`); separate pools correctly pick `body`
+  (`#eeefe9`), because painting order — not declaration order — decides which
+  element's background is visible.
+- `test_body_ground_wins_even_when_html_outranks_it_on_every_term` — `html`'s
+  background is `!important` and id-specific, `body`'s is neither. Body still
+  wins, because the two elements are never in cascade competition with each
+  other in the first place; `<body>`'s box simply paints over the `<html>`
+  canvas regardless of what won on either side.
+
+**The first implementation — literally "prefer body whenever it has an
+answer," the plan's own words with no qualification — passed both new tests
+and broke a pre-existing one:** `TestUtilityGround.test_tailwind_v4_shape_on_the_html_element`.
+That fixture's dark theme has an unscoped `body { background-color: #ffffff }`
+*and* a dark-theme-scoped `.dark\:bg-gray-950:where(.dark,.dark *)` on
+`<html>` — exactly the two-candidates-on-both-elements shape the corpus check
+says doesn't occur, arrived at from a different direction: a synthetic fixture
+built to test something else (Tailwind v4's comma-in-`:where()` shape,
+invariant 17) that happened to also give body a candidate. Unconditional body
+preference reported `#ffffff`, silently discarding the dark theme's real
+ground (`#030712`, verified against the live site) in favor of a rule that
+says nothing about the dark theme at all — invariant 16's own mistake, found
+again in the other pool.
+
+**The fix needed one more distinction than "which element," and it already
+existed in the data**: whether the winning declaration was written for *this
+theme specifically* — `Usage.theme_scoped`, added for this task,
+`bool(Declaration.theme)` carried through — as opposed to being unscoped and
+merely present in every theme's build by construction. `detect_ground` now
+prefers body's pool winner **unless** html's winner is theme-scoped and
+body's is not; within a pool the ordinary cascade key is unchanged. That
+keeps the Tailwind test's `#030712` (html is genuinely theme-scoped there) and
+both new tests' body-preference (neither candidate is theme-scoped in
+either) simultaneously — verified by running all three together, not just
+each in isolation.
+
+**Diff level:** ground winner and candidate rank per theme. All four frozen
+bundles byte-identical before and after — **no corpus change at all**, exactly
+as predicted — but the plan's literal text above ("prefer the body's answer",
+no caveat) was wrong on its own terms, caught only because a pre-existing test
+was run against the new implementation before trusting it, not because the
+corpus check ever would have. `CLAUDE.md` invariant 21 now carries the
+corrected, qualified version — read that, not the unqualified sentence two
+paragraphs up this file, if the two ever seem to disagree. 108 → 110 tests,
+`ruff` clean, 3.11–3.14 byte-identical, reference fixture anchors reproduce
+exactly, module/console-script/zipapp JSON identity verified, `.pyz` rebuilt
+and confirmed on a bare Python 3.11 interpreter with neither dependency
+installed.
 
 ### T8 — `@import url(…) layer(x)` should register a layer
 

@@ -672,13 +672,36 @@ because the obvious implementation produced plausible but wrong output.
     against a class of site the corpus does not contain**, which is a real
     result and an easy one to mistake for a no-op.
 
-    **`<html>` and `<body>` candidates are ranked in one pool**, which the
-    cascade never does — it resolves each element separately, and the visible
-    page color is the body's background where it has one. Left undone
-    deliberately: instrumenting every candidate with the element it reaches
-    showed no corpus site has page-level backgrounds on both. The fix, when a
-    site needs it, is to resolve within each element and prefer the body's
-    answer. Stated at `detect_ground`.
+    **`<html>` and `<body>` candidates are resolved in separate pools, body
+    preferred** (`detect_ground`, T7, landed 2026-07-27). The cascade never
+    ranks the two elements together — it resolves each on its own, and the
+    page's visible color is the body's background where it has one, because
+    `<body>`'s own box paints over the `<html>` canvas wherever it covers it,
+    which in practice is the whole viewport. That preference holds however
+    important or specific `<html>`'s rule is; it is not itself a cascade term
+    and does not compete with one.
+
+    **One exception, found by a test built to demonstrate it rather than by
+    the corpus: an `<html>` rule written specifically for this theme still
+    outranks an unscoped `<body>` rule.** Tailwind v4's `dark:bg-gray-950` on
+    `<html>` is exactly this shape, and `test_tailwind_v4_shape_on_the_html_element`
+    already asserted it before T7 existed — an unscoped `body {}` rule
+    (present in every theme's build by definition) is not a statement about
+    the dark theme, and preferring it over a rule that *is* the theme would be
+    invariant 16's own mistake relocated to the other pool. So body wins
+    unless `<html>`'s candidate is theme-scoped (`Usage.theme_scoped`, true for
+    either scoping mechanism) and body's is not. Implementing the plain
+    unconditional reading of "prefer body" first broke that pre-existing test
+    — the discriminating case this note exists to save a future rewrite from
+    rediscovering.
+
+    Measured rather than assumed either way: instrumenting every candidate
+    with the element it reaches showed no corpus site has page-level
+    backgrounds on both `<html>` and `<body>` — every candidate on all four
+    frozen bundles targets `<body>` except tailwindcss.com's dark theme, which
+    is `<html>`-only with no competing `<body>` candidate to prefer or defer
+    to. All four bundles are byte-identical before and after. This is
+    insurance, like most of phase 3.
 
 22. **A `color-mix()` this tool cannot evaluate contributes nothing — not the
     colors written inside it** (`find_colors`, phase 4). `color-mix(in oklch,
@@ -1020,7 +1043,6 @@ Tailwind config should even look like first.
     are not modelled. A property redefined on `.card` resolves globally here.
   - **An at-rule nested inside a style rule** still loses its declarations —
     see the limit above; it is a parse-shape gap, not a cascade one.
-  - **`<html>` and `<body>` candidates share one pool**, per invariant 21.
 
   **Why all four terms and not a cheaper subset**, which is the tempting
   mistake and was argued through before it was built: specificity alone is a

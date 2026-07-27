@@ -62,6 +62,13 @@ class Usage:
     important: bool = False
     layer: str = ""
     theme_media: bool = False
+    # Whether the declaration was written for this theme specifically — by
+    # either mechanism, selector or media (`bool(d.theme)`) — rather than
+    # belonging to every theme by being unscoped. Not a cascade term; used
+    # only by `detect_ground`'s html/body pooling (T7) to tell a real
+    # theme-specific claim on `<html>` apart from an unscoped `<body>` rule
+    # that merely happens to also be present in this theme's build.
+    theme_scoped: bool = False
 
 
 @dataclass
@@ -351,8 +358,33 @@ def _cascade_key(d, specificity: tuple[int, int, int],
     )
 
 
+def _page_element_tag(part: str) -> str | None:
+    """Which element a `_PAGE_SEL` text match actually styles, or None.
+
+    A selector reads right to left — `html body` is body's rule, scoped to a
+    body that lives inside html — so the last token is the one being styled.
+    `:root` is the same element as `<html>` in a document with no shadow root.
+    Returns None for anything `_PAGE_SEL` itself would refuse, which callers
+    fall back to `matches_page_element` for.
+    """
+    if not _PAGE_SEL.match(part):
+        return None
+    tokens = part.split()
+    return "body" if tokens[-1].lower() == "body" else "html"
+
+
+def _reaches(part: str, page: list[PageElement] | None, element: str) -> bool:
+    """Does this selector-part reach *this specific* page element?"""
+    tag = _page_element_tag(part)
+    if tag is not None:
+        return tag == element
+    only = [el for el in (page or []) if el.tag == element]
+    return matches_page_element(part, only)
+
+
 def _page_specificity(selector: str, scope_selector: str,
-                      page: list[PageElement] | None
+                      page: list[PageElement] | None,
+                      element: str | None = None
                       ) -> tuple[int, int, int] | None:
     """Specificity of this rule *as it applies to the page element*, or None.
 
@@ -378,6 +410,12 @@ def _page_specificity(selector: str, scope_selector: str,
     emits one cleaned part per part it was given — so the parts pair up by
     position. If they ever did not, the matched form is scored instead, which
     understates the theme rather than inventing precedence for it.
+
+    `element` narrows the match to one of `"html"`/`"body"` (T7): passing None
+    keeps the old either-element behaviour, which is what `build_var_table`
+    still wants — a custom property is not "the page's background", so there
+    is no body-over-html preference to apply to it. `detect_ground` is the one
+    caller that needs the split, into two pools it resolves separately.
     """
     matched = split_selector_list(scope_selector or selector)
     declared = split_selector_list(selector)
@@ -386,7 +424,11 @@ def _page_specificity(selector: str, scope_selector: str,
 
     best = None
     for raw, part in zip(declared, matched, strict=False):
-        if not (_PAGE_SEL.match(part) or matches_page_element(part, page)):
+        if element is None:
+            ok = _PAGE_SEL.match(part) or matches_page_element(part, page)
+        else:
+            ok = _reaches(part, page, element)
+        if not ok:
             continue
         spec = selector_specificity(raw)
         if best is None or spec > best:
@@ -748,7 +790,8 @@ def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
                           third_party=sheet.third_party, inert=inert,
                           sheet_order=d.sheet_order, order=d.order,
                           scope_selector=sel, important=d.important,
-                          layer=d.layer, theme_media=d.theme_media)
+                          layer=d.layer, theme_media=d.theme_media,
+                          theme_scoped=bool(d.theme))
                 )
                 if d.is_custom_property:
                     entry.var_names.add(d.prop)
@@ -817,8 +860,10 @@ def detect_ground(entries: list[Entry],
     qualifies if it *reads* like a page rule (`html`, `body`, `:root`) or if it
     actually selects this document's `<html>` or `<body>` — which is how a
     utility framework paints the page, with `class="bg-light-primary"` on the
-    body rather than a `body {}` rule (invariant 16). **Which candidate wins**:
-    `importance → layer → specificity → document order`, via `_cascade_key`.
+    body rather than a `body {}` rule (invariant 16). **Which candidate wins,
+    within a pool**: `importance → layer → specificity → document order`, via
+    `_cascade_key` — see below for how the `<html>` and `<body>` pools
+    themselves are then compared (T7).
 
     That second step used to be document order alone, which happened to be
     right on ground.news and was luck: `.bg-light-primary` beats `body` there
@@ -833,39 +878,72 @@ def detect_ground(entries: list[Entry],
     selector as declared, so the marker earns it the precedence it has in a
     browser. See `_page_specificity`.
 
-    **Candidates matching `<html>` and ones matching `<body>` are ranked in one
-    pool**, which the cascade never does — it resolves each element separately,
-    and the page's visible color is the body's background where it has one. On
-    this corpus that distinction is unreachable: no site has page-level
-    background candidates on both elements, so grouping by element would sort
-    the same pools in the same order. Left undone rather than written blind; a
-    site where a `:root` background competes with a later `body` one is the
-    case that would need it, and the fix is to resolve within each element
-    first and prefer the body's answer.
+    **Candidates matching `<html>` and ones matching `<body>` are resolved in
+    separate pools** (T7), because the cascade does too — it resolves each
+    element on its own. **Body's own winner is preferred over html's** —
+    resolved independently, then compared, rather than ranked together —
+    because that is what painting order does: `<body>`'s own box paints over
+    the `<html>` canvas wherever it covers it, which in practice is the whole
+    viewport, and that holds however important or specific html's rule is.
+
+    **One exception, and it is not a cascade term either: an html rule written
+    specifically for this theme still earns the precedence invariant 16 gives
+    it over an unscoped body rule that merely happens to also be present in
+    this theme's build.** Tailwind v4's `dark:bg-gray-950` on `<html>` is
+    exactly this shape — dark-theme-scoped, competing against a `body {}` rule
+    that was never written with a theme in mind and applies to every theme
+    because it applies to none in particular. Preferring body unconditionally
+    there would silently prefer a rule that says nothing about the theme over
+    one that is the theme, which is the same mistake invariant 16 itself
+    exists to prevent, just relocated to the other pool. So body wins unless
+    html's candidate is theme-scoped (`Usage.theme_scoped`, by either
+    mechanism — selector or media) **and body's is not**; found by a test
+    fixture built to demonstrate exactly this collision
+    (`test_tailwind_v4_shape_on_the_html_element`), not by the corpus — see
+    below. Within a pool the normal `importance → layer → specificity → order`
+    key still decides the winner unchanged.
+
+    Not reachable on the corpus either way — every candidate on all four
+    frozen bundles targets `<body>` except one `<html>`-only candidate
+    (tailwindcss.com's dark theme) with no competing `<body>` candidate to
+    prefer over or defer to — so this is insurance rather than an observed
+    fix, like most of phase 3.
     """
     layers = layers or {}
-    candidates = []
-    for e in entries:
-        if not e.color.opaque:
-            continue
-        for u in e.usages:
-            if u.role != "surface":
-                continue
-            if u.prop not in ("background", "background-color"):
-                continue
-            spec = _page_specificity(u.selector, u.scope_selector, page)
-            if spec is None:
-                continue
-            candidates.append((_cascade_key(u, spec, layers), e.color, u))
 
-    if candidates:
-        # `max` keeps the first of equal keys, which matters because two colors
-        # read out of one declaration tie on every term this key has — a
-        # gradient's stops, say. It used to matter for `light-dark()` too, and
-        # since phase 4 it does not: that resolves to the one color the theme
-        # being built actually selects, which is how MDN's dark ground became
-        # readable rather than being whichever branch was written first.
-        _key, color, u = max(candidates, key=lambda t: t[0])
+    def _pool(element: str) -> list:
+        candidates = []
+        for e in entries:
+            if not e.color.opaque:
+                continue
+            for u in e.usages:
+                if u.role != "surface":
+                    continue
+                if u.prop not in ("background", "background-color"):
+                    continue
+                spec = _page_specificity(u.selector, u.scope_selector, page,
+                                         element=element)
+                if spec is None:
+                    continue
+                candidates.append((_cascade_key(u, spec, layers), e.color, u))
+        return candidates
+
+    # `max` keeps the first of equal keys, which matters because two colors
+    # read out of one declaration tie on every term this key has — a
+    # gradient's stops, say. It used to matter for `light-dark()` too, and
+    # since phase 4 it does not: that resolves to the one color the theme
+    # being built actually selects, which is how MDN's dark ground became
+    # readable rather than being whichever branch was written first.
+    body_win = max(_pool("body"), key=lambda t: t[0], default=None)
+    html_win = max(_pool("html"), key=lambda t: t[0], default=None)
+
+    winner = body_win or html_win
+    if body_win and html_win:
+        html_only_scoped = html_win[2].theme_scoped and not body_win[2].theme_scoped
+        winner = html_win if html_only_scoped else body_win
+
+    if winner:
+        _key, color, u = winner
         return color, f"{u.selector} {{ {u.prop} }} in {u.source}"
 
     surf = [e for e in entries

@@ -963,8 +963,8 @@ which is what the old floor's claim rested on.
 > **The version-bump sub-decision: `1.0.0` → `1.1.0`, not `2.0.0`.** The
 > "breaking change for anyone installed on 3.10" cost named above is honest but
 > currently theoretical — `pyproject.toml` still carries
-> `# TODO(migration): decide a licence`, and CLAUDE.md is explicit that
-> "nothing about publishing moves until a licence is chosen." The package has
+> `# TODO(migration): decide a license`, and CLAUDE.md is explicit that
+> "nothing about publishing moves until a license is chosen." The package has
 > never been published, so nobody is installed from PyPI on any version to
 > break. A major bump would signal a compatibility break to consumers who do
 > not exist yet; a minor bump records the change honestly without overstating
@@ -974,7 +974,7 @@ which is what the old floor's claim rested on.
 > regardless, since it is that document's first stamp and moves on its own
 > schedule — see T3.
 >
-> **The licence question this reasoning rests on was itself resolved later
+> **The license question this reasoning rests on was itself resolved later
 > the same day** — the owner chose the Hippocratic License 3.0; see
 > "License" under Outstanding work. That does not retroactively change the
 > minor-vs-major call above, which was correct for the state of the repo at

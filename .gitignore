@@ -1,4 +1,5 @@
 *.har
+!parkersprouse.me.har
 .DS_Store
 .remember
 .venv

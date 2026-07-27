@@ -8,33 +8,32 @@ so they are the exact declared colors rather than pixels that have been through
 antialiasing and JPEG compression.
 
 Python 3.11+ (tested on 3.11 through 3.14). The core takes two pure-Python
-dependencies — `tinycss2` to tokenise the CSS and `cssselect2` to match and
-weigh selectors — which are installed for you. Pillow and numpy are extra, and
-only if you use `--images`.
+dependencies – `tinycss2` to tokenize the CSS and `cssselect2` to match and
+weigh selectors – which are installed for you. `pillow` and `numpy` are extra –
+only required if you want to use `--images`.
 
-If using the system's available Python binary:
+If using `uv` (_recommended_):
 ```bash
-python3 -m palettekit site.har -o "palettes/site"      # from a HAR export (best)
-python3 -m palettekit https://example.com -o "palettes/site"
-python3 -m palettekit ./saved-page/ -o "palettes/site" # local html/css
+uv run -m palettekit site.har --images -o "palettes/site"      # from a HAR export (best)
+uv run -m palettekit https://example.com --images -o "palettes/site"
+uv run -m palettekit ./saved-page/ --images -o "palettes/site" # local html/css
 open palettes/site/index.html
 ```
 
-If using `uv`:
-
+If using the system's available Python binary:
 ```bash
-uv run -m palettekit site.har -o "palettes/site"      # from a HAR export (best)
-uv run -m palettekit https://example.com -o "palettes/site"
-uv run -m palettekit ./saved-page/ -o "palettes/site" # local html/css
+python3 -m palettekit site.har --images -o "palettes/site"      # from a HAR export (best)
+python3 -m palettekit https://example.com --images -o "palettes/site"
+python3 -m palettekit ./saved-page/ --images -o "palettes/site" # local html/css
 open palettes/site/index.html
 ```
 
 There is also `palettekit.pyz`, the same program as one file:
 
 ```bash
-python3 palettekit.pyz site.har -o "palettes/site"
+uv run palettekit.pyz site.har --images -o "palettes/site"
 # or
-uv run palettekit.pyz site.har -o "palettes/site"
+python3 palettekit.pyz site.har --images -o "palettes/site"
 ```
 
 Or install it, which puts a `palettekit` command on your path:
@@ -64,7 +63,7 @@ request. The tool says so rather than silently returning a thin palette.
 
 | File | What it is |
 |---|---|
-| `index.html` | Interactive palette. Standalone — no server, no network. |
+| `index.html` | Interactive palette. Standalone – no server, no network. |
 | `*.json` | Canonical. Every token in hex/rgb/hsl/oklch, with provenance, contrast, and where each color was used. |
 | `*.css` | Custom properties. |
 | `*.scss` | Variables plus a map. |
@@ -75,7 +74,7 @@ The page lets you switch the copy format between hex, rgb, hsl, oklch and
 as-declared, toggle unrendered colors, and see the selector each color came
 from. Click any swatch to copy it.
 
-**The JSON is a versioned, public API** — `palettekit.emit.to_document()`
+**The JSON is a versioned, public API** – `palettekit.emit.to_document()`
 returns the same dict the file holds, and it carries a top-level
 `schemaVersion` (currently `1`). That is a separate number from the package
 version in `pyproject.toml`: the package version tracks the tool, the schema
@@ -90,16 +89,16 @@ top-level `ground`, `stats` and `colors` always mirror `themes[0]`.
 
 When a site ships two themes, both are extracted and the report gets a toggle.
 
-Three mechanisms are recognised: a `prefers-color-scheme` media query; a class
-or attribute on a wrapper element — `.dark`, `.theme-dark`, `.is-light`,
+Three mechanisms are recognized: a `prefers-color-scheme` media query; a class
+or attribute on a wrapper element – `.dark`, `.theme-dark`, `.is-light`,
 `[data-theme="dark"]`, `[data-bs-theme=dark]`; and a `light-dark()` value. The
 second is the common one, since Tailwind's `dark:` variant compiles to it. The
-third needs no wrapper and no media query at all — a site can declare its whole
+third needs no wrapper and no media query at all – a site can declare its whole
 dark theme by writing `light-dark(#fff, #18191b)`, and each palette reads the
 branch that belongs to it.
 
 Each theme is extracted from scratch rather than tagged onto one pass, because
-a theme has its own ground — so every contrast ratio you see is measured
+a theme has its own ground – so every contrast ratio you see is measured
 against the background that theme actually uses, and colors with alpha are
 flattened over the right one. Switching the toggle restyles the whole report,
 not just the swatches.
@@ -118,20 +117,20 @@ lists. The `.css` file uses this directly:
 ```
 
 Both forms are written because there is no telling which one your project uses
-— delete the one you don't want.
+– delete the one you don't want.
 
 The JSON grows a `themes` array and a `defaultTheme`; the top-level `ground`,
 `stats` and `colors` still mirror the default theme, so anything already
 reading the file keeps working. **The scss, ts and tailwind outputs carry the
 default theme only.**
 
-A site with no theme scopes produces exactly what it did before — one palette,
+A site with no theme scopes produces exactly what it did before – one palette,
 no toggle. `--no-themes` forces that.
 
 One caveat, for sites storing theme colors as bare channel triplets
 (`--background: 0 0% 3.9%`, the shadcn/ui pattern). Assembled at the point of
-use — `hsl(var(--background))`, including `hsl(var(--x) / 50%)` and
-`rgb(var(--x))` — those read normally and end up in the palette.
+use – `hsl(var(--background))`, including `hsl(var(--x) / 50%)` and
+`rgb(var(--x))` – those read normally and end up in the palette.
 
 Used raw, as `background-color: var(--background)`, they do not, and that is
 correct: `background-color: 0 0% 3.9%` is invalid CSS, so a browser discards it
@@ -139,7 +138,7 @@ and paints nothing. Reading a color there would put something in your palette
 that the page never shows. You get a note saying so, rather than a silently
 thin result.
 
-You also get a note when a theme's ground had to be inferred — when nothing
+You also get a note when a theme's ground had to be inferred – when nothing
 sets a readable background on `html`, `body` or `:root`, usually because the
 page is painted from a wrapper element. Every contrast ratio in that theme is
 measured against the inferred ground, so it is worth knowing.
@@ -148,20 +147,20 @@ measured against the inferred ground, so it is worth knowing.
 
 **Ground is resolved by the cascade, not by counting.** The page background is
 whichever background rule that lands on the page wins on
-`importance → @layer → specificity → document order` — the same four terms a
+`importance → @layer → specificity → document order` – the same four terms a
 browser applies, in the same order. Weighting by usage instead gets this wrong
-on any site that loads a framework stylesheet before its own — which is most of
+on any site that loads a framework stylesheet before its own – which is most of
 them. Everything else depends on this, since colors with alpha are flattened
 over the ground and every contrast ratio is measured against it.
 
 "Lands on the page" means the rule actually selects this document's `<html>` or
 `<body>`, not just that it's written `body { … }`. Sites built with a utility
-framework paint the page from the element — `<body class="bg-light-primary
-dark:bg-dark-primary">` — and those classes beat the stylesheet's own `body`
+framework paint the page from the element – `<body class="bg-light-primary
+dark:bg-dark-primary">` – and those classes beat the stylesheet's own `body`
 rule. Reading the class attribute is the only way to tell that utility from the
 identical-looking one sitting on a card.
 
-**Colors declared with alpha are reported both ways** — flattened to the hex
+**Colors declared with alpha are reported both ways** – flattened to the hex
 you actually see, and as originally declared, under `source.declaredAs`.
 
 **Merging happens in OKLab, on the rendered color, within a role.** `#1a1a1a`
@@ -171,11 +170,11 @@ having. Use `--flat` for one token per distinct color instead.
 
 **Three statuses:**
 
-- `live` — actually painted on the page.
-- `saved` — a custom property nothing references. On sites built with a design
+- `live` – actually painted on the page.
+- `saved` – a custom property nothing references. On sites built with a design
   tool this is usually the designer's saved swatches: real intent, not on this
   page.
-- `inert` — a declaration that paints nothing, such as
+- `inert` – a declaration that paints nothing, such as
   `drop-shadow(0 0 0 #13330d)`, where every length is zero.
 
 Only `live` colors go into the css/scss/ts/tailwind files, so what you paste
@@ -195,14 +194,14 @@ component framework can contribute hundreds of colors that have nothing to do
 with the design.
 
 ```bash
-python3 -m palettekit site.har --list-sources
+uv run -m palettekit site.har --list-sources
 ```
 
 lists every stylesheet in cascade order with its color count, so you can see
 the split, then:
 
 ```bash
-python3 -m palettekit site.har --exclude bootstrap --exclude cdn.example.com
+uv run -m palettekit site.har --exclude bootstrap --exclude cdn.example.com
 ```
 
 Third-party stylesheets are down-weighted by default rather than dropped;
@@ -250,45 +249,48 @@ knowing before you read too much into a status.
   how often. Treat the order as a strong hint, not a measurement.
 - `color-mix()` **is** evaluated, in eleven interpolation spaces, and so is
   `light-dark()`. A mix whose percentage is a `calc()`, or whose space is one
-  of the few not implemented, is skipped whole — the colors written inside it
+  of the few not implemented, is skipped whole – the colors written inside it
   are not reported, because the page paints the mix and not its arguments.
   Relative color syntax (`oklch(from white l c h)`) is not evaluated.
-  `lab()` and `lch()` are read — modern Tailwind emits them after a hex
+  `lab()` and `lch()` are read – modern Tailwind emits them after a hex
   fallback, so they win the cascade and skipping them would drop the color
   entirely.
 
 ## Example
 
-An `example/` directory holding a pre-generated report is intended here, so you
-can see the output without running anything. **It is not in the repository
-yet** — generated output has never been tracked, so there is nothing to ship
-until that changes. Generate your own in the meantime:
+An [`example/`](./example/) directory holding a pre-generated report using my personal site
+([https://parkersprouse.me](https://parkersprouse.me)) exists so you can see sample output without needing to run
+anything yourself.
 
+It was generated using the following command:
 ```bash
-python3 -m palettekit your-site.har -o example && open example/index.html
+uv run -m palettekit parkersprouse.me.har --images -o example
 ```
+
+I've included the `.har` in case you want to run it yourself.
 
 ## Tests
 
 ```bash
-python3 -m unittest discover
+uv run -m unittest discover
 ```
 
-Run it from an environment where the dependencies are installed — `pip install
+Run it from an environment where the dependencies are installed – `pip install
 -e ".[dev]"`, or `uv run --with tinycss2 --with cssselect2 python -m unittest
 discover`. A bare system `python3` will fail at the `tinycss2` import rather
-than at an assertion. `pytest` also works, discovering the same `tests/`
-package (`tests/test_color.py`, `test_cssparse.py`, `test_dom.py`,
-`test_extract.py`, `test_emit.py`, `test_sources.py`, `test_packaging.py`, one
-per module in `palettekit/`).
+than at an assertion. `pytest` also works, discovering the same [`tests/`](./tests/)
+package ([`tests/test_color.py`](./tests/test_color.py), [`tests/test_cssparse.py`](./tests/test_cssparse.py),
+[`tests/test_dom.py`](./tests/test_dom.py), [`tests/test_extract.py`](./tests/test_extract.py),
+[`tests/test_emit.py`](./tests/test_emit.py), [`tests/test_sources.py`](./tests/test_sources.py),
+[`tests/test_packaging.py`](./tests/test_packaging.py), one per module in [`palettekit/`](./palettekit/)).
 
 113 tests covering the color maths, cascade ordering, theme scoping, ground
 detection, the merge rules, and the status classifications. Worth running after
-any edit — several of these exist because the obvious implementation was quietly
+any edit – several of these exist because the obvious implementation was quietly
 wrong.
 
-## Licence note
+## License note
 
 Color values are not copyrightable, so reusing a palette is fine. Fonts,
-images, and the page itself are not covered by that — check separately before
+images, and the page itself are not covered by that – check separately before
 reusing anything other than the numbers.

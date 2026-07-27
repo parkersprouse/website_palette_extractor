@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>parkersprouse.me · palette</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  :root {
+    --ui-ground: #e4e4e7;
+    --ui-strong: #09090b;
+    --ui-body: #52525c;
+    --ui-muted: #000000;
+    --ui-accent: #d1335b;
+    --ui-line: rgb(0 0 0 / 0.14);
+    --ui-checker: #d8d8d8;
+    --ui-toast-bg: #09090b;
+    --ui-toast-fg: #e4e4e7;
+  }
+  :root[data-pk-theme="base"] {
+    --ui-ground: #e4e4e7;
+    --ui-strong: #09090b;
+    --ui-body: #52525c;
+    --ui-muted: #000000;
+    --ui-accent: #d1335b;
+    --ui-line: rgb(0 0 0 / 0.14);
+    --ui-checker: #d8d8d8;
+    --ui-toast-bg: #09090b;
+    --ui-toast-fg: #e4e4e7;
+  }
+  :root[data-pk-theme="dark"] {
+    --ui-ground: #09090b;
+    --ui-strong: #ffffff;
+    --ui-body: #e4e4e7;
+    --ui-muted: #9f9fa9;
+    --ui-accent: #da5d7c;
+    --ui-line: rgb(255 255 255 / 0.18);
+    --ui-checker: #2c2c2c;
+    --ui-toast-bg: #ffffff;
+    --ui-toast-fg: #09090b;
+  }
+  body {
+    margin: 0; padding: 2rem 1.5rem 5rem;
+    background: var(--ui-ground); color: var(--ui-body);
+    font-family: "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
+    font-size: 15px; line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1060px; margin: 0 auto; }
+  a { color: var(--ui-strong); }
+  code, .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+
+  header { border-bottom: 1px solid var(--ui-line); padding-bottom: 1.4rem;
+           margin-bottom: 2rem; }
+  h1 { margin: 0 0 .35rem; font-size: clamp(1.7rem, 5vw, 2.9rem);
+       font-weight: 700; letter-spacing: -.03em; color: var(--ui-strong); }
+  h1 .dot { color: var(--ui-accent); }
+  .sub { margin: 0; max-width: 68ch; color: var(--ui-body); }
+
+  .stats { display: flex; flex-wrap: wrap; gap: 1.4rem; margin-top: 1rem;
+           font-size: .8rem; color: var(--ui-muted); }
+  .stats b { color: var(--ui-strong); font-weight: 700; }
+
+  .controls { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center;
+              margin-bottom: 2rem; }
+  .controls label { font-size: .8rem; color: var(--ui-muted); margin-right: .2rem; }
+  .seg { display: inline-flex; border: 1px solid var(--ui-line); }
+  .seg button {
+    appearance: none; background: none; border: 0; cursor: pointer;
+    font: inherit; font-size: .78rem; padding: .34rem .7rem;
+    color: var(--ui-muted); border-right: 1px solid var(--ui-line);
+  }
+  .seg button:last-child { border-right: 0; }
+  .seg button[aria-pressed="true"] { background: var(--ui-strong);
+                                     color: var(--ui-ground); font-weight: 700; }
+  .seg button:focus-visible { outline: 2px solid var(--ui-accent);
+                              outline-offset: -2px; }
+  .seg.cap button { text-transform: capitalize; }
+  [hidden] { display: none !important; }
+
+  section { margin-bottom: 2.6rem; }
+  h2 { font-size: .72rem; font-weight: 700; letter-spacing: .14em;
+       text-transform: uppercase; color: var(--ui-muted); margin: 0 0 .2rem; }
+  .blurb { margin: 0 0 1rem; font-size: .86rem; color: var(--ui-muted);
+           max-width: 62ch; }
+
+  .grid { display: grid; gap: 10px;
+          grid-template-columns: repeat(auto-fill, minmax(198px, 1fr)); }
+
+  .sw { appearance: none; border: 1px solid var(--ui-line); background: none;
+        padding: 0; text-align: left; font: inherit; color: inherit;
+        cursor: pointer; display: flex; flex-direction: column; position: relative; }
+  .sw:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
+  .sw:hover { border-color: var(--ui-strong); }
+
+  .chip { height: 80px; border-bottom: 1px solid var(--ui-line);
+          position: relative; }
+  .chip.alpha {
+    background-image:
+      linear-gradient(45deg, var(--ui-checker) 25%, transparent 25%,
+                      transparent 75%, var(--ui-checker) 75%),
+      linear-gradient(45deg, var(--ui-checker) 25%, transparent 25%,
+                      transparent 75%, var(--ui-checker) 75%);
+    background-size: 12px 12px; background-position: 0 0, 6px 6px;
+  }
+  .chip .fill { position: absolute; inset: 0; }
+  .tag { position: absolute; top: .45rem; right: .45rem; font-size: .58rem;
+         font-weight: 700; letter-spacing: .09em; text-transform: uppercase;
+         padding: .16rem .38rem; background: var(--ui-ground);
+         color: var(--ui-muted); border: 1px solid var(--ui-line); }
+  .tag.inert { color: var(--ui-accent); border-color: var(--ui-accent); }
+
+  .meta { padding: .55rem .65rem .65rem; }
+  .name { font-weight: 700; color: var(--ui-strong); letter-spacing: -.01em;
+          word-break: break-word; }
+  .val { font-size: .78rem; color: var(--ui-muted); text-transform: lowercase;
+         word-break: break-all; margin-top: .1rem; }
+  .role { font-size: .74rem; color: var(--ui-muted); margin-top: .3rem; }
+  .cr { font-size: .7rem; color: var(--ui-muted); margin-top: .25rem; }
+  .cr.warn { color: var(--ui-accent); }
+
+  details.detail { margin-top: 1.4rem; border: 1px solid var(--ui-line); }
+  details.detail summary { cursor: pointer; padding: .6rem .8rem;
+    font-size: .78rem; letter-spacing: .1em; text-transform: uppercase;
+    font-weight: 700; color: var(--ui-muted); }
+  details.detail summary:focus-visible { outline: 2px solid var(--ui-accent);
+                                         outline-offset: -2px; }
+  .detail-body { padding: 0 .8rem .8rem; font-size: .8rem; }
+  table { width: 100%; border-collapse: collapse; font-size: .78rem; }
+  th, td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid
+           var(--ui-line); vertical-align: top; }
+  th { color: var(--ui-muted); font-weight: 700; }
+
+  .warn-box { border: 1px solid var(--ui-accent); padding: .8rem 1rem;
+              margin-bottom: 1.6rem; font-size: .84rem; }
+  .warn-box h3 { margin: 0 0 .4rem; font-size: .72rem; letter-spacing: .1em;
+                 text-transform: uppercase; color: var(--ui-accent); }
+  .warn-box ul { margin: 0; padding-left: 1.1rem; color: var(--ui-muted); }
+
+  .pairs { display: grid; gap: 8px;
+           grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
+  .pair { border: 1px solid var(--ui-line); padding: .7rem .8rem; }
+  .pair .demo { font-size: 1.02rem; font-weight: 600; }
+  .pair .lab { font-size: .68rem; margin-top: .35rem; opacity: .75; }
+
+  footer { margin-top: 2.6rem; padding-top: 1.2rem;
+           border-top: 1px solid var(--ui-line); font-size: .78rem;
+           color: var(--ui-muted); }
+
+  #toast { position: fixed; left: 50%; bottom: 1.4rem;
+    transform: translate(-50%, 160%); background: var(--ui-toast-bg);
+    color: var(--ui-toast-fg); font-weight: 700; font-size: .84rem;
+    padding: .5rem 1rem; transition: transform .18s ease-out; z-index: 50; }
+  #toast.show { transform: translate(-50%, 0); }
+  @media (prefers-reduced-motion: reduce) {
+    #toast { transition: none; }
+  }
+  @media (max-width: 480px) { body { padding: 1.25rem 1rem 4rem; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>parkersprouse.me<span class="dot">.</span></h1>
+  <p class="sub">9 colors rendered on the page. Read from the site's own stylesheets, not sampled from a screenshot. Click any swatch to copy it. The site ships two themes (light and dark) — switch between them above; every value and ratio is re-read for the one shown. Source: <a href="https://parkersprouse.me/">https://parkersprouse.me/</a>.</p>
+  <div class="stats" id="stats"></div>
+</header>
+
+<div id="warnings"></div>
+
+<div class="controls">
+  <label id="theme-label" hidden>Theme</label>
+  <div class="seg cap" role="group" aria-labelledby="theme-label" id="theme"
+       hidden></div>
+  <label id="fmt-label">Copy as</label>
+  <div class="seg" role="group" aria-labelledby="fmt-label" id="fmt"></div>
+  <label id="show-label" style="margin-left:auto">Show</label>
+  <div class="seg" role="group" aria-labelledby="show-label" id="filter"></div>
+</div>
+
+<div id="groups"></div>
+
+<section id="pairs-section">
+  <h2>Contrast</h2>
+  <p class="blurb">Every extracted color against the ground, at body size.
+     Ratios below 4.5:1 are marked — that is the WCAG AA floor for normal text.</p>
+  <div class="pairs" id="pairs"></div>
+</section>
+
+<details class="detail">
+  <summary>Where each color came from</summary>
+  <div class="detail-body">
+    <table id="prov"><thead><tr>
+      <th>Token</th><th>Value</th><th>Score</th><th>Uses</th>
+      <th>Seen in</th>
+    </tr></thead><tbody></tbody></table>
+  </div>
+</details>
+
+<details class="detail">
+  <summary>Extraction report</summary>
+  <div class="detail-body" id="report"></div>
+</details>
+
+<footer id="footer"></footer>
+</div>
+
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script type="application/json" id="palette-data">{"name": "parkersprouse.me", "source": "https://parkersprouse.me/", "ground": "#e4e4e7", "groundSource": "html,body { background-color } in https://parkersprouse.me/index-yuSfdUTd.css", "generated": "2026-07-27T17:31:45-05:00", "schemaVersion": 1, "stats": {"stylesheets": 1, "declarationsScanned": 56, "distinctColors": 18, "afterMerge": 9, "customProperties": 11, "customPropertiesReferenced": 11, "sources": [{"source": "https://parkersprouse.me/index-yuSfdUTd.css", "origin": "parkersprouse.me", "thirdParty": false, "declarations": 65}]}, "warnings": ["The page's imagery carries color that the stylesheet does not. A CSS-only palette will miss it."], "defaultTheme": "base", "themes": [{"id": "base", "appearance": "light", "scope": "", "ground": "#e4e4e7", "groundSource": "html,body { background-color } in https://parkersprouse.me/index-yuSfdUTd.css", "stats": {"stylesheets": 1, "declarationsScanned": 56, "distinctColors": 18, "afterMerge": 9, "customProperties": 11, "customPropertiesReferenced": 11, "sources": [{"source": "https://parkersprouse.me/index-yuSfdUTd.css", "origin": "parkersprouse.me", "thirdParty": false, "declarations": 65}]}, "colors": [{"name": "grey-2", "group": "neutral", "role": "token", "status": "live", "hex": "#09090b", "rgb": [9, 9, 11], "css": {"hex": "#09090b", "rgb": "rgb(9 9 11)", "hsl": "hsl(240.0 10.0% 3.9%)", "oklch": "oklch(14.08% 0.0044 285.8)"}, "neutral": true, "score": 41.6, "occurrences": 12, "contrastOnGround": 15.68, "wcagOnGround": "AAA", "usedIn": ["--border-color", "--box-shadow-color", "--link-color", "--text-color", "background-color", "border", "border-bottom", "box-shadow", "color"], "examples": [{"selector": "html,body", "property": "color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": ":root,.light", "property": "--border-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": ":root,.light", "property": "--box-shadow-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": ":root,.light", "property": "--link-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": ":root,.light", "property": "--text-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": "a", "property": "color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}], "customProperties": ["--border-color", "--box-shadow-color", "--link-color", "--text-color"]}, {"name": "grey-1", "group": "neutral", "role": "token", "status": "live", "hex": "#52525c", "rgb": [82, 82, 92], "css": {"hex": "#52525c", "rgb": "rgb(82 82 92)", "hsl": "hsl(240.0 5.7% 34.1%)", "oklch": "oklch(44.22% 0.0162 285.7)"}, "neutral": true, "score": 15.6, "occurrences": 4, "contrastOnGround": 6.08, "wcagOnGround": "AA", "usedIn": ["--svg-alt-color", "--text-muted-color", "color", "fill"], "examples": [{"selector": ":root,.light", "property": "--svg-alt-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": ":root,.light", "property": "--text-muted-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": ".with-icon>svg.duotone path.duotone--secondary", "property": "fill", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": ".text-muted", "property": "color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}], "customProperties": ["--svg-alt-color", "--text-muted-color"]}, {"name": "ground", "group": "ground", "role": "surface", "status": "live", "hex": "#e4e4e7", "rgb": [228, 228, 231], "css": {"hex": "#e4e4e7", "rgb": "rgb(228 228 231)", "hsl": "hsl(240.0 5.9% 90.0%)", "oklch": "oklch(91.97% 0.004 286.3)"}, "neutral": true, "score": 12.6, "occurrences": 2, "contrastOnGround": 1.0, "wcagOnGround": "fail", "usedIn": ["--bg-color", "background-color"], "examples": [{"selector": "html,body", "property": "background-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": ":root,.light", "property": "--bg-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}], "customProperties": ["--bg-color"]}, {"name": "red", "group": "chroma", "role": "token", "status": "live", "hex": "#d1335b", "rgb": [209, 51, 91], "css": {"hex": "#d1335b", "rgb": "rgb(209 51 91)", "hsl": "hsl(344.8 63.2% 51.0%)", "oklch": "oklch(57.53% 0.1938 11.5)"}, "neutral": false, "score": 7.9, "occurrences": 3, "contrastOnGround": 3.82, "wcagOnGround": "AA large", "usedIn": ["--link-hover-color", "color"], "examples": [{"selector": ":root,.light", "property": "--link-hover-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": "a:hover", "property": "color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": ".theme-toggle button:hover", "property": "color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}], "customProperties": ["--link-hover-color"]}, {"name": "red-2", "group": "chroma", "role": "token", "status": "live", "hex": "#da5d7c", "rgb": [218, 93, 124], "css": {"hex": "#da5d7c", "rgb": "rgb(218 93 124)", "hsl": "hsl(345.1 62.8% 61.0%)", "oklch": "oklch(64.34% 0.1587 7.3)"}, "neutral": false, "score": 6.9, "occurrences": 2, "contrastOnGround": 2.83, "wcagOnGround": "fail", "usedIn": ["--svg-alt-hover-color", "fill"], "examples": [{"selector": ":root,.light", "property": "--svg-alt-hover-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": ".with-icon:hover>svg.duotone path.duotone--secondary", "property": "fill", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}], "customProperties": ["--svg-alt-hover-color"]}, {"name": "ink-1", "group": "ink", "role": "text", "status": "live", "hex": "#e4e4e7", "rgb": [228, 228, 231], "css": {"hex": "#e4e4e7", "rgb": "rgb(228 228 231)", "hsl": "hsl(240.0 5.9% 90.0%)", "oklch": "oklch(91.97% 0.004 286.3)"}, "neutral": true, "score": 1.6, "occurrences": 2, "contrastOnGround": 1.0, "wcagOnGround": "fail", "usedIn": ["color"], "examples": [{"selector": "::-moz-selection", "property": "color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": "::selection", "property": "color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}]}, {"name": "line", "group": "line", "role": "line", "status": "live", "hex": "#a0a0a0", "rgb": [160, 160, 160], "css": {"hex": "#a0a0a0", "rgb": "rgb(160 160 160)", "hsl": "hsl(0.0 0.0% 62.7%)", "oklch": "oklch(70.58% 0.0 0.0)"}, "neutral": true, "score": 1.0, "occurrences": 1, "contrastOnGround": 2.06, "wcagOnGround": "fail", "usedIn": ["border"], "examples": [{"selector": ":where(fieldset)", "property": "border", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}]}, {"name": "ink-2", "group": "ink", "role": "text", "status": "live", "hex": "#000000", "rgb": [0, 0, 0], "css": {"hex": "#000000", "rgb": "rgb(0 0 0)", "hsl": "hsl(0.0 0.0% 0.0%)", "oklch": "oklch(0.0% 0.0 0.0)"}, "neutral": true, "score": 1.0, "occurrences": 1, "contrastOnGround": 16.55, "wcagOnGround": "AAA", "usedIn": ["color"], "examples": [{"selector": ":where(dialog)", "property": "color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}]}, {"name": "surface", "group": "surface", "role": "surface", "status": "live", "hex": "#ffffff", "rgb": [255, 255, 255], "css": {"hex": "#ffffff", "rgb": "rgb(255 255 255)", "hsl": "hsl(0.0 0.0% 100.0%)", "oklch": "oklch(100.0% 0.0 0.0)"}, "neutral": true, "score": 1.0, "occurrences": 1, "contrastOnGround": 1.27, "wcagOnGround": "fail", "usedIn": ["background-color"], "examples": [{"selector": ":where(dialog)", "property": "background-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}]}]}, {"id": "dark", "appearance": "dark", "scope": "dark", "ground": "#09090b", "groundSource": "html,body { background-color } in https://parkersprouse.me/index-yuSfdUTd.css", "stats": {"stylesheets": 1, "declarationsScanned": 65, "distinctColors": 20, "afterMerge": 9, "customProperties": 11, "customPropertiesReferenced": 11, "sources": [{"source": "https://parkersprouse.me/index-yuSfdUTd.css", "origin": "parkersprouse.me", "thirdParty": false, "declarations": 65}]}, "colors": [{"name": "grey-2", "group": "neutral", "role": "token", "status": "live", "hex": "#e4e4e7", "rgb": [228, 228, 231], "css": {"hex": "#e4e4e7", "rgb": "rgb(228 228 231)", "hsl": "hsl(240.0 5.9% 90.0%)", "oklch": "oklch(91.97% 0.004 286.3)"}, "neutral": true, "score": 38.9, "occurrences": 9, "contrastOnGround": 15.68, "wcagOnGround": "AAA", "usedIn": ["--bg-color", "--link-color", "--text-color", "background-color", "color"], "examples": [{"selector": ".dark", "property": "--link-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": ".dark", "property": "--text-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": "html,body", "property": "color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": ":root,.light", "property": "--bg-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": ":root,.light", "property": "--link-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": "a", "property": "color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}], "customProperties": ["--bg-color", "--link-color", "--text-color"]}, {"name": "ground", "group": "ground", "role": "token", "status": "live", "hex": "#09090b", "rgb": [9, 9, 11], "css": {"hex": "#09090b", "rgb": "rgb(9 9 11)", "hsl": "hsl(240.0 10.0% 3.9%)", "oklch": "oklch(14.08% 0.0044 285.8)"}, "neutral": true, "score": 27.7, "occurrences": 6, "contrastOnGround": 1.0, "wcagOnGround": "fail", "usedIn": ["--bg-color", "--border-color", "--text-color", "background-color", "color"], "examples": [{"selector": ".dark", "property": "--bg-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": "html,body", "property": "background-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": ":root,.light", "property": "--border-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": ":root,.light", "property": "--text-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": "::-moz-selection", "property": "color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": "::selection", "property": "color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}], "customProperties": ["--bg-color", "--border-color", "--text-color"]}, {"name": "grey-4", "group": "neutral", "role": "token", "status": "live", "hex": "#3f3f46", "rgb": [63, 63, 70], "css": {"hex": "#3f3f46", "rgb": "rgb(63 63 70)", "hsl": "hsl(240.0 5.3% 26.1%)", "oklch": "oklch(37.03% 0.0119 285.8)"}, "neutral": true, "score": 25.2, "occurrences": 6, "contrastOnGround": 1.91, "wcagOnGround": "fail", "usedIn": ["--border-color", "--box-shadow-color", "border", "border-bottom", "box-shadow"], "examples": [{"selector": ".dark", "property": "--border-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": ".dark", "property": "--box-shadow-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": ":root,.light", "property": "--box-shadow-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": ".list-container", "property": "border", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": ".list-container>.header", "property": "border-bottom", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": ".list-container", "property": "box-shadow", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}], "customProperties": ["--border-color", "--box-shadow-color"]}, {"name": "grey-1", "group": "neutral", "role": "token", "status": "live", "hex": "#9f9fa9", "rgb": [159, 159, 169], "css": {"hex": "#9f9fa9", "rgb": "rgb(159 159 169)", "hsl": "hsl(240.0 5.5% 64.3%)", "oklch": "oklch(70.57% 0.0144 286.0)"}, "neutral": true, "score": 18.4, "occurrences": 5, "contrastOnGround": 7.59, "wcagOnGround": "AAA", "usedIn": ["--svg-alt-color", "--text-muted-color", "border", "color", "fill"], "examples": [{"selector": ".dark", "property": "--svg-alt-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": ".dark", "property": "--text-muted-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": ".with-icon>svg.duotone path.duotone--secondary", "property": "fill", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": ".text-muted", "property": "color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": ":where(fieldset)", "property": "border", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}], "customProperties": ["--svg-alt-color", "--text-muted-color"], "mergedFrom": ["#a0a0a0"]}, {"name": "red", "group": "chroma", "role": "token", "status": "live", "hex": "#da5d7c", "rgb": [218, 93, 124], "css": {"hex": "#da5d7c", "rgb": "rgb(218 93 124)", "hsl": "hsl(345.1 62.8% 61.0%)", "oklch": "oklch(64.34% 0.1587 7.3)"}, "neutral": false, "score": 15.1, "occurrences": 4, "contrastOnGround": 5.53, "wcagOnGround": "AA", "usedIn": ["--link-hover-color", "--svg-alt-hover-color", "color"], "examples": [{"selector": ".dark", "property": "--link-hover-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": ":root,.light", "property": "--svg-alt-hover-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": "a:hover", "property": "color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": ".theme-toggle button:hover", "property": "color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}], "customProperties": ["--link-hover-color", "--svg-alt-hover-color"]}, {"name": "red-2", "group": "chroma", "role": "token", "status": "live", "hex": "#d1335b", "rgb": [209, 51, 91], "css": {"hex": "#d1335b", "rgb": "rgb(209 51 91)", "hsl": "hsl(344.8 63.2% 51.0%)", "oklch": "oklch(57.53% 0.1938 11.5)"}, "neutral": false, "score": 14.1, "occurrences": 3, "contrastOnGround": 4.11, "wcagOnGround": "AA large", "usedIn": ["--link-hover-color", "--svg-alt-hover-color", "fill"], "examples": [{"selector": ".dark", "property": "--svg-alt-hover-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": ":root,.light", "property": "--link-hover-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": ".with-icon:hover>svg.duotone path.duotone--secondary", "property": "fill", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}], "customProperties": ["--link-hover-color", "--svg-alt-hover-color"]}, {"name": "grey-3", "group": "neutral", "role": "token", "status": "live", "hex": "#52525c", "rgb": [82, 82, 92], "css": {"hex": "#52525c", "rgb": "rgb(82 82 92)", "hsl": "hsl(240.0 5.7% 34.1%)", "oklch": "oklch(44.22% 0.0162 285.7)"}, "neutral": true, "score": 12.6, "occurrences": 2, "contrastOnGround": 2.58, "wcagOnGround": "fail", "usedIn": ["--svg-alt-color", "--text-muted-color"], "examples": [{"selector": ":root,.light", "property": "--svg-alt-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": ":root,.light", "property": "--text-muted-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}], "customProperties": ["--svg-alt-color", "--text-muted-color"]}, {"name": "ink-2", "group": "ink", "role": "text", "status": "live", "hex": "#000000", "rgb": [0, 0, 0], "css": {"hex": "#000000", "rgb": "rgb(0 0 0)", "hsl": "hsl(0.0 0.0% 0.0%)", "oklch": "oklch(0.0% 0.0 0.0)"}, "neutral": true, "score": 1.0, "occurrences": 1, "contrastOnGround": 1.06, "wcagOnGround": "fail", "usedIn": ["color"], "examples": [{"selector": ":where(dialog)", "property": "color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}]}, {"name": "surface", "group": "surface", "role": "surface", "status": "live", "hex": "#ffffff", "rgb": [255, 255, 255], "css": {"hex": "#ffffff", "rgb": "rgb(255 255 255)", "hsl": "hsl(0.0 0.0% 100.0%)", "oklch": "oklch(100.0% 0.0 0.0)"}, "neutral": true, "score": 1.0, "occurrences": 1, "contrastOnGround": 19.9, "wcagOnGround": "AAA", "usedIn": ["background-color"], "examples": [{"selector": ":where(dialog)", "property": "background-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}]}]}], "colors": [{"name": "grey-2", "group": "neutral", "role": "token", "status": "live", "hex": "#09090b", "rgb": [9, 9, 11], "css": {"hex": "#09090b", "rgb": "rgb(9 9 11)", "hsl": "hsl(240.0 10.0% 3.9%)", "oklch": "oklch(14.08% 0.0044 285.8)"}, "neutral": true, "score": 41.6, "occurrences": 12, "contrastOnGround": 15.68, "wcagOnGround": "AAA", "usedIn": ["--border-color", "--box-shadow-color", "--link-color", "--text-color", "background-color", "border", "border-bottom", "box-shadow", "color"], "examples": [{"selector": "html,body", "property": "color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": ":root,.light", "property": "--border-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": ":root,.light", "property": "--box-shadow-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": ":root,.light", "property": "--link-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": ":root,.light", "property": "--text-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": "a", "property": "color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}], "customProperties": ["--border-color", "--box-shadow-color", "--link-color", "--text-color"]}, {"name": "grey-1", "group": "neutral", "role": "token", "status": "live", "hex": "#52525c", "rgb": [82, 82, 92], "css": {"hex": "#52525c", "rgb": "rgb(82 82 92)", "hsl": "hsl(240.0 5.7% 34.1%)", "oklch": "oklch(44.22% 0.0162 285.7)"}, "neutral": true, "score": 15.6, "occurrences": 4, "contrastOnGround": 6.08, "wcagOnGround": "AA", "usedIn": ["--svg-alt-color", "--text-muted-color", "color", "fill"], "examples": [{"selector": ":root,.light", "property": "--svg-alt-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": ":root,.light", "property": "--text-muted-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": ".with-icon>svg.duotone path.duotone--secondary", "property": "fill", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": ".text-muted", "property": "color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}], "customProperties": ["--svg-alt-color", "--text-muted-color"]}, {"name": "ground", "group": "ground", "role": "surface", "status": "live", "hex": "#e4e4e7", "rgb": [228, 228, 231], "css": {"hex": "#e4e4e7", "rgb": "rgb(228 228 231)", "hsl": "hsl(240.0 5.9% 90.0%)", "oklch": "oklch(91.97% 0.004 286.3)"}, "neutral": true, "score": 12.6, "occurrences": 2, "contrastOnGround": 1.0, "wcagOnGround": "fail", "usedIn": ["--bg-color", "background-color"], "examples": [{"selector": "html,body", "property": "background-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": ":root,.light", "property": "--bg-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}], "customProperties": ["--bg-color"]}, {"name": "red", "group": "chroma", "role": "token", "status": "live", "hex": "#d1335b", "rgb": [209, 51, 91], "css": {"hex": "#d1335b", "rgb": "rgb(209 51 91)", "hsl": "hsl(344.8 63.2% 51.0%)", "oklch": "oklch(57.53% 0.1938 11.5)"}, "neutral": false, "score": 7.9, "occurrences": 3, "contrastOnGround": 3.82, "wcagOnGround": "AA large", "usedIn": ["--link-hover-color", "color"], "examples": [{"selector": ":root,.light", "property": "--link-hover-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": "a:hover", "property": "color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": ".theme-toggle button:hover", "property": "color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}], "customProperties": ["--link-hover-color"]}, {"name": "red-2", "group": "chroma", "role": "token", "status": "live", "hex": "#da5d7c", "rgb": [218, 93, 124], "css": {"hex": "#da5d7c", "rgb": "rgb(218 93 124)", "hsl": "hsl(345.1 62.8% 61.0%)", "oklch": "oklch(64.34% 0.1587 7.3)"}, "neutral": false, "score": 6.9, "occurrences": 2, "contrastOnGround": 2.83, "wcagOnGround": "fail", "usedIn": ["--svg-alt-hover-color", "fill"], "examples": [{"selector": ":root,.light", "property": "--svg-alt-hover-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": ".with-icon:hover>svg.duotone path.duotone--secondary", "property": "fill", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}], "customProperties": ["--svg-alt-hover-color"]}, {"name": "ink-1", "group": "ink", "role": "text", "status": "live", "hex": "#e4e4e7", "rgb": [228, 228, 231], "css": {"hex": "#e4e4e7", "rgb": "rgb(228 228 231)", "hsl": "hsl(240.0 5.9% 90.0%)", "oklch": "oklch(91.97% 0.004 286.3)"}, "neutral": true, "score": 1.6, "occurrences": 2, "contrastOnGround": 1.0, "wcagOnGround": "fail", "usedIn": ["color"], "examples": [{"selector": "::-moz-selection", "property": "color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}, {"selector": "::selection", "property": "color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}]}, {"name": "line", "group": "line", "role": "line", "status": "live", "hex": "#a0a0a0", "rgb": [160, 160, 160], "css": {"hex": "#a0a0a0", "rgb": "rgb(160 160 160)", "hsl": "hsl(0.0 0.0% 62.7%)", "oklch": "oklch(70.58% 0.0 0.0)"}, "neutral": true, "score": 1.0, "occurrences": 1, "contrastOnGround": 2.06, "wcagOnGround": "fail", "usedIn": ["border"], "examples": [{"selector": ":where(fieldset)", "property": "border", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}]}, {"name": "ink-2", "group": "ink", "role": "text", "status": "live", "hex": "#000000", "rgb": [0, 0, 0], "css": {"hex": "#000000", "rgb": "rgb(0 0 0)", "hsl": "hsl(0.0 0.0% 0.0%)", "oklch": "oklch(0.0% 0.0 0.0)"}, "neutral": true, "score": 1.0, "occurrences": 1, "contrastOnGround": 16.55, "wcagOnGround": "AAA", "usedIn": ["color"], "examples": [{"selector": ":where(dialog)", "property": "color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}]}, {"name": "surface", "group": "surface", "role": "surface", "status": "live", "hex": "#ffffff", "rgb": [255, 255, 255], "css": {"hex": "#ffffff", "rgb": "rgb(255 255 255)", "hsl": "hsl(0.0 0.0% 100.0%)", "oklch": "oklch(100.0% 0.0 0.0)"}, "neutral": true, "score": 1.0, "occurrences": 1, "contrastOnGround": 1.27, "wcagOnGround": "fail", "usedIn": ["background-color"], "examples": [{"selector": ":where(dialog)", "property": "background-color", "source": "https://parkersprouse.me/index-yuSfdUTd.css"}]}], "images": {"imageCount": 2, "pixelsSampled": 32911, "neutralSharePct": 38.8, "verdict": "The imagery carries color the stylesheet does not; a palette read from CSS alone will be incomplete.", "dominant": [{"hex": "#4c566a", "sharePct": 60.95, "neutral": false}, {"hex": "#ffffff", "sharePct": 22.88, "neutral": true}, {"hex": "#000000", "sharePct": 13.43, "neutral": true}, {"hex": "#3c4047", "sharePct": 0.76, "neutral": true}, {"hex": "#090a0d", "sharePct": 0.68, "neutral": true}, {"hex": "#20242b", "sharePct": 0.44, "neutral": true}, {"hex": "#cfd1d5", "sharePct": 0.39, "neutral": true}, {"hex": "#b5b7bd", "sharePct": 0.22, "neutral": true}, {"hex": "#919499", "sharePct": 0.12, "neutral": true}, {"hex": "#6e7178", "sharePct": 0.11, "neutral": true}]}}</script>
+<script>
+(function () {
+  "use strict";
+  var doc = JSON.parse(document.getElementById("palette-data").textContent);
+
+  var GROUP_TITLES = {"ground": "Ground", "surface": "Surface", "ink": "Ink", "line": "Line", "neutral": "Neutral", "chroma": "Chroma"};
+  var GROUP_BLURBS = {"ground": "The color the page sits on. Everything else is measured against it.", "surface": "Backgrounds for blocks, cards, and controls.", "ink": "Text colors. Any with an alpha are shown flattened over the ground.", "line": "Borders, rules, and outlines.", "neutral": "Greys that did not resolve to a single clear role.", "chroma": "Everything with actual hue."};
+  var GROUP_ORDER = ["ground", "surface", "ink", "line", "neutral", "chroma"];
+
+  var fmt = "hex";
+  var filter = "live";
+
+  /* Always at least one entry, so everything below has one code path whether
+     or not the site shipped a second theme. Each carries its own ground, and
+     every contrast figure in it was measured against that ground — which is
+     why switching themes redraws rather than recolours. */
+  var THEMES = doc.themes;
+  var themeIx = 0;
+
+  /* A report about two themes should open in the one the reader is set up
+     for, exactly as the site itself would. */
+  if (THEMES.length > 1 && window.matchMedia) {
+    var want = window.matchMedia("(prefers-color-scheme: dark)").matches
+      ? "dark" : "light";
+    for (var i = 0; i < THEMES.length; i++) {
+      if (THEMES[i].appearance === want) { themeIx = i; break; }
+    }
+  }
+
+  function theme() { return THEMES[themeIx]; }
+
+  function applyTheme() {
+    /* Swaps the report's own reading colors. The swatches are redrawn by
+       render(), since their values and ratios differ per theme. */
+    document.documentElement.setAttribute("data-pk-theme", theme().id);
+  }
+
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+
+  function valueFor(c) {
+    if (fmt === "declared") {
+      return c.source ? c.source.declaredAs : c.hex;
+    }
+    return c.css[fmt] || c.hex;
+  }
+
+  function visible() {
+    return theme().colors.filter(function (c) {
+      return filter === "all" ? true : c.status === "live";
+    });
+  }
+
+  /* ---------- stats ---------- */
+  var stats = document.getElementById("stats");
+  function stat(label, value) {
+    var s = el("span");
+    s.appendChild(el("b", null, String(value)));
+    s.appendChild(document.createTextNode(" " + label));
+    stats.appendChild(s);
+  }
+  function renderStats() {
+    stats.textContent = "";
+    var t = theme();
+    stat("tokens", t.colors.length);
+    stat("declarations scanned", t.stats.declarationsScanned);
+    stat("stylesheets", t.stats.stylesheets);
+    stat("distinct colors before merge", t.stats.distinctColors);
+  }
+
+  /* ---------- warnings ---------- */
+  if (doc.warnings && doc.warnings.length) {
+    var box = el("div", "warn-box");
+    box.appendChild(el("h3", null, "Read this before trusting the palette"));
+    var ul = el("ul");
+    doc.warnings.forEach(function (w) { ul.appendChild(el("li", null, w)); });
+    box.appendChild(ul);
+    document.getElementById("warnings").appendChild(box);
+  }
+
+  /* ---------- controls ---------- */
+  if (THEMES.length > 1) {
+    var themeHost = document.getElementById("theme");
+    /* Label by appearance, which is what a reader recognises. When both
+       themes land on the same side of the light/dark line the appearance is
+       no longer a distinction, so fall back to the rule that defines each —
+       two buttons both reading "dark" would be worse than no toggle. */
+    var sameLook = THEMES[0].appearance === THEMES[1].appearance;
+    THEMES.forEach(function (t, i) {
+      var b = el("button", null, sameLook ? t.id : t.appearance);
+      b.setAttribute("aria-pressed", String(i === themeIx));
+      b.addEventListener("click", function () {
+        themeIx = i;
+        themeHost.querySelectorAll("button").forEach(function (x, j) {
+          x.setAttribute("aria-pressed", String(j === themeIx));
+        });
+        applyTheme();
+        render();
+      });
+      themeHost.appendChild(b);
+    });
+    themeHost.hidden = false;
+    document.getElementById("theme-label").hidden = false;
+  }
+
+  var FORMATS = [["hex", "hex"], ["rgb", "rgb"], ["hsl", "hsl"],
+                 ["oklch", "oklch"], ["declared", "as declared"]];
+  var fmtHost = document.getElementById("fmt");
+  FORMATS.forEach(function (f) {
+    var b = el("button", null, f[1]);
+    b.setAttribute("aria-pressed", String(f[0] === fmt));
+    b.addEventListener("click", function () {
+      fmt = f[0];
+      fmtHost.querySelectorAll("button").forEach(function (x, i) {
+        x.setAttribute("aria-pressed", String(FORMATS[i][0] === fmt));
+      });
+      render();
+    });
+    fmtHost.appendChild(b);
+  });
+
+  var FILTERS = [["live", "rendered only"], ["all", "everything found"]];
+  var filtHost = document.getElementById("filter");
+  FILTERS.forEach(function (f) {
+    var b = el("button", null, f[1]);
+    b.setAttribute("aria-pressed", String(f[0] === filter));
+    b.addEventListener("click", function () {
+      filter = f[0];
+      filtHost.querySelectorAll("button").forEach(function (x, i) {
+        x.setAttribute("aria-pressed", String(FILTERS[i][0] === filter));
+      });
+      render();
+    });
+    filtHost.appendChild(b);
+  });
+
+  /* ---------- swatches ---------- */
+  function swatch(c) {
+    var btn = el("button", "sw");
+    btn.setAttribute("aria-label", "Copy " + valueFor(c) + " — " + c.name);
+    btn.title = c.usedIn.join(", ");
+
+    var chip = el("div", "chip" + (c.source ? " alpha" : ""));
+    var fill = el("div", "fill");
+    fill.style.background = c.source ? c.source.declaredAs : c.hex;
+    chip.appendChild(fill);
+
+    if (c.status !== "live") {
+      var tag = el("span", "tag " + c.status, c.status);
+      chip.appendChild(tag);
+    }
+
+    var meta = el("div", "meta");
+    meta.appendChild(el("div", "name", c.name));
+    meta.appendChild(el("div", "val mono", valueFor(c)));
+    meta.appendChild(el("div", "role", c.role + " · " + c.occurrences +
+      (c.occurrences === 1 ? " use" : " uses")));
+
+    var cr = el("div", "cr mono" + (c.contrastOnGround < 4.5 ? " warn" : ""),
+      c.contrastOnGround.toFixed(2) + ":1 · " + c.wcagOnGround);
+    meta.appendChild(cr);
+
+    btn.appendChild(chip);
+    btn.appendChild(meta);
+    btn.addEventListener("click", function () { copy(valueFor(c)); });
+    return btn;
+  }
+
+  function render() {
+    var host = document.getElementById("groups");
+    host.textContent = "";
+    var cols = visible();
+
+    var byGroup = {};
+    cols.forEach(function (c) {
+      (byGroup[c.group] = byGroup[c.group] || []).push(c);
+    });
+
+    GROUP_ORDER.forEach(function (g) {
+      var list = byGroup[g];
+      if (!list || !list.length) return;
+      var sec = el("section");
+      sec.appendChild(el("h2", null, GROUP_TITLES[g] || g));
+      sec.appendChild(el("p", "blurb", GROUP_BLURBS[g] || ""));
+      var grid = el("div", "grid");
+      list.forEach(function (c) { grid.appendChild(swatch(c)); });
+      sec.appendChild(grid);
+      host.appendChild(sec);
+    });
+
+    renderStats();
+    renderPairs(cols);
+    renderProv(cols);
+    renderReport();
+    renderFooter();
+  }
+
+  function renderPairs(cols) {
+    var host = document.getElementById("pairs");
+    host.textContent = "";
+    cols.forEach(function (c) {
+      var d = el("div", "pair");
+      /* The active theme's ground, not the document's — the ratio printed
+         beside each sample was measured against this exact background. */
+      d.style.background = theme().ground;
+      var demo = el("div", "demo", "Sample text");
+      demo.style.color = c.source ? c.source.declaredAs : c.hex;
+      var lab = el("div", "lab mono",
+        c.name + " · " + c.contrastOnGround.toFixed(2) + ":1 · " + c.wcagOnGround);
+      lab.style.color = c.source ? c.source.declaredAs : c.hex;
+      d.appendChild(demo);
+      d.appendChild(lab);
+      host.appendChild(d);
+    });
+  }
+
+  function renderProv(cols) {
+    var tb = document.querySelector("#prov tbody");
+    tb.textContent = "";
+    cols.forEach(function (c) {
+      var tr = el("tr");
+      tr.appendChild(el("td", "mono", c.name));
+      tr.appendChild(el("td", "mono", valueFor(c)));
+      tr.appendChild(el("td", "mono", String(c.score)));
+      tr.appendChild(el("td", "mono", String(c.occurrences)));
+      var ex = (c.examples || []).slice(0, 3).map(function (e) {
+        return e.selector + " { " + e.property + " }";
+      }).join("  ·  ");
+      tr.appendChild(el("td", "mono", ex));
+      tb.appendChild(tr);
+    });
+  }
+
+  /* ---------- report ---------- */
+  var rep = document.getElementById("report");
+
+  function renderReport() {
+    rep.textContent = "";
+    var t = theme();
+    var dl = el("table");
+    var tbody = el("tbody");
+    function row(k, v) {
+      var tr = el("tr");
+      tr.appendChild(el("th", null, k));
+      tr.appendChild(el("td", "mono", v));
+      tbody.appendChild(tr);
+    }
+    row("Source", doc.source || "(local files)");
+    if (THEMES.length > 1) {
+      row("Theme", t.id + " (" + t.appearance + ")" +
+          (t.scope ? " \u2014 from rules scoped to " + t.scope : " \u2014 " +
+           "from rules belonging to no theme"));
+    }
+    row("Ground", t.ground + "  (" + t.groundSource + ")");
+    row("Generated", doc.generated);
+    row("Custom properties", t.stats.customProperties + " declared, " +
+        t.stats.customPropertiesReferenced + " referenced");
+    if (doc.images) {
+      row("Images sampled", doc.images.imageCount + " (" +
+          doc.images.neutralSharePct + "% of pixels visually neutral)");
+    }
+    dl.appendChild(tbody);
+    rep.appendChild(dl);
+
+    if (t.stats.sources && t.stats.sources.length) {
+      rep.appendChild(el("p", null, "Stylesheets read:"));
+      var st = el("table");
+      var sh = el("thead");
+      var shr = el("tr");
+      ["Source", "Declarations", "Third party"].forEach(function (h) {
+        shr.appendChild(el("th", null, h));
+      });
+      sh.appendChild(shr);
+      st.appendChild(sh);
+      var stb = el("tbody");
+      t.stats.sources.forEach(function (s) {
+        var tr = el("tr");
+        tr.appendChild(el("td", "mono", s.source));
+        tr.appendChild(el("td", "mono", String(s.declarations)));
+        tr.appendChild(el("td", "mono", s.thirdParty ? "yes" : "no"));
+        stb.appendChild(tr);
+      });
+      st.appendChild(stb);
+      rep.appendChild(st);
+    }
+  }
+
+  /* ---------- footer ---------- */
+  function renderFooter() {
+    var f = document.getElementById("footer");
+    f.textContent =
+      "Ground " + theme().ground + ". Values are read from the site's " +
+      "stylesheets, not sampled from pixels. \u201csaved\u201d means a custom " +
+      "property nothing references; \u201cinert\u201d means a declaration that " +
+      "paints nothing. " +
+      (THEMES.length > 1
+        ? "The site ships two themes; each was extracted separately, so every " +
+          "ratio above is measured against that theme's own ground. "
+        : "") +
+      "Colors themselves are not copyrightable, but fonts and images on the " +
+      "source page are licensed separately.";
+  }
+
+  /* ---------- copy ---------- */
+  var toast = document.getElementById("toast");
+  var timer;
+  function copy(text) {
+    var done = function (ok) {
+      toast.textContent = ok ? "Copied " + text : text;
+      toast.classList.add("show");
+      clearTimeout(timer);
+      timer = setTimeout(function () { toast.classList.remove("show"); }, 1400);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { done(true); },
+                                               function () { done(false); });
+    } else {
+      var ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "absolute";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      var ok = false;
+      try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+      document.body.removeChild(ta);
+      done(ok);
+    }
+  }
+
+  applyTheme();
+  render();
+})();
+</script>
+</body>
+</html>

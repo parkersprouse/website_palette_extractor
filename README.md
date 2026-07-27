@@ -271,15 +271,18 @@ python3 -m palettekit your-site.har -o example && open example/index.html
 ## Tests
 
 ```bash
-python3 test_palettekit.py
+python3 -m unittest discover
 ```
 
 Run it from an environment where the dependencies are installed — `pip install
--e ".[dev]"`, or `uv run --with tinycss2 --with cssselect2 test_palettekit.py`.
-A bare system `python3` will fail at the `tinycss2` import rather than at an
-assertion.
+-e ".[dev]"`, or `uv run --with tinycss2 --with cssselect2 python -m unittest
+discover`. A bare system `python3` will fail at the `tinycss2` import rather
+than at an assertion. `pytest` also works, discovering the same `tests/`
+package (`tests/test_color.py`, `test_cssparse.py`, `test_dom.py`,
+`test_extract.py`, `test_emit.py`, `test_sources.py`, `test_packaging.py`, one
+per module in `palettekit/`).
 
-101 tests covering the color maths, cascade ordering, theme scoping, ground
+113 tests covering the color maths, cascade ordering, theme scoping, ground
 detection, the merge rules, and the status classifications. Worth running after
 any edit — several of these exist because the obvious implementation was quietly
 wrong.

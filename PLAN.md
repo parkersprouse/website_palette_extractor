@@ -715,7 +715,8 @@ Repo and process:
       identity
 - [x] **T12** — `Makefile` or `build.py` for the zipapp incantation —
       **landed 2026-07-26** as `build.py`
-- [ ] **T13** — move `test_palettekit.py` into `tests/`, split by module
+- [x] **T13** — move `test_palettekit.py` into `tests/`, split by module —
+      **landed 2026-07-27**. See T13's own write-up below
 - [ ] **T14** — fixture corpus of small committed HTML files — **unblocks
       checking every other task**; a fresh clone can currently regenerate
       nothing
@@ -1537,10 +1538,102 @@ step that is silently skippable on a development machine. **Prerequisite for
 T1's process half** — automate it and "rebuild each session" becomes one
 command that CI can verify.
 
-### T13 — Move `test_palettekit.py` into `tests/` and split by module
+### T13 — Move `test_palettekit.py` into `tests/` and split by module — landed 2026-07-27
 
-1,272 lines and fourteen `TestCase` classes in one file. Mechanical, and worth
-doing before the suite grows further.
+1,595 lines and fourteen `TestCase` classes in one file by the time this
+landed (it grew from the 1,272 this task was filed against). Mechanical, and
+worth doing before the suite grew further.
+
+**Split one file per `palettekit/` module**, mirroring the layout table at
+the top of `CLAUDE.md`:
+
+| File | Classes moved in |
+|---|---|
+| `tests/test_color.py` | `TestParsing`, `TestColorMaths`, `TestColorMix`, `TestLightDark` |
+| `tests/test_cssparse.py` | `TestCss`, `TestThemeScopes` |
+| `tests/test_dom.py` | `TestPageElement` |
+| `tests/test_extract.py` | `TestMerging`, `TestUtilityGround`, `TestCascade`, `TestThemes`, `TestChannelTriplets` |
+| `tests/test_emit.py` | `TestEndToEnd` |
+| `tests/test_sources.py` | `TestBadInput` |
+| `tests/test_packaging.py` | `TestPackaging` |
+
+No `images.py` file, since nothing tests it yet.
+
+**Not a 1:1 mapping for every class, and that's a judgment call rather than
+an oversight.** A few classes exercise more than one module through the full
+`sources.load_any → extract.extract → emit.to_document` pipeline
+(`write_fixture`), so the split went by which module's *behavior* each class
+is actually asserting, not which module its first import happens to touch.
+`TestCascade` calls `parse_stylesheet`/`layer_order` directly for some
+methods but is fundamentally testing `extract.detect_ground`'s cascade key
+(invariant 21) via `ground_of`, so it went to `test_extract.py`, not
+`test_cssparse.py`. `TestChannelTriplets` similarly went to `test_extract.py`
+because three of its five methods assert on `pal.warnings`
+(`extract._triplet_warning`), even though two of them call `find_colors`/
+`resolve_vars` directly. `TestEndToEnd` went to `test_emit.py` rather than
+`test_extract.py` because its assertions are dominated by document-shape
+checks (`schemaVersion`, JSON round-trip, standalone HTML, report-theme
+contrast) — `emit.py`'s own contract — even though it builds its fixture
+through `extract.extract`.
+
+**Shared fixtures moved to `tests/helpers.py`**: `write_fixture` and the
+four HTML constants (`FIXTURE`, `UTILITY_GROUND`, `MEDIA_THEMES`,
+`CLASS_THEMES`) that more than one of the split files needs. `tests/` is a
+real package (`tests/__init__.py`), so each file imports what it needs with
+`from .helpers import ...` rather than a `sys.path` hack.
+
+**Verified the count didn't drift, not just that everything still passes**:
+`grep -oh "    def test_[a-zA-Z0-9_]*"` against the old file and the new
+ones, sorted and diffed, came back identical — all 113 methods, none
+renamed, none dropped, before deleting the original. Names alone don't prove
+bodies survived a hand-retyped move, so followed up with a structural diff —
+`ast.unparse` on every `ClassDef` in the old file against the same class
+wherever it landed in the new package, which normalises formatting so
+re-wrapping a line doesn't read as a change. Exactly two classes differ, both
+deliberate:
+
+- `TestEndToEnd.test_html_report_is_standalone_and_valid` lost a vacuous
+  `self.assertNotIn("__", ... if False else "")` and the local `import re`
+  shadowing the module-level one above it. The assertion always checked
+  membership in the literal empty string, so it could never fail regardless
+  of `html`'s content — dead weight from some earlier debugging pass, not a
+  behavior this move needs to preserve.
+- `TestPackaging.test_pyproject_floor_matches_python_floor`'s
+  `Path(__file__).parent` became `.parent.parent` — forced by `tests/` sitting
+  one directory below the repo root now, not a discretionary edit. Breaks
+  silently (wrong path, `FileNotFoundError` before it gets there) if a later
+  reorganisation adds another directory level and this doesn't get updated
+  alongside it.
+
+Every other class's source is byte-for-byte identical to what
+`test_palettekit.py` held at `HEAD` before this task.
+
+**Both existing entry points still work, deliberately, per the
+`[tool.pytest.ini_options]` comment this task had to update rather than
+break**: `python3 -m unittest discover` (`tests/__init__.py` makes discovery
+find the package without an explicit `-t`) and `pytest` (`testpaths` in
+`pyproject.toml` moved from `["."]` to `["tests"]`). Both were run and both
+reported 113 passed. The stdlib path matters on its own: it's what keeps the
+suite runnable with no install beyond the two runtime dependencies, per
+`README.md`'s Tests section — reverified across the full floor matrix,
+3.11 through 3.14, via `uv run --no-project` with only `tinycss2`/
+`cssselect2` supplied.
+
+**Two other places quietly hardcoded the old single-file name and needed
+updating alongside it**: `pyproject.toml`'s `[tool.ruff.lint.per-file-ignores]`
+(`"test_palettekit.py"` → `"tests/*.py"`, the long color-literal/selector
+`E501` exemption) and `[tool.hatch.build.targets.sdist]`'s `include` list
+(`"/test_palettekit.py"` → `"/tests"`). Confirmed with `pyproject-build
+--sdist` (not `python -m build` — a repo-root `build.py` shadows the
+installed `build` package under `-m` because `-m` prepends the cwd to
+`sys.path`, a pre-existing quirk this task didn't introduce and isn't in
+scope to fix) that the sdist tarball now ships the whole `tests/` package
+rather than one file.
+
+`README.md`'s Tests section and `CLAUDE.md`'s Commands block and floor-matrix
+loop were updated to the new invocation and the current test count (101 →
+113, grown across T5 through T15 since the count in `CLAUDE.md` was last
+touched).
 
 ### T14 — Fixture corpus of small HTML files per site archetype
 

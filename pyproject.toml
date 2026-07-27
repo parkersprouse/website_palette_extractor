@@ -89,7 +89,7 @@ include = [
   "/LICENSE.md",
   "/README.md",
   "/palettekit",
-  "/test_palettekit.py",
+  "/tests",
 ]
 
 [tool.ruff]
@@ -121,11 +121,13 @@ ignore = [
 # The report template is one long HTML string; wrapping it would corrupt output.
 "palettekit/emit.py" = ["E501"]
 # Tests assert on long literal color values and selectors.
-"test_palettekit.py" = ["E501"]
+"tests/*.py" = ["E501"]
 
 [tool.pytest.ini_options]
 # The suite is unittest-based; pytest discovers those classes natively, so both
-# `python3 test_palettekit.py` and `pytest` work. Keep it that way — the plain
-# stdlib invocation is what makes the tests runnable with no install at all.
-testpaths = ["."]
+# `python3 -m unittest discover` and `pytest` work. Keep it that way — the
+# plain stdlib invocation is what makes the tests runnable with no install at
+# all. tests/ is a package (has __init__.py) so both runners import modules as
+# `tests.test_x`, which is what makes `from .helpers import ...` resolve.
+testpaths = ["tests"]
 python_files = ["test_*.py"]

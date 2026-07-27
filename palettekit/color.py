@@ -740,10 +740,13 @@ def balanced_end(text: str, start: int) -> int:
     Quotes and escapes are honoured because a function argument can hold either
     — `url("a)b")` closes nothing.
 
-    Public within the package because `cssparse.resolve_vars` needs the same
-    answer for `var(--x, <fallback with parens>)`. One scanner, not two: a
-    second copy would drift from this one, and the whole reason it exists is
-    that the parenthesis-counting a regex can do is not enough.
+    Used by `_split_component` and `_whole_value_spans` below, both of which
+    need character offsets into the original string rather than a token list.
+    `cssparse.resolve_vars` used to need this too, for the same reason —
+    finding `var(--x, <fallback with parens>)`'s closing paren by hand — until
+    T16 (`PLAN.md`) replaced that whole call with a structural read of
+    `tinycss2`'s own already-parsed `var()` arguments, which needs no
+    character-offset scanner at all.
     """
     depth, quote, i = 0, "", start
     while i < len(text):

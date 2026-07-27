@@ -769,10 +769,12 @@ Repo and process:
       question — filed as T16 and T17 rather than left as unfiled findings.**
       Not touched: `dom.py`'s `html.parser` tree shim versus `lxml` — see its
       own note below, unchanged from the original scope of this task
-- [ ] **T16** — rewrite `resolve_vars`'s `var()` substitution on `tinycss2`
+- [x] **T16** — rewrite `resolve_vars`'s `var()` substitution on `tinycss2`
       tokens instead of text, replacing the `_GLUE_LEFT`/`_GLUE_RIGHT`
       glue-padding heuristic with `tinycss2.serialize()`'s own adjacency
-      rules — **owner-authorized 2026-07-26 as tracked work, not yet started**
+      rules — **landed 2026-07-27**; see T16's own write-up below for the
+      `/**/`-vs-comment-blind-scanner hazard it found and the measured
+      corpus/perf blast radius
 - [ ] **T17** — rewrite `COLOR_TOKEN` on `tinycss2` tokens (a `FunctionBlock`'s
       `.lower_name` identifying `rgb()`/`hsl()`/`oklch()`/etc. instead of a
       name regex plus a hand-bounded nesting allowance) to fill its known
@@ -1520,7 +1522,7 @@ model re-examined, not just a code change. Needs the owner's explicit
 sign-off the same way the original `tinycss2`/`cssselect2` migration did.
 **Kept as a note for now, per the owner (2026-07-26) — not filed as a task.**
 
-### T16 — Rewrite `resolve_vars`'s `var()` substitution on tokens, not text
+### T16 — Rewrite `resolve_vars`'s `var()` substitution on tokens, not text — landed 2026-07-27
 
 `resolve_vars` substitutes *text*: it finds a `var(` call in a plain string
 (`_var_call`, delimited by `color.balanced_end`), decides its replacement, and
@@ -1578,6 +1580,123 @@ solving a problem (token adjacency) that is currently solved by hand, worse.
 `(sheet_order, order, selector, prop) → value` shape phase 4 used, since this
 is squarely var()-resolution territory and the palette folds too much to show
 a spacing regression.
+
+**Landed.** `_var_call`, `_VAR_NAME`, and `_GLUE_LEFT`/`_GLUE_RIGHT` are gone.
+`resolve_vars` now tokenizes `value` once with
+`tinycss2.parse_component_value_list`, walks it (`_substitute_vars`) for
+`FunctionBlock` nodes named `var`, and replaces each one in place with the
+*tokens* of its resolved value — read off the `var()` call's own already-parsed
+`.arguments` (`_var_name_and_fallback`) rather than re-derived by counting
+parens — before re-serializing the whole list with `tinycss2.serialize()` at
+the end. `_var_ref_names` (T15) already walked a token tree this same shape
+for a different purpose and was the template.
+
+**A real hazard turned up in exactly the place the proposal above predicted —
+token adjacency — but not the one predicted.** `tinycss2.serialize()`
+disambiguates an unsafe adjacency by inserting `/**/`, which is what the
+proposal wanted in place of `_GLUE_LEFT`/`_GLUE_RIGHT`. It is correct CSS and
+`tinycss2` itself reads it back losslessly — but this codebase's own
+downstream color scanners (`color._split_component`, `_split_top`,
+`COLOR_TOKEN`) are regex-based and do not treat a `comment` token as
+insignificant the way they treat whitespace. Left alone,
+`color-mix(in oklab,var(--white)var(--alpha),transparent)` resolves to
+`#fff/**/100%`, and `_split_component` reads the color half as `#fff/**/` —
+which `parse_color` cannot parse — silently *losing* the color rather than
+reading it correctly. Caught before it shipped by running
+`test_var_substitution_does_not_glue_two_tokens_into_one` against a version of
+the new code with the fix below removed, per the "a test that passes before
+and after tests nothing" discipline: it failed, `[] != ['#ffffffff']`, proving
+the test discriminates and the fix is load-bearing.
+
+**The fix is `tinycss2.serialize(resolved).replace("/**/", " ")`, and it is
+safe as a blind string replace, not merely convenient.** No declaration value
+this project ever holds can contain a real CSS comment in the first place —
+`tinycss2.parse_stylesheet`/`parse_blocks_contents` are both called with
+`skip_comments=True` everywhere in `cssparse.py` — so the only `/**/` that can
+ever appear in `value` or in any table-stored value is one this exact
+replacement already turned into a space one recursion level down. Inductive
+over recursion depth, not merely true for the corpus.
+
+**The retry loop is gone, measured rather than assumed.** The text-based
+version called `one_pass` up to four times because a text splice cannot tell
+its own output from the text sitting next to it. The token-based version
+fully resolves each `var()`'s replacement before splicing it in
+(`_resolve_var`'s own recursive call), so nothing spliced ever needs finding
+again. Before deleting the loop, the old implementation was instrumented to
+count how often a *second* substitution round ever changed anything, run
+against all four frozen corpus bundles (`tailwindcss.com`, `ui.shadcn.com`,
+`ground.news.har`, `fleshandbonedesign.com.har`): **zero** declarations,
+corpus-wide, ever needed a second round. Every retry was pure
+convergence-checking overhead.
+
+**One other structural difference from the old text scan, predicted before
+running the diff rather than explained after:** a `var(` sitting inside a
+`url(...)` or a quoted string is a single leaf token here (`URLToken`/
+`StringToken`), so it is correctly invisible to the walk — a browser would
+never treat it as a custom-property reference either, and the old substring
+scan could not tell the two cases apart. Grepped for first: zero declarations
+in the four frozen bundles mix `var(` and `url(` in the same value, so the
+prediction was "no movement from this," and the corpus diff confirmed it.
+
+**Corpus diff, at the level this section specifies:** 19,802 `(theme, sheet,
+order, selector, prop)` keys total across the four bundles; the candidate set
+itself is unchanged (same keys, old and new, on every site). 371 of them
+differ as strings, **all four sites' full palette JSON (minus `generated`) is
+byte-identical old vs new**, and `find_colors()` run over every differing pair
+returns identical results on every one — the 371 are whitespace-only, in the
+direction `_GLUE_LEFT`/`_GLUE_RIGHT`'s conservative padding predicts: the old
+code padded a real separator character with its *own* extra space (`3px
+#dadbd6` → `3px  #dadbd6`, double space) and padded some boundaries
+(`dimension` before `hash`, `*` on either side in `calc()`) that CSS does not
+require a separator for at all. `fleshandbonedesign.com.har` — the reference
+fixture's source — has zero differences; ground `#151515`, 20 tokens, one
+theme, no warnings, reproduced exactly with `--images`.
+
+**Benchmark, as this section's own "hot path" note required.** In-process,
+best-of-5 over all four bundles: old 2.709s, new 3.098s — **+14.4%**, worse
+than phase 3's measured 4–7% as predicted, because this sits on a hotter path.
+Profiling found the first version cost +18.9%: `_resolve_var`'s stored-value
+branch was tokenizing `stored`, substituting, re-serializing to a string via a
+call to `resolve_vars` itself, and then **re-tokenizing that string a second
+time** to get splice-ready tokens back — a wasted round trip discovered by
+`cProfile`, not anticipated in the original design. Fixed by tokenizing
+`stored` once and walking it directly (`_resolve_var`, the `"var(" not in
+stored` fast path added alongside it), which recovered about a third of the
+regression. A further lever exists — the same profiling run found 77,776
+tokenize calls covering only 2,238 distinct strings, so a cache scoped to one
+`table`'s lifetime would remove most of the remaining duplication — but
+sharing parsed token *nodes* across call sites is only safe because nothing
+mutates a node after it has been spliced in once; scoping that cache correctly
+(a table can outlive any single `resolve_vars` call, and `id(table)` reuse
+after garbage collection is a real hazard in a long-running process such as
+the test suite) is a second, separable piece of work, not exercised or landed
+here. Left as a known lever rather than taken, matching the priority order at
+the top of `CLAUDE.md`: accuracy first, and a disclosed, corpus-verified 14%
+on a path that was never the dominant cost in a single-site run is the
+honest trade against retiring a hand-rolled heuristic and closing two real
+gaps (the `/**/` hazard above, and `url()`/string leakage) rather than a
+regression to silently engineer away with cross-call caching risk.
+
+**The malformed-`var()` and circular-chain edge cases were checked directly,
+not just left to corpus silence** (neither shape occurs in the four frozen
+bundles): `resolve_vars('var(10px, var(--a))', {'--a': '#123'})` still
+resolves the nested `var(--a)` while leaving the malformed outer call
+untouched (`'var(10px, #123)'`), and a three-property circular chain
+(`--a`→`--b`→`--c`→`--a`) terminates and returns the same partial text old
+code did (`'var(--a)'`/`'var(--c)'` depending on entry point) rather than
+hanging. Both match the old implementation byte-for-byte, confirmed by
+running the same three calls against the stashed pre-T16 `cssparse.py`.
+
+**One dead regex found in passing:** `_VAR_NAME = re.compile(r"\s*(--[\w-]+)\s*")`
+was `_var_call`'s own anchor pattern — the second, shadowing `_VAR_NAME` T15
+had already tracked down and fixed the aliasing bug for, still left defined at
+module scope. With `_var_call` gone, nothing referenced it; removed rather than
+left orphaned.
+
+**Verification:** 103 tests pass (unchanged count — T16 touched no test file),
+`ruff` clean, 3.11–3.14 matrix green, module/console-script/zipapp JSON
+parity confirmed, `palettekit.pyz` rebuilt via `build.py` and verified on
+`uv run --python 3.11 --no-project` with neither dependency installed.
 
 ### T17 — Rewrite `COLOR_TOKEN` on `tinycss2` tokens
 

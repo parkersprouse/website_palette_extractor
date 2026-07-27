@@ -709,66 +709,106 @@ because the obvious implementation produced plausible but wrong output.
     only corpus site using the function at all. Reading `color-scheme` is the
     fix if a counter-example turns up; it has not.
 
-24. **`resolve_vars` pads a substitution that would abut its neighbour**
-    (`_GLUE_LEFT`/`_GLUE_RIGHT`). CSS substitutes *tokens*; this substitutes
-    *text*, and the difference manufactures colors. Tailwind v4 minifies to
+24. **`resolve_vars` substitutes tokens, not spliced text, so no separator has
+    to be guessed by hand.** CSS substitutes *tokens*; a text splice has to
+    guess whether two adjacent values need a separator, and guessing wrong
+    manufactures colors. Tailwind v4 minifies to
 
     ```css
     color-mix(in oklab,var(--color-white)var(--tw-shadow-alpha),transparent)
     ```
 
-    — two component values needing no separator. Pasted together they give
-    `#fff100%`, which the color scanner read as the hex `#fff100`: a bright
-    yellow, 18 occurrences on ground.news, painted nowhere on it. Two correct
-    values and one missing space invent a whole color. Padded, it reads as
-    white at 100%, which is what the page paints.
+    — two component values needing no separator. Pasted together as text they
+    give `#fff100%`, which the color scanner read as the hex `#fff100`: a
+    bright yellow, 18 occurrences on ground.news, painted nowhere on it. Two
+    correct values and one missing space invent a whole color.
 
-    This is the same hazard `tinycss2`'s serializer guards with `/**/` —
-    `:nth-child(3n/**/+1)`, above — arriving at the one place the library is
-    not doing the writing. Found by phase 4's declaration-level diff, as a
-    *removal*: the new parser could not read `#fff100%` either, and would have
-    reported nothing where it should report white. Test:
-    `test_var_substitution_does_not_glue_two_tokens_into_one`.
+    **Originally fixed (phase 4) with a hand-derived padding heuristic,
+    `_GLUE_LEFT`/`_GLUE_RIGHT`** — a character-class check of what may abut
+    what, run against the surrounding text before splicing. **T16 (2026-07-27)
+    replaced the whole text-splice design**: `resolve_vars` now tokenizes
+    `value` once with `tinycss2.parse_component_value_list`, walks it for
+    `var()` `FunctionBlock`s (`cssparse._substitute_vars`), and splices each
+    one's resolved value in as *tokens*, before re-serializing the whole list
+    with `tinycss2.serialize()` — the library's own adjacency rule (the same
+    one that inserts `/**/` to stop `:nth-child(3n+1)` from re-merging into
+    `:nth-child(3n)`, above) decides spacing instead of a hand-derived
+    character-class check.
 
-25. **A `var()` call is delimited by counting parentheses, because a fallback
-    is a whole value** (`_var_call`, using `color.balanced_end`). The
-    non-greedy regex this replaced stopped at the first `)`, which is the wrong
-    one the moment the fallback contains a function of its own:
+    **That rule disambiguates with a `/**/`, and it is turned into a plain
+    space before the result leaves `resolve_vars`.** A comment is the
+    textually-correct fix and `tinycss2` itself reads it back losslessly, but
+    it is not invisible to this codebase's own regex-based color scanners
+    downstream (`color.COLOR_TOKEN`, `_split_component`, `_split_top`) — none
+    of them treat a `comment` token as insignificant the way they treat
+    whitespace. Left as `/**/`,
+    `color-mix(in oklab,var(--white)var(--alpha),transparent)` resolves to
+    `#fff/**/100%`, and `_split_component` reads the color half as `#fff/**/`
+    — which `parse_color` cannot parse — silently losing the color instead of
+    reading it. **This is safe as a blind string replace, not merely
+    convenient**: no declaration value this project ever holds can contain a
+    real comment in the first place — `tinycss2.parse_stylesheet`/
+    `parse_blocks_contents` are both called with `skip_comments=True`
+    throughout `cssparse.py` — so the only `/**/` that can ever appear in
+    `value` or in a table-stored value is one this same replacement already
+    turned into a space one recursion level down. Test:
+    `test_var_substitution_does_not_glue_two_tokens_into_one`, which fails
+    without the replacement — checked directly, per the "a test that passes
+    before and after tests nothing" discipline below.
+
+25. **A `var()` call's fallback is read off its own already-parsed
+    `.arguments`, because a fallback is a whole value.** A fallback can hold
+    functions of its own:
 
     ```css
     background-image: var(--shimmer-image, linear-gradient(…, color-mix(…) …))
     ```
 
-    — ui.shadcn.com, cut at the `)` closing `calc(`, leaving a truncated call
-    and the rest of the declaration behind as an orphaned tail.
-
-    **The damage was not mainly the garbage; it was the orphan resolving
-    too.** When the name *is* defined, the fallback is discarded and all the
-    regex leaves behind is a stray `)` — invisible in a hex set. But the tail
-    it cut loose was substituted on the next pass, so **every color in a
-    discarded fallback was counted a second time**: 204 declarations across
-    ground.news, tailwindcss.com and ui.shadcn.com, most of them Tailwind's
-    `--tw-gradient-stops: var(--tw-gradient-via-stops, <the same stops>)`.
-    Right colors, doubled weight.
+    — ui.shadcn.com. **Originally fixed (phase 4) by delimiting the call with
+    `_var_call`, counting parentheses via `color.balanced_end`** rather than
+    stopping at the first `)` the way a non-greedy regex had — that regex used
+    to cut this shape at the `)` closing `calc(`, leaving a truncated call and
+    the rest of the declaration behind as an orphaned tail that then resolved
+    a second time, doubling the weight of every color in a discarded fallback:
+    204 declarations across ground.news, tailwindcss.com and ui.shadcn.com,
+    most of them Tailwind's `--tw-gradient-stops: var(--tw-gradient-via-stops,
+    <the same stops>)`.
 
     That is why this had to be diffed at the per-declaration color list and not
     at the palette: **every hex set, ground and warning on all eight corpus
-    sites is identical before and after.** What moved was occurrence counts,
-    and through them the ranking that names tokens — on ui.shadcn.com
-    `#378add` goes from `blue-7` to `blue-14` and `#303030` moves from the grey
-    group to surface. A palette-level check would have called this a no-op and
-    a hex-set check would have agreed with it. Tests:
+    sites is identical before and after** that phase-4 fix. What moved was
+    occurrence counts, and through them the ranking that names tokens — on
+    ui.shadcn.com `#378add` goes from `blue-7` to `blue-14` and `#303030`
+    moves from the grey group to surface. A palette-level check would have
+    called this a no-op and a hex-set check would have agreed with it. Tests:
     `test_a_var_fallback_may_contain_parentheses`,
     `test_a_discarded_fallback_does_not_come_back_as_a_second_copy`.
 
-    **One scanner, not two**: `_balanced_end` was renamed `balanced_end` and is
-    imported rather than copied. It already honours quotes and escapes, which
-    is the whole reason a regex cannot do this job.
+    **T16 (2026-07-27) replaced `_var_call`/`balanced_end`-counting with the
+    structural version of the same guarantee.** `tinycss2` already groups a
+    fallback's own nested functions and parens into single nodes inside the
+    `var()` call's `.arguments`, so the first top-level comma is just a
+    `LiteralToken` sitting directly in that flat list
+    (`cssparse._var_name_and_fallback`) — no parenthesis-counting scanner is
+    needed to find it. The discard-fallback behavior falls out for the same
+    structural reason: a resolved name's replacement tokens are spliced in
+    place of the whole `FunctionBlock`, fallback included, so there is no
+    orphaned tail left over to be found and resolved a second time — the class
+    of bug this invariant exists for cannot occur by construction, not merely
+    by a scanner finding the right boundary. Both tests above continued to
+    pass through the rewrite, though neither discriminates it: they were
+    already passing against the phase-4 `_var_call` implementation this
+    replaced, so their value here is regression coverage, not proof the new
+    code is right — see the corpus-diff and the string-splice hazard invariant
+    24 documents above for what actually exercised T16 itself. Kept rather
+    than dropped: they still guard the next rewrite of this area, which is not
+    hypothetical — T17 below touches the color scanners these same fallback
+    shapes flow into.
 
-    The removals this diff surfaced — 124 of them — are *not* this bug. One of
-    them, `initial` read as a plain value, is now invariant 26 below. The
-    other — a property resolved from a rule the consuming element never
-    matched — is still written up under "Known limits".
+    The removals the original phase-4 diff surfaced — 124 of them — were *not*
+    this bug. One of them, `initial` read as a plain value, is invariant 26
+    below. The other — a property resolved from a rule the consuming element
+    never matched — is still written up under "Known limits".
 
 26. **A custom property whose stored value is the literal keyword `initial`
     is treated as absent, not substituted as text** (`resolve_vars`). On a

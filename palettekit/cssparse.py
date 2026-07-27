@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 
 import tinycss2
 
-from .color import Color, balanced_end, find_colors
+from .color import Color, find_colors
 
 # Properties whose values carry color, mapped to the role the color plays.
 PROPERTY_ROLE = {
@@ -590,45 +590,116 @@ def _record(sheet: Stylesheet, node, value: str, selector: str, source: str,
     )
 
 
-_VAR_NAME = re.compile(r"\s*(--[\w-]+)\s*")
+def _var_name_and_fallback(
+    arguments: list,
+) -> tuple[str, list] | None:
+    """A `var()` call's own arguments, split into its name and its fallback.
 
-
-_GLUE_LEFT = "(,/ \t\n"
-_GLUE_RIGHT = "),/; \t\n"
-
-
-def _var_call(text: str, i: int) -> tuple[int, str, str | None] | None:
-    """Read the `var(` starting at `i`: `(end, name, fallback or None)`.
-
-    `end` is the index just past the closing `)`, found by counting parens
-    rather than by stopping at the first one — **a fallback is a whole value
-    and may contain parentheses of its own.** ui.shadcn.com writes
+    `arguments` is already `tinycss2`'s flat top-level list for what sat
+    between the parens — a fallback's own nested functions and parens are
+    single nodes in it, not raw text, so **the first top-level comma is just
+    a `LiteralToken` sitting directly in this list**: no parenthesis-counting
+    scanner is needed here the way `color.balanced_end` was needed to find
+    the closing paren by hand in the string this replaced. ui.shadcn.com's
 
     ```css
     background-image: var(--shimmer-image, linear-gradient(…, color-mix(…) …))
     ```
 
-    and a non-greedy regex cut that at the `)` closing `calc(`, leaving both a
-    truncated fallback and an orphaned tail of the declaration. Whatever colors
-    fell out of the two halves were noise.
+    is why that mattered at all — a non-greedy regex used to stop at the `)`
+    closing `calc(`, leaving a truncated fallback and an orphaned tail of the
+    declaration. Structurally, that class of mistake cannot happen here.
 
-    `None` when the call cannot be read as one — an unterminated `var(`, or a
-    body that is not a custom-property name optionally followed by `,` and a
-    fallback. The caller leaves such text exactly as it stands, which is what
-    the regex did by failing to match.
+    `None` when the shape isn't a custom-property name optionally followed by
+    `,` and a fallback — an empty call, a first argument that isn't a bare
+    ident, or one not spelled `--…`. The caller leaves such a call exactly as
+    written, which is what a regex miss used to do.
     """
-    end = balanced_end(text, i + 3)
-    if end < 0:
+    name_tokens, fallback, comma_seen = [], None, False
+    for i, t in enumerate(arguments):
+        if not comma_seen and t.type == "literal" and t.value == ",":
+            fallback = arguments[i + 1:]
+            while fallback and fallback[0].type == "whitespace":
+                fallback = fallback[1:]
+            while fallback and fallback[-1].type == "whitespace":
+                fallback = fallback[:-1]
+            comma_seen = True
+            break
+        name_tokens.append(t)
+    name_tokens = [t for t in name_tokens if t.type != "whitespace"]
+    if len(name_tokens) != 1 or name_tokens[0].type != "ident":
         return None
-    m = _VAR_NAME.match(text, i + 4, end - 1)
-    if not m:
+    name = name_tokens[0].value
+    if not name.startswith("--"):
         return None
-    rest = text[m.end():end - 1]
-    if not rest:
-        return (end, m.group(1), None)
-    if rest[0] != ",":
+    return name, fallback
+
+
+def _resolve_var(node, table: dict[str, str], depth: int) -> list | None:
+    """The tokens a `var()` `FunctionBlock` resolves to, or `None` to keep it.
+
+    `None` covers two different reasons, both left as "keep the call as
+    written" by the caller: the call isn't shaped like a custom-property
+    reference (`_var_name_and_fallback` above), or `depth` has already given
+    up on a chain that is circular or simply too deep — see `resolve_vars`.
+
+    **A stored value of the literal keyword `initial` is treated as absent,
+    not substituted as text.** `initial` on a custom property is the
+    guaranteed-invalid value — a browser resolving `var(name, fallback)`
+    against it uses the fallback, it does not paste in the four letters
+    `initial`. Tailwind v4 guards every registered property this way for
+    browsers with no `@property`: `--tw-gradient-via-stops: initial;`.
+    Reading it as an ordinary stored value dropped 108 declarations of color
+    on tailwindcss.com's dark theme (invariant 26).
+    """
+    if depth > 8:
         return None
-    return (end, m.group(1), rest[1:].strip())
+    split = _var_name_and_fallback(node.arguments)
+    if split is None:
+        return None
+    name, fallback = split
+    stored = table.get(name)
+    if stored is not None and stored.strip().lower() != "initial":
+        stored_tokens = tinycss2.parse_component_value_list(stored)
+        if "var(" not in stored:
+            return stored_tokens
+        return _substitute_vars(stored_tokens, table, depth + 1)
+    if fallback:
+        return _substitute_vars(fallback, table, depth + 1)
+    return []
+
+
+def _substitute_vars(nodes: list, table: dict[str, str], depth: int) -> list:
+    """Every `var()` in `nodes`, replaced by its resolved tokens, recursively.
+
+    A `var()` is unambiguous by function name regardless of what it sits
+    inside, so recursing into every function/block's contents finds one
+    nested arbitrarily deep — including inside another `var()`'s own
+    fallback — the same shape `_var_ref_names` already walks the tree for.
+    One consequence of walking tokens rather than scanning text: a `var(`
+    that is actually inside a `url(...)` or a quoted string is a single leaf
+    token here (`URLToken`/`StringToken`), so it is correctly invisible to
+    this walk the way a browser would see it — not found by accident the way
+    a bare substring scan could not tell the two cases apart. Not observed on
+    the corpus (no declaration mixes `var(` and `url(` in the same value),
+    but it is the honest reading of the grammar either way.
+    """
+    out = []
+    for node in nodes:
+        if node.type == "function":
+            if node.lower_name == "var":
+                resolved = _resolve_var(node, table, depth)
+                if resolved is not None:
+                    out.extend(resolved)
+                    continue
+            node.arguments = _substitute_vars(node.arguments, table, depth)
+            out.append(node)
+        elif node.type in ("() block", "[] block", "{} block"):
+            node.content = _substitute_vars(node.content, table, depth)
+            out.append(node)
+        else:
+            out.append(node)
+    return out
 
 
 def resolve_vars(value: str, table: dict[str, str], depth: int = 0) -> str:
@@ -637,89 +708,52 @@ def resolve_vars(value: str, table: dict[str, str], depth: int = 0) -> str:
     Falls back to the declared default when a name is unknown, and gives up
     after a few levels so a circular definition cannot hang the run.
 
-    **A name whose stored value is the literal keyword `initial` also falls
-    back to the default**, because `initial` on a custom property is the
-    guaranteed-invalid value — a browser resolving `var(name, fallback)` uses
-    the fallback, it does not substitute the text `initial`. Tailwind v4
-    guards every registered property this way for browsers with no
-    `@property`: `@layer properties { *, ::before, ::after, ::backdrop {
-    --tw-gradient-via-stops: initial; … } }`. Treating `initial` as an
-    ordinary stored value — which the browser cannot do either — used to
-    resolve `var(--tw-gradient-via-stops, <the real stops>)` to the inert text
-    `initial` and find no color in it: 108 declarations on tailwindcss.com's
-    dark theme, dropping `violet` from 137 occurrences to 29 and `teal` from
-    130 to 22.
+    **Tokenized once with `tinycss2`, not scanned as text** — a `var()` call
+    is found as a `FunctionBlock` (`_substitute_vars`), its name and fallback
+    are read from its own already-parsed `.arguments`
+    (`_var_name_and_fallback`), and a resolved replacement is spliced in as
+    *tokens*, not spliced text. That is what retires the hand-derived
+    `_GLUE_LEFT`/`_GLUE_RIGHT` padding invariant 24 used to need: CSS
+    substitutes tokens, and a token list re-serialized by `tinycss2.serialize`
+    is exactly that, using the library's own adjacency-aware rule — the same
+    one that stops `:nth-child(3n+1)` from re-merging into `:nth-child(3n)`
+    — instead of a hand-derived character-class check of what may abut what.
 
-    **Each call is delimited by counting parentheses, not by a regex** — see
-    `_var_call`. The non-greedy regex this replaced stopped at the first `)`,
-    which is the wrong one whenever the fallback contains a function; the fix
-    is `color.balanced_end`, the same scanner `color-mix()` is read with.
+    **That rule disambiguates with a `/**/`, which is then turned into a
+    plain space.** A comment is the textually-correct fix and is also
+    invisible to `tinycss2` itself on the next parse, but it is not invisible
+    to this codebase's own regex-based color scanners downstream
+    (`color.COLOR_TOKEN`, `_split_component`, `_split_top`) — none of them
+    treat a `comment` token as insignificant the way whitespace is. Left as
+    `/**/`, `color-mix(in oklab,var(--white)var(--alpha),transparent)`
+    resolves to `#fff/**/100%`, and `_split_component` reads that as the
+    color text `#fff/**/` — which `parse_color` cannot parse — silently
+    losing the color rather than reading it correctly. **This is safe as a
+    blind string replace, not merely convenient**: no stylesheet declaration
+    this project reads can contain a real comment in the first place —
+    `tinycss2.parse_stylesheet`/`parse_blocks_contents` are both called with
+    `skip_comments=True` throughout `cssparse.py` — so the only `/**/` that
+    can ever appear in `value` or in any stored table value is one this same
+    replacement already turned to a space one recursion level down. Verified
+    corpus-wide: `test_var_substitution_does_not_glue_two_tokens_into_one`
+    fails without this line.
 
-    **A substitution that would abut its neighbour is padded with a space**,
-    because CSS substitutes *tokens* and this substitutes *text*. Tailwind v4
-    minifies its opacity utilities to
-    `color-mix(in oklab,var(--color-white)var(--tw-shadow-alpha),transparent)`;
-    those are two component values with no separator needed, and pasting them
-    together yields `#fff100%` — which the color scanner then read as the hex
-    `#fff100`, a bright yellow appearing 18 times on ground.news and painted
-    nowhere. A whole invented color, from two correct values and one missing
-    space. The padded form reads as white at 100%, which is what the page
-    paints.
-
-    This is the same hazard `tinycss2`'s serializer guards with `/**/` — see
-    CLAUDE.md's note on `:nth-child(3n/**/+1)` — arriving at the one place the
-    library is not doing the writing.
+    **One structural pass, not a retry loop.** Each `var()`'s replacement is
+    fully resolved before it is spliced in (`_resolve_var`'s own recursive
+    call), so nothing produced by a substitution needs to be found again by
+    rescanning the result — unlike a text splice, which cannot tell a
+    substitution's own output from the text it landed next to. An earlier,
+    text-based version of this function called `one_pass` up to four times to
+    cover that case defensively; instrumented against all four frozen corpus
+    bundles (`tailwindcss.com`, `ui.shadcn.com`, `ground.news`,
+    `fleshandbonedesign.com`), the second pass never once changed a second
+    pass's input — every retry was pure convergence-checking overhead.
     """
     if depth > 8 or "var(" not in value:
         return value
-
-    def one_pass(text: str) -> str:
-        """Every `var()` in `text`, replaced left to right.
-
-        Padding is decided against `text` — the input to this pass — and a
-        replacement is never rescanned, so one pass sees exactly the calls that
-        were written. That was `re.sub`'s behaviour and the padding depends on
-        it: the neighbour a substitution must not be glued to is the one in the
-        source, not one another substitution just put there.
-        """
-        parts, copied, i = [], 0, 0
-        while True:
-            i = text.find("var(", i)
-            if i < 0:
-                break
-            call = _var_call(text, i)
-            if call is None:
-                i += 4  # unreadable; leave it as written and carry on
-                continue
-            end, name, default = call
-            stored = table.get(name)
-            if stored is not None and stored.strip().lower() != "initial":
-                out = resolve_vars(stored, table, depth + 1)
-            elif default:
-                out = resolve_vars(default, table, depth + 1)
-            else:
-                out = ""
-            if out:
-                before = text[i - 1] if i else ""
-                after = text[end:end + 1]
-                if before and before not in _GLUE_LEFT and not out[0].isspace():
-                    out = " " + out
-                if after and after not in _GLUE_RIGHT and not out[-1].isspace():
-                    out = out + " "
-            parts.append(text[copied:i])
-            parts.append(out)
-            copied = i = end
-        parts.append(text[copied:])
-        return "".join(parts)
-
-    prev = None
-    out = value
-    for _ in range(4):
-        prev = out
-        out = one_pass(out)
-        if out == prev:
-            break
-    return out
+    tokens = tinycss2.parse_component_value_list(value)
+    resolved = _substitute_vars(tokens, table, depth)
+    return tinycss2.serialize(resolved).replace("/**/", " ")
 
 
 _ZERO_LEN = re.compile(r"^0(?:[a-z%]+)?$", re.I)

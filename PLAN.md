@@ -701,7 +701,11 @@ Accuracy gaps left by phases 1–4:
 - [x] **T8** — `@import url(…) layer(x)` should register a layer.
       **Landed 2026-07-27** — reserves the position only, per the plan's own
       "consider doing only that." See T8's own write-up below
-- [ ] **T9** — model scoped custom properties (`@property`, inheritance)
+- [ ] **T9** — model scoped custom properties (`@property`, inheritance) —
+      **investigated 2026-07-27, blocked on an owner decision**: the fidelity
+      it needs (a real DOM below `<body>`, or per-element computed style)
+      doesn't exist yet. See T9's own write-up below before attempting this
+      again
 - [ ] **T10** — read `color-scheme` to confirm a `light-dark()` site is really
       two-themed — **waiting on a counter-example; do not do this yet**
 
@@ -1352,6 +1356,11 @@ clean, 3.11–3.14 all pass.
 
 ### T9 — Model scoped custom properties
 
+> **Investigated 2026-07-27, not implemented — blocked on an owner decision.**
+> The scope this task assumed turns out not to exist at the fidelity the tool
+> can currently reach. What follows is the finding, not a restatement of the
+> caution already in this task's own opening paragraph below.
+
 A property redefined on `.card` resolves globally here. `@property` and normal
 inheritance down the tree are both unmodelled.
 
@@ -1363,9 +1372,96 @@ consume it, not computing anyone's styles.
 It is also the second half of T4's trap — ui.shadcn.com's `--shimmer-image`
 resolves to `none` from a utility the shimmering element does not carry.
 
-**Diff level:** custom-property resolution table, old winner against new with
-the cascade key's terms printed beside them — phase 3's level, which is the
-only one that showed its twelve moves.
+**What was designed.** A same-element compatibility filter over
+`build_var_table`'s existing off-page population (invariant 19): for a given
+consuming declaration, keep an off-page custom-property definition as a
+candidate only if that definition's own selector could plausibly land on the
+*same* element the consumer's selector styles. Tested with `cssselect2` — the
+same library `dom.matches_page_element` already uses — by compiling the
+candidate's selector and testing it against a synthetic element built from the
+consumer's own literal classes/id/tag (closed-world: exactly what is written,
+nothing assumed beyond it), permissive about any ancestor combinator a
+*candidate* itself writes (assumed satisfiable, since this tool has no real
+DOM below `<body>` to confirm one either way — the same "unknown is not the
+same as absent" reasoning `page_elements` already uses for its own `None`
+case).
+
+**Why it fails, and it is structural rather than a tuning problem.** Custom
+properties are consumed overwhelmingly through *inheritance*, not by being
+redefined on the exact element that reads them — that is the feature's whole
+purpose, and a same-element filter answers a question inheritance was never
+going to ask. ui.shadcn.com writes exactly that shape: `.theme-sketch`,
+`.theme-neutral` and `.theme-blue` each redefine `--card` and dozens of
+sibling tokens. Confirmed present in the fetched HTML, not JS-injected —
+`<div data-slot="demo" class="theme-neutral relative flex w-full …">`, a
+wrapper several levels below `<body>` — so this is a real authored pattern in
+the frozen bundle, not a hypothetical. The actual consumers — `.bg-card`,
+`.shadow-card`, `.ring-card`, `.dark\:bg-card:is(.dark *)` — carry none of
+those three classes in their own selectors. A same-element filter tests
+exactly what it claims to: none of the three theme classes reaches `.bg-card`'s
+own subject compound, so all three are excluded and `--card` comes back
+*absent* for every one of these consumers, not merely re-ranked. `background-
+color: var(--card)` has no fallback text, so the declaration loses its color
+outright — a strictly worse answer than today's arbitrary-but-present
+last-wins value, on one of the site's most-used tokens.
+
+This is not a corner case reachable only on this one site. Off-page
+custom-property names with more than one competing definition were counted on
+all four frozen bundles, by the same method `build_var_table` already uses to
+find the off-page population, just grouped by name instead of collapsed to
+last-wins (`#hex`/`lab(...)` pairs written under the *same* selector are
+progressive-enhancement doubles for wide-gamut color, not contention, and are
+excluded by counting distinct selectors rather than raw declarations):
+
+| bundle | theme(s) | contested names |
+|---|---|---:|
+| fleshandbonedesign.com (the reference fixture — hand-written CSS, one theme) | base | 19 |
+| ground.news | base / dark | 51 / 51 |
+| tailwindcss.com | base / dark | 123 / 138 |
+| ui.shadcn.com | base / dark | 127 / 127 |
+
+Contention among off-page definitions is the norm on every corpus site,
+including the smallest hand-written one — not a shape special to utility
+frameworks or to this one site's theme picker. A same-element filter would
+reach all of it.
+
+**Why selector text cannot separate the two shapes.** A bare
+`.theme-sketch { --card: … }` and a bare `.shimmer-none { --shimmer-image:
+none }` are the identical grammatical shape: one class selector, no
+combinator. One is meant to be read by an *ancestor's* descendants through
+inheritance; the other is meant to override a property on the *same* element a
+sibling utility class also sits on. Nothing in the selector text marks which
+is meant — the distinction lives entirely in the real document tree,
+specifically in whether the class a rule targets is an ancestor of, or
+identical to, the element consuming the `var()`. `dom._TreeBuilder` deliberately
+does not build that tree below `<html>`/`<body>` (invariant 16 says as much:
+"the only elements ever tested are `<html>` and `<body>`"), so there is no
+tree to ask the question of.
+
+**The prerequisite this exposes, and it is the owner's call, not this task's
+to make alone**: closing T9 needs either (a) a real DOM below `<body>` — an
+`html5lib`-grade tree builder, a dependency question the same shape as the
+`lxml` one this file already reserves for the owner explicitly (pure-Python
+floor vs. fidelity) — or (b) per-element computed-style resolution, which is
+the cascade engine `CLAUDE.md` is explicit the tool is not, and a far larger
+commitment than either dependency question. Neither is "model scoped custom
+properties" as a bounded diff; both are new capabilities this task cannot
+absorb quietly.
+
+**What stays true regardless of that decision.** Invariant 26 (`initial` as
+guaranteed-invalid) is unaffected and still correct on its own terms — this
+investigation found no fault in it. The `--shimmer-image` trap's other half —
+`.shimmer-none`/`.md\:shimmer-none`'s `none` beating the fallback for elements
+that were never toggled to `shimmer-none` at all — remains exactly the limit
+`CLAUDE.md`'s "Known limits" section already describes it as, unchanged by
+this investigation.
+
+**Diff level, if this is picked up again once a real DOM is available:**
+custom-property resolution table, old winner against new with the cascade
+key's terms printed beside them — phase 3's level, which is the only one that
+showed its twelve moves. Predict the blast radius on all four frozen bundles
+*before* writing code, the same discipline phase 4 used — the contention
+counts above are exactly that prediction, one design-generation early.
 
 ### T10 — Read `color-scheme` to confirm a `light-dark()` site is two-themed
 

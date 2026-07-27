@@ -895,24 +895,6 @@ def parse_inline_styles(html: str, source: str,
     return sheet
 
 
-def extract_style_blocks(html: str) -> list[tuple[str, str]]:
-    """Return (identifier, css) for every <style> element, in document order."""
-    out = []
-    for i, m in enumerate(
-        re.finditer(r"<style([^>]*)>(.*?)</style>", html, re.S | re.I)
-    ):
-        attrs, body = m.group(1), m.group(2)
-        if not body.strip():
-            continue
-        ident = ""
-        am = re.search(r"""\bid\s*=\s*(["'])(.*?)\1""", attrs, re.I)
-        if am:
-            ident = am.group(2)
-        label = f"<style#{ident}>" if ident else f"<style[{i}]>"
-        out.append((label, body))
-    return out
-
-
 def extract_stylesheet_links(html: str) -> list[str]:
     """href values of <link rel=stylesheet>."""
     out = []

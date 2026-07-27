@@ -698,10 +698,9 @@ Accuracy gaps left by phases 1–4:
       2026-07-27.** See T6's own write-up below
 - [x] **T7** — resolve `<html>` and `<body>` in separate pools, body
       preferred. **Landed 2026-07-27.** See T7's own write-up below
-- [ ] **T8** — `@import url(…) layer(x)` should register a layer — parse
-      `layer(x)` from `node.prelude`'s `tinycss2` tokens (a `FunctionBlock`
-      named `layer`), not a regex over the serialized prelude — see the
-      T5/T15 corollary and T8's own note below
+- [x] **T8** — `@import url(…) layer(x)` should register a layer.
+      **Landed 2026-07-27** — reserves the position only, per the plan's own
+      "consider doing only that." See T8's own write-up below
 - [ ] **T9** — model scoped custom properties (`@property`, inheritance)
 - [ ] **T10** — read `color-scheme` to confirm a `light-dark()` site is really
       two-themed — **waiting on a counter-example; do not do this yet**
@@ -1296,7 +1295,7 @@ exactly, module/console-script/zipapp JSON identity verified, `.pyz` rebuilt
 and confirmed on a bare Python 3.11 interpreter with neither dependency
 installed.
 
-### T8 — `@import url(…) layer(x)` should register a layer
+### T8 — `@import url(…) layer(x)` should register a layer (landed 2026-07-27)
 
 `layer_order` does not see it, because `@import` is not followed at all. Named
 rather than pretended in phase 3.
@@ -1324,6 +1323,32 @@ first draft made, just relocated.
 
 **Diff level:** the layer order list per document, then the cascade key at both
 call sites.
+
+**Landed as scoped: only the position is reserved, the second piece — actually
+following the import — was not attempted.** `_walk`'s statement-at-rule branch
+(`cssparse.py`) grew an `elif keyword == "import":` next to the existing
+`@layer a, b;` handling, walking `node.prelude`'s tokens for a `function` node
+named `layer` and reading its name from `.arguments` via `tinycss2.serialize`
+— the same token-type search `_anonymous_layer` already does when looking for
+`@layer {}`, not a regex over the serialized prelude. `_register_layer` then
+reserves the name (and its ancestors, for a dotted sub-layer) exactly as the
+`@layer a, b;` statement form does.
+
+`layer_order`'s own docstring used to say the whole construct "is not
+modelled" — that was accurate before this landed and is now half-true, so it
+was corrected rather than left to mislead the next reader: the position is
+modelled, the imported sheet's *content* still isn't, because `sources.py`
+still doesn't follow `@import` (unchanged scope, per the plan's own "consider
+doing only that").
+
+No corpus site uses `@import ... layer(...)`, so this is insurance rather
+than an observed fix — confirmed rather than assumed: all four frozen bundles
+(`fleshandbonedesign.com`, `ground.news`, `tailwindcss.com`, `ui.shadcn.com`)
+produce byte-identical `to_document` JSON before and after, diffed with
+`generated` removed. Three new tests (`test_import_layer_reserves_a_position`,
+`test_import_layer_name_is_found_by_token_not_regex`,
+`test_import_without_layer_registers_nothing`), 110 → 113 tests, `ruff`
+clean, 3.11–3.14 all pass.
 
 ### T9 — Model scoped custom properties
 

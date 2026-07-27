@@ -291,12 +291,17 @@ def layer_order(sheets: list[Stylesheet]) -> dict[str, int]:
     belongs between `a` and `b`. Sorting each name by the chain of its
     ancestors' positions puts it back where it goes.
 
-    **`@import url(…) layer(x)` is not modelled**, because `@import` is not
-    followed at all — the imported sheet is fetched separately if at all, and
-    arrives with no memory of the layer it was imported into. Worth naming
-    rather than pretending: a site that layers exclusively through `@import`
-    reads here as entirely unlayered, which is the same answer this gave
-    before layers existed.
+    **`@import url(…) layer(x)` reserves `x`'s position (T8, `PLAN.md`), but
+    the imported sheet itself is still not modelled**, because `@import` is
+    not followed at all — `cssparse._walk` registers the name straight off
+    the `layer(...)` `FunctionBlock` in the `@import`'s own prelude, the same
+    way the `@layer a, b;` statement form reserves a position with no block
+    yet to fill it. What's still missing is the *content*: the imported
+    sheet is fetched separately if at all, and arrives with no memory of the
+    layer it was imported into, so a site that layers exclusively through
+    `@import` gets the position right but reads as contributing no
+    declarations to it — the same answer this gave before layers existed,
+    just no longer silently dropping the reservation too.
     """
     seen: list[str] = []
     for sheet in sorted(sheets, key=lambda s: s.sheet_order):

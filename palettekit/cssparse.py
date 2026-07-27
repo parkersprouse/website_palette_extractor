@@ -570,6 +570,22 @@ def _walk(sheet: Stylesheet, nodes: list, source: str,
                     for name in prelude.split(","):
                         if name.strip():
                             _register_layer(sheet, _qualify(layer, name.strip()))
+                elif keyword == "import":
+                    # `@import url(...) layer(name);` reserves a layer
+                    # position too (T8, `PLAN.md`), same reasoning as the
+                    # statement form above — before the imported sheet is
+                    # ever fetched (it isn't; `sources.py` doesn't follow
+                    # `@import`), the position it will cascade at is already
+                    # spoken for. Found by token type, not a regex over the
+                    # serialized prelude — the `layer(...)` piece is a
+                    # `FunctionBlock` sitting directly in `node.prelude`,
+                    # same as `_anonymous_layer`'s search for one.
+                    for token in node.prelude:
+                        if token.type == "function" and token.lower_name == "layer":
+                            name = tinycss2.serialize(token.arguments).strip()
+                            if name:
+                                _register_layer(sheet, _qualify(layer, name))
+                            break
                 continue
             inner = layer
             if keyword == "layer":

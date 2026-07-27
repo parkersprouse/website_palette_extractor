@@ -265,9 +265,13 @@ involved. Notes on what `_walk` produces:
   filling in a layer another sheet reserved — so the name is all a single sheet
   can know. `Stylesheet.layers` records first-mention order within the sheet
   and `extract.layer_order` merges those into the document's one true order.
-  The statement form `@layer a, b;` is the only reason `_walk` looks at
-  statement at-rules at all (invariant 18): it declares no properties, and
-  reserves the positions.
+  The statement form `@layer a, b;` and `@import url(…) layer(x)` (`PLAN.md`
+  T8) are the only reasons `_walk` looks at statement at-rules at all
+  (invariant 18): both declare no properties, and both reserve positions —
+  `@import`'s `layer(x)` found as a `FunctionBlock` in `node.prelude`, not by
+  regexing the serialized prelude (the T5/T15 corollary). `@import` itself is
+  still not followed, so the reservation is all this route contributes; see
+  "Known limits" below.
 - `tinycss2`'s serializer inserts `/**/` where two tokens would otherwise
   re-merge, so `:nth-child(3n+1)` round-trips as `:nth-child(3n/**/+1)`. Valid
   CSS, and it reaches the selector strings in the JSON and the report. Cosmetic
@@ -1037,8 +1041,11 @@ Tailwind config should even look like first.
     what a custom property holds. Every other declaration goes into the palette
     as written, because the palette wants every color a site declares, not the
     one that won on some element.
-  - **`@import url(…) layer(x)`** does not register a layer, because `@import`
-    is not followed at all (`layer_order`).
+  - **`@import url(…) layer(x)` reserves `x`'s position** (`layer_order`,
+    `PLAN.md` T8), but the imported sheet's *content* still isn't modelled —
+    `@import` itself is still not followed, so nothing ever lands in that
+    layer from this route; the reservation just stops a later real `@layer
+    x {…}` elsewhere in the document from silently mis-ordering around it.
   - **Scoped custom properties (`@property`, and inheritance down the tree)**
     are not modelled. A property redefined on `.card` resolves globally here.
   - **An at-rule nested inside a style rule** still loses its declarations —

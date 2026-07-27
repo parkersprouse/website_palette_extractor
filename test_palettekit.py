@@ -1014,6 +1014,40 @@ class TestCascade(unittest.TestCase):
         self.assertEqual(len(set(sheet.layers)), 2)
         self.assertEqual(len({d.layer for d in sheet.declarations}), 2)
 
+    def test_import_layer_reserves_a_position(self):
+        """`@import url(...) layer(name);` reserves a position too (T8).
+
+        The imported sheet is never fetched — `sources.py` doesn't follow
+        `@import` — so it contributes no declarations of its own. But the
+        position it will cascade at is claimed before `base` appears, the
+        same way the statement form of `@layer` reserves one with no block
+        behind it yet.
+        """
+        sheet = parse_stylesheet(
+            "@import url(x.css) layer(utilities); "
+            "@layer base { body { color: #111 } }", "s")
+        order = layer_order([sheet])
+        self.assertEqual(sorted(order, key=order.get), ["utilities", "base"])
+
+    def test_import_layer_name_is_found_by_token_not_regex(self):
+        """A dotted sub-layer name still comes through the `FunctionBlock`.
+
+        Per the T5/T15 corollary, `layer(...)` is found by walking
+        `node.prelude`'s tokens for a `function` node named `layer`, not by
+        regexing the serialized prelude string — so a name with a dot in it
+        (a sub-layer) still registers its parent too, the same as
+        `@layer a.x {}` does.
+        """
+        sheet = parse_stylesheet(
+            "@import url(x.css) layer(utilities.sub);", "s")
+        self.assertIn("utilities", sheet.layers)
+        self.assertIn("utilities.sub", sheet.layers)
+
+    def test_import_without_layer_registers_nothing(self):
+        """A plain `@import` still declares nothing — same as `@charset`."""
+        sheet = parse_stylesheet("@import url(x.css);", "s")
+        self.assertEqual(sheet.layers, [])
+
     def test_anonymous_layers_stay_distinct_when_nested(self):
         """The one construct here with a hand-rolled uniqueness scheme.
 

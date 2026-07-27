@@ -696,7 +696,10 @@ Accuracy gaps left by phases 1–4:
 - [ ] **T6** — an at-rule nested in a style rule loses its declarations —
       **the one that grows on its own** as CSS nesting spreads
 - [ ] **T7** — resolve `<html>` and `<body>` in separate pools
-- [ ] **T8** — `@import url(…) layer(x)` should register a layer
+- [ ] **T8** — `@import url(…) layer(x)` should register a layer — parse
+      `layer(x)` from `node.prelude`'s `tinycss2` tokens (a `FunctionBlock`
+      named `layer`), not a regex over the serialized prelude — see the
+      T5/T15 corollary and T8's own note below
 - [ ] **T9** — model scoped custom properties (`@property`, inheritance)
 - [ ] **T10** — read `color-scheme` to confirm a `light-dark()` site is really
       two-themed — **waiting on a counter-example; do not do this yet**
@@ -1170,6 +1173,19 @@ the `Bundle` layer that all four phases deliberately left alone.
 
 The layer position can be reserved without following the import — that is
 strictly better than today and much cheaper. Consider doing only that.
+
+**Per the T5/T15 corollary: "easy" means reading `node.prelude`'s `tinycss2`
+tokens, not a regex over the serialized string.** `_walk` already receives
+`node.prelude` as a token list before anything downstream serializes it (see
+the `@layer a, b;` branch, which serializes only to get a flat comma-separated
+identifier list — safe there because a layer name can't itself contain a comma
+or paren). `@import`'s prelude is `<url> [ layer(<name>) | layer ]? …`, so the
+`layer(...)` piece is a `FunctionBlock` sitting in that same token list —
+`.lower_name == "layer"` finds it directly, the same way `_calc_tokens` (T5)
+and `_split_component`/`_split_top` (T15) find `calc()`/percentages/commas by
+token type rather than by pattern-matching text. Reach for
+`re.search(r"layer\(...\)", prelude)` here and it's the same mistake T5's
+first draft made, just relocated.
 
 **Diff level:** the layer order list per document, then the cascade key at both
 call sites.

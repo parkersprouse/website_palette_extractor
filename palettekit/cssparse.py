@@ -508,10 +508,27 @@ def _walk(sheet: Stylesheet, nodes: list, source: str,
     """Record declarations, descending through nested rules and at-rule blocks.
 
     `selector` is the rule the current nodes sit inside, and `""` means there
-    is none — the body of an `@font-face`, or of an `@media` nested directly in
-    a rule. Declarations there are read for their `var()` references but not
-    kept, which is what the brace walker did by pushing an empty selector for
-    every at-rule block.
+    is none — the body of an `@font-face`, or a top-level `@media` with no
+    enclosing rule. Declarations there are read for their `var()` references
+    but not kept.
+
+    **An at-rule nested *inside* a style rule has no selector of its own**
+    (T6, `PLAN.md`): `.a { color: red; @media (min-width:1px) { color: blue }
+    }` is native CSS nesting, and `blue` belongs to `.a` exactly as if the
+    `@media` wrapper weren't there. So when `selector` is already set, it
+    carries straight through the at-rule rather than being reset — only a
+    *top-level* at-rule resets to `""`, which is the brace walker's old
+    behaviour and is still correct there: a qualified rule found inside it
+    computes its own selector regardless of what's passed down.
+
+    **`theme`/`theme_media` are not simply carried through unchanged** —
+    a nested `@media (prefers-color-scheme: dark)` still has to be *found* as
+    a scope, the same way it would if the enclosing rule weren't there, or the
+    fix above would silently turn a theme signal into an unscoped declaration
+    (the mirror image of the bug it fixes: instead of dropping `blue`, it
+    would invent an unscoped one that leaks into every theme). A
+    selector-derived theme on the enclosing rule still wins, same precedence
+    as the qualified-rule branch's `scoped or media` below.
 
     `layer` is the enclosing `@layer`, which propagates through every other
     kind of at-rule: a rule inside `@layer base { @media … { … } }` is in
@@ -560,8 +577,20 @@ def _walk(sheet: Stylesheet, nodes: list, source: str,
                          else _anonymous_layer(sheet, layer))
                 _register_layer(sheet, inner)
             at = _norm(f"@{keyword} {prelude}")
-            _walk(sheet, _contents(node), source, at_rules + (at,),
-                  selector="", theme="", theme_media=False, layer=inner)
+            nested = at_rules + (at,)
+            if selector:
+                # A nested `@media (prefers-color-scheme: dark)` still has to
+                # be *found* as a theme scope, the same way it would if the
+                # enclosing rule weren't there — mirrors the qualified-rule
+                # branch's `scoped or media` below. A selector-derived theme
+                # (`.dark .a { @media {...} }`) still wins: the enclosing rule
+                # already said which theme it is.
+                media = "" if theme else media_theme(nested)
+                _walk(sheet, _contents(node), source, nested, selector,
+                      theme or media, theme_media or bool(media), layer=inner)
+            else:
+                _walk(sheet, _contents(node), source, nested,
+                      selector="", theme="", theme_media=False, layer=inner)
 
 
 def _record(sheet: Stylesheet, node, value: str, selector: str, source: str,

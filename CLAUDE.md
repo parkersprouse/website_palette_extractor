@@ -214,7 +214,42 @@ what it's good at**, not the cascade-aware pipeline the seam language was
 protecting — nothing about var() resolution, theme scoping, or the cascade
 itself moved into `color.py`, and `color.py`'s own tests still call
 `parse_color()`/`find_colors()` on a plain string with no `Declaration`
-involved. Three notes on what `_walk` produces:
+involved. Notes on what `_walk` produces:
+
+- **An at-rule nested *inside* a style rule takes the enclosing rule's
+  selector** (`PLAN.md` T6, landed 2026-07-27). `.a { color: red; @media
+  (min-width:1px) { color: blue } }` is native CSS nesting, and `blue` belongs
+  to `.a` exactly as if the `@media` wrapper weren't there. `_walk` used to
+  reset `selector`/`theme`/`theme_media` to empty for *every* at-rule block,
+  which is right for a **top-level** at-rule (a qualified rule found inside
+  `@media { .b {...} }` computes its own selector regardless) but was wrong
+  here: with no selector, the declaration is read for its `var()` references
+  only and then dropped, so the brace walker and `_walk` alike lost `blue`
+  entirely. Fixed by carrying the enclosing `selector` through instead of
+  resetting it, conditioned on whether one was already set.
+
+  **`theme`/`theme_media` are not simply carried through unchanged** — a
+  nested `@media (prefers-color-scheme: dark)` still has to be *found* as a
+  scope, exactly as `media_theme(at_rules)` would find it if the enclosing
+  rule weren't there. Carrying the enclosing theme through verbatim was the
+  first draft of this fix and is a real regression, not a harmless
+  simplification: `_theme_plan`/`_scopes_present` (`extract.py`) read
+  `Declaration.theme` directly rather than recomputing it, so an unscoped
+  enclosing rule would make the nested dark declaration come back
+  `theme == ""` — unscoped, meaning every theme gets it, inventing a color the
+  light theme never paints. The corrected version mirrors the qualified-rule
+  branch's own `scoped or media` precedence: a selector-derived theme on the
+  enclosing rule wins outright, and only an unscoped enclosing rule lets the
+  nested media query supply one.
+
+  Not observed on the frozen corpus either way — no bundle happens to nest an
+  at-rule directly inside a style rule yet — which is exactly why `PLAN.md`
+  called this "the one that gets worse on its own" as native nesting spreads.
+  Tests: `test_an_at_rule_nested_in_a_style_rule_keeps_the_enclosing_selector`,
+  `test_a_nested_media_theme_is_still_found_as_a_scope` — the second was
+  written after a first-draft fix passed the first test while still recording
+  the nested dark declaration as unscoped, and required to fail against that
+  draft before being trusted.
 
 - `var_refs` is collected from **every** declaration, including properties the
   role table drops. It decides `live` vs `saved` (invariant 10), and narrowing
@@ -960,15 +995,14 @@ Tailwind config should even look like first.
   export time; a color computed in JS and set as an element property is in no
   stylesheet and will not be found.
 
-- **An at-rule nested *inside* a style rule loses its declarations.**
-  `.a { color: red; @media (min-width:1px) { color: blue } }` yields the `red`
-  and not the `blue`: `_walk` descends into an at-rule with no selector, and
-  declarations with no selector are read for `var()` references only. The brace
-  walker did the same thing for the same reason, so this predates `tinycss2`
-  and phase 1 did not change it. Native CSS nesting makes the shape more common
-  than it used to be, so it is worth fixing — the selector is simply the
-  enclosing rule's — but doing it inside phase 1 would have hidden a real
-  behaviour change inside a swap that was meant to have none.
+- **A nested *qualified rule* is not combined with its parent selector.**
+  `.a { .b { color } }` records the inner declaration's selector as `.b`, not
+  `.a .b`, and `&:hover` is kept literally rather than resolved against `.a`.
+  T6 (above, and `PLAN.md`) fixed the sibling case — an at-rule with no
+  selector of its own inheriting the enclosing rule's — but a nested
+  qualified rule already has a selector, `_walk` just doesn't compose it with
+  the parent's. Out of T6's scope; unfiled otherwise.
+
 - **The cascade is implemented where it decides an answer, and nowhere else.**
   Phase 3 made `importance → layer → specificity → document order` real
   (invariant 21) at the two places a wrong answer produces a palette of colors

@@ -202,6 +202,56 @@ class TestCss(unittest.TestCase):
             got = [(d.selector, d.prop) for d in sheet.declarations]
             self.assertEqual(got, [(":root", "--a")], prefix)
 
+    def test_an_at_rule_nested_in_a_style_rule_keeps_the_enclosing_selector(self):
+        """T6 (`PLAN.md`): native CSS nesting has no selector of its own.
+
+        `.a { color: red; @media (min-width:1px) { color: blue } }` — `blue`
+        belongs to `.a`, exactly as if the `@media` wrapper weren't there. The
+        old brace walker (and `_walk` until this fix) pushed an empty selector
+        for every at-rule block regardless of nesting, so this declaration
+        was read for its `var()` references only and then dropped.
+        """
+        css = ".a { color: red; @media (min-width:1px) { color: blue } }"
+        sheet = parse_stylesheet(css, "t")
+        got = [(d.selector, d.prop, d.value) for d in sheet.declarations]
+        self.assertEqual(got, [(".a", "color", "red"), (".a", "color", "blue")])
+
+        # A *top-level* at-rule still resets to no selector — a qualified
+        # rule found inside it computes its own selector regardless.
+        css2 = "@media (min-width:1px) { .b { color: green } }"
+        sheet2 = parse_stylesheet(css2, "t")
+        got2 = [(d.selector, d.prop, d.value) for d in sheet2.declarations]
+        self.assertEqual(got2, [(".b", "color", "green")])
+
+    def test_a_nested_media_theme_is_still_found_as_a_scope(self):
+        """A nested `@media (prefers-color-scheme: dark)` is not just carried
+        through as unscoped text (T6, `PLAN.md`).
+
+        Simply propagating the enclosing rule's `theme` unchanged would fix
+        the dropped-declaration bug but introduce its mirror image: an
+        unscoped `.a` means this declaration would come back `theme == ""`,
+        which `_theme_plan` treats as belonging to *every* theme — inventing a
+        color the light theme never paints, the same failure invariant 13
+        guards against from the other direction.
+        """
+        css = ".a { color: red; @media (prefers-color-scheme: dark) { color: blue } }"
+        sheet = parse_stylesheet(css, "t")
+        by_value = {d.value: d for d in sheet.declarations}
+        self.assertEqual(by_value["red"].theme, "")
+        self.assertEqual(by_value["blue"].theme, "dark")
+        self.assertTrue(by_value["blue"].theme_media)
+        self.assertEqual(by_value["blue"].selector, ".a")
+
+        # A selector-derived theme on the enclosing rule still wins over a
+        # nested media query — the enclosing rule already said which theme it
+        # is, so the media scope doesn't get to override that.
+        css2 = (".dark .a { color: red; "
+                "@media (prefers-color-scheme: light) { color: blue } }")
+        sheet2 = parse_stylesheet(css2, "t")
+        by_value2 = {d.value: d for d in sheet2.declarations}
+        self.assertEqual(by_value2["blue"].theme, "dark")
+        self.assertFalse(by_value2["blue"].theme_media)
+
     def test_comments_and_strings_are_not_colors(self):
         css = """
         /* #ff0000 in a comment */

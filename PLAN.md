@@ -693,8 +693,9 @@ Accuracy gaps left by phases 1–4:
       whole predicted blast radius and nothing else. Ground, warnings and
       every other token are byte-identical; one new token (`#7caefb`) appears
       in both themes. 98 → 100 tests, `ruff` clean, 3.11–3.14 verified
-- [ ] **T6** — an at-rule nested in a style rule loses its declarations —
-      **the one that grows on its own** as CSS nesting spreads
+- [x] **T6** — an at-rule nested in a style rule loses its declarations —
+      **the one that grows on its own** as CSS nesting spreads. **Landed
+      2026-07-27.** See T6's own write-up below
 - [ ] **T7** — resolve `<html>` and `<body>` in separate pools
 - [ ] **T8** — `@import url(…) layer(x)` should register a layer — parse
       `layer(x)` from `node.prelude`'s `tinycss2` tokens (a `FunctionBlock`
@@ -1165,22 +1166,67 @@ returns `None`). 98 → 100 tests, `ruff` clean, 3.11–3.14 verified.
 
 ### T6 — An at-rule nested inside a style rule loses its declarations
 
-`.a { color: red; @media (min-width:1px) { color: blue } }` yields the `red`
-and not the `blue`. `_walk` descends into an at-rule with no selector, and
+`.a { color: red; @media (min-width:1px) { color: blue } }` yielded the `red`
+and not the `blue`. `_walk` descended into an at-rule with no selector, and
 declarations with no selector are read for `var()` references only. The brace
 walker did the same thing for the same reason, so this predates `tinycss2`.
 
-**The fix is small — the selector is simply the enclosing rule's** — and it was
-kept out of phase 1 only so that a real behaviour change would not hide inside
-a swap meant to have none.
+**Landed 2026-07-27.** The selector half of the fix was as small as predicted:
+in `_walk`'s at-rule branch, when `selector` is already set (the at-rule is
+nested inside a style rule rather than sitting at the top of the sheet), the
+enclosing `selector` now carries straight through into the at-rule's contents
+instead of being reset. A **top-level** at-rule — `@media { .b { color: green
+} }` with no enclosing rule — still resets to `selector=""`, which is
+unchanged and still correct: a qualified rule found inside it computes its own
+selector regardless of what's passed down.
+
+**The theme half was not as small, and the first draft got it wrong.** The
+obvious move — carry `theme`/`theme_media` through unchanged alongside
+`selector` — passed the first test and is a real regression, not a harmless
+simplification: `.a { color: red; @media (prefers-color-scheme: dark) { color:
+blue } }` has an *unscoped* enclosing rule, so carrying its `theme` through
+verbatim records the nested `blue` as `theme == ""`. `_theme_plan`/
+`_scopes_present` (`extract.py`) read `Declaration.theme` directly, and an
+empty theme means "belongs to every theme" — so the fix's first draft would
+have invented a color the light theme never paints, the mirror image of the
+bug it was fixing (dropping a declaration versus contaminating one), and
+exactly what invariant 13 exists to prevent from the other direction. Caught
+by `advisor()` before landing, not by the corpus, which is silent on this: no
+frozen bundle nests a themed media query inside a style rule. The corrected
+version mirrors the qualified-rule branch's own `scoped or media` precedence a
+few lines above it: a selector-derived theme on the enclosing rule wins
+outright (`.dark .a { @media (prefers-color-scheme: light) {...} }` stays
+`dark`), and only an *unscoped* enclosing rule lets the nested media query
+supply a theme.
 
 **This is the one that grows on its own.** Native CSS nesting makes the shape
-more common every year, and the corpus was frozen in 2026. Re-measure before
-assuming the cost is still low.
+more common every year, and the corpus was frozen in 2026 — a nested
+`prefers-color-scheme` block is, if anything, the more likely real-world shape
+than the plain `min-width` one this task opened with.
 
-**Diff level:** the declaration multiset, `(sheet_order, selector, prop, value,
-theme, at_rules)` — this adds declarations that do not currently exist, so it
-is the one level that shows it.
+**Diffed at the declaration multiset**, `(sheet_order, selector, prop, value,
+theme, at_rules)`, per this task's own prediction — this adds declarations
+that do not currently exist, so it is the one level that shows it. Checked
+against all four locally-frozen bundles (`fleshandbonedesign.com.har`,
+`ground.news.har`, `tailwindcss.com.har`, `ui.shadcn.com.har`): **byte-identical
+on every one**, both before and after the theme correction — none of them
+happens to nest an at-rule directly inside a style rule today, confirming this
+task's own framing that the bug is currently latent and growing, not something
+the frozen corpus already hits. The reference fixture's anchors (ground
+`#151515`, 20 tokens, one theme, no warnings) reproduce exactly, and the
+rebuilt zipapp was verified on a bare Python 3.11 interpreter with neither
+dependency installed.
+
+Two new tests, both in `TestCss`, both required to fail before being trusted:
+`test_an_at_rule_nested_in_a_style_rule_keeps_the_enclosing_selector` failed
+against HEAD (`git stash push -- palettekit/cssparse.py`), dropping the nested
+`blue` declaration exactly as described above.
+`test_a_nested_media_theme_is_still_found_as_a_scope` failed against the
+*first-draft* fix specifically — it passed the first test while still
+recording the nested dark declaration as `theme == ""` — which is what makes
+it the test that actually discriminates the theme half of this task rather
+than regression coverage for the selector half. 106 → 108 tests, `ruff` clean,
+3.11–3.14 byte-identical.
 
 ### T7 — Resolve `<html>` and `<body>` in separate pools
 

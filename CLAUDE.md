@@ -178,8 +178,8 @@ sources.py   →  cssparse.py  →  extract.py  →  emit.py
 
 | File | Lines | Holds |
 |---|---:|---|
-| `color.py` | 1147 | `Color`, parsing, sRGB↔OKLab/CIE Lab/XYZ both ways, `color-mix()`, `light-dark()`, `calc()`, contrast, hue names |
-| `cssparse.py` | 803 | `tinycss2` integration, `var()`, `selector_weight`, roles, theme scopes, `@layer` names |
+| `color.py` | 1182 | `Color`, parsing, sRGB↔OKLab/CIE Lab/XYZ both ways, `color-mix()`, `light-dark()`, `calc()`, contrast, hue names |
+| `cssparse.py` | 881 | `tinycss2` integration, `var()`, `selector_weight`, roles, theme scopes, `@layer` names |
 | `dom.py` | 300 | `html.parser` → `ElementTree` shim, `cssselect2` matching of `<html>`/`<body>`, specificity |
 | `sources.py` | 292 | `load_har` / `load_url` / `load_paths` → `Bundle` |
 | `extract.py` | 1126 | `extract()`, the cascade, per-theme `_build`, ground, merging, statuses, naming |
@@ -322,6 +322,22 @@ because the obvious implementation produced plausible but wrong output.
    `html[data-theme="dark"]` theme was entirely invisible, and a
    `url(data:image/png;base64,…)` value was being truncated at the semicolon
    inside it — and it exposed one latent bug, which is invariant 20.
+
+   **The claim that `find_colors` itself refuses a string was not fully true
+   until T17 (2026-07-27, `PLAN.md`).** `content: "#fff"` never reached
+   `find_colors` at all — `content` is not in `PROPERTY_ROLE`, so `_record`
+   drops the declaration before this module ever sees it, which is a
+   different protection than the one this invariant describes. A property
+   that *is* color-bearing and legitimately carries a quoted string —
+   `background-image: url("data:image/svg+xml,...stroke='black'...")`, real
+   shapes on `tailwindcss.com.har`'s bundled DocSearch CSS and
+   `fleshandbonedesign.com.har` — did reach
+   the old regex-based scanner, which read the SVG markup's own
+   `stroke='black'`/`fill='white'` attributes as CSS colors: exactly this
+   invariant's mistake, one `url()` layer past where its own test looks. T17's
+   token walk never opens a `url()`'s argument, quoted or not, so this is now
+   true the way it was already written. See T17's write-up for the corpus
+   count (58 declarations, all one `url()` shape or the other, all removals).
 
 10. **Code emitters ship `live` colors only** by default (`_for_code`). What
     you paste into a project should be what the site paints; `saved` and
@@ -738,10 +754,15 @@ because the obvious implementation produced plausible but wrong output.
     **That rule disambiguates with a `/**/`, and it is turned into a plain
     space before the result leaves `resolve_vars`.** A comment is the
     textually-correct fix and `tinycss2` itself reads it back losslessly, but
-    it is not invisible to this codebase's own regex-based color scanners
-    downstream (`color.COLOR_TOKEN`, `_split_component`, `_split_top`) — none
-    of them treat a `comment` token as insignificant the way they treat
-    whitespace. Left as `/**/`,
+    it is not invisible to this codebase's own downstream `color-mix()`
+    parsing (`_split_component`, `_split_top`) — both re-tokenize a serialized
+    text body rather than reusing a token list already free of comments, and
+    neither treats a `comment` token as insignificant the way they treat
+    whitespace. `find_colors`'s own outer scan (`color._collect_colors`, T17,
+    2026-07-27) stopped needing this note: it tokenizes with
+    `skip_comments=True` directly, so a stray `/**/` is dropped before the walk
+    ever sees it. `_split_component`/`_split_top` are not, which is why the
+    blind replace below is still load-bearing. Left as `/**/`,
     `color-mix(in oklab,var(--white)var(--alpha),transparent)` resolves to
     `#fff/**/100%`, and `_split_component` reads the color half as `#fff/**/`
     — which `parse_color` cannot parse — silently losing the color instead of

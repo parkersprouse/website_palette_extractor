@@ -740,13 +740,19 @@ def balanced_end(text: str, start: int) -> int:
     Quotes and escapes are honoured because a function argument can hold either
     — `url("a)b")` closes nothing.
 
-    Used by `_split_component` and `_whole_value_spans` below, both of which
-    need character offsets into the original string rather than a token list.
-    `cssparse.resolve_vars` used to need this too, for the same reason —
-    finding `var(--x, <fallback with parens>)`'s closing paren by hand — until
-    T16 (`PLAN.md`) replaced that whole call with a structural read of
-    `tinycss2`'s own already-parsed `var()` arguments, which needs no
-    character-offset scanner at all.
+    Used by `_mix_component` below to bound a `calc()` percentage's closing
+    paren, which needs a character offset into the already-isolated percentage
+    text rather than a token list. `cssparse.resolve_vars` used to need this
+    too, for the same reason — finding `var(--x, <fallback with parens>)`'s
+    closing paren by hand — until T16 (`PLAN.md`) replaced that whole call
+    with a structural read of `tinycss2`'s own already-parsed `var()`
+    arguments. `find_colors`'s own `_whole_value_spans` was the other caller,
+    until T17 (`PLAN.md`) replaced the whole regex-plus-`balanced_end` pair
+    with a `tinycss2` token walk (`_collect_colors`): a `FunctionBlock`
+    already knows where it ends regardless of how deeply its own arguments
+    nest, which needed no character-offset scanner at all — unlike
+    `COLOR_TOKEN`'s separate function-call regex, which had its own
+    hand-bounded one-level nesting allowance rather than calling this.
     """
     depth, quote, i = 0, "", start
     while i < len(text):
@@ -1062,47 +1068,83 @@ def parse_light_dark(body: str, appearance: str) -> Color | None:
                        appearance)
 
 
-# Matches anything that could be a color value inside a declaration.
-# Built with %-formatting rather than an f-string on purpose: the pattern
-# contains regex quantifiers like {3,8}, which an f-string would require
-# doubling to {{3,8}} — harder to read and easy to get wrong on a later edit.
-COLOR_TOKEN = re.compile(
-    r"""
-    \#[0-9a-fA-F]{3,8}\b
-  | (?:rgba?|hsla?|oklch|oklab|color|lab|lch)\s*\([^()]*(?:\([^()]*\)[^()]*)*\)
-  | \b(?:%s)\b
-    """ % "|".join(sorted(NAMED, key=len, reverse=True)),  # noqa: UP031
-    re.X | re.I,
-)
+# Function names `find_colors` reads as an ordinary color, dispatched through
+# `parse_color`'s own `_FUNC` branch once a `FunctionBlock` isolates them.
+# `color-mix`/`light-dark` are not in this set — see `_collect_colors` below,
+# which dispatches them to their own parsers and never recurses into either.
+_COLOR_FUNCS = frozenset({
+    "rgb", "rgba", "hsl", "hsla", "oklch", "oklab", "color", "lab", "lch",
+})
 
 
-_WHOLE_VALUE_FUNCS = re.compile(r"\b(color-mix|light-dark)\s*\(", re.I)
+def _collect_colors(tokens, appearance: str, out: list[Color]) -> None:
+    """Recursively walk a token list, appending every color found to `out`.
 
+    T17 (`PLAN.md`): a `FunctionBlock` already groups its arguments correctly
+    no matter how many parens they nest — `tinycss2` resolved that nesting
+    when it tokenized — so `rgb(min(calc(1 + 2), 3) 0 0)` is one token here,
+    not a boundary a regex has to guess the end of. That is what closes the
+    old `COLOR_TOKEN` regex's known gap: it tolerated exactly one level of
+    nested parens and failed closed (found nothing) past that.
 
-def _whole_value_spans(value: str) -> list[tuple[int, int]]:
-    """Ranges covered by a top-level `color-mix()` or `light-dark()` call.
+    `color-mix()`/`light-dark()` are evaluated as a unit and not recursed into
+    (invariants 22-23): the colors written inside them are not colors the page
+    paints — the mix, or the branch the theme selects, is. A known color
+    function's own arguments are not recursed into either, since a channel is
+    a number, not a nested color. Everything else — a gradient, a shadow, an
+    unrecognised function — is recursed into, because a color can appear
+    anywhere inside those. A bare `( … )` grouping (as `calc()` can contain)
+    is walked the same way, through `.content` rather than `.arguments`.
 
-    Top-level only: a `color-mix()` nested in another is evaluated by the outer
-    one's recursion, not found again here.
+    Strings and comments are never visited: they arrive as their own token
+    types (`StringToken`, and comments are dropped at the top-level parse in
+    `find_colors`), so invariant 9 falls out of the token types themselves
+    rather than a scanner that has to avoid matching inside them.
     """
-    spans: list[tuple[int, int]] = []
-    for m in _WHOLE_VALUE_FUNCS.finditer(value):
-        if spans and m.start() < spans[-1][1]:
-            continue
-        end = balanced_end(value, m.end() - 1)
-        if end > 0:
-            spans.append((m.start(), end))
-    return spans
+    for tok in tokens:
+        if tok.type == "hash":
+            c = parse_color(tinycss2.serialize([tok]).strip(), appearance)
+            if c is not None:
+                out.append(c)
+        elif tok.type == "ident":
+            if tok.lower_value in NAMED:
+                c = parse_color(tok.value, appearance)
+                if c is not None:
+                    out.append(c)
+        elif tok.type == "function":
+            name = tok.lower_name
+            if name == "color-mix":
+                c = parse_color_mix(tinycss2.serialize(tok.arguments), appearance)
+                if c is not None:
+                    out.append(c)
+            elif name == "light-dark":
+                c = parse_light_dark(tinycss2.serialize(tok.arguments), appearance)
+                if c is not None:
+                    out.append(c)
+            elif name in _COLOR_FUNCS:
+                c = parse_color(tinycss2.serialize([tok]).strip(), appearance)
+                if c is not None:
+                    out.append(c)
+            else:
+                _collect_colors(tok.arguments, appearance, out)
+        elif tok.type == "() block":
+            _collect_colors(tok.content, appearance, out)
 
 
 def find_colors(value: str, appearance: str = "light") -> list[Color]:
     """Pull every color out of a declaration value, in order.
 
-    `color-mix()` and `light-dark()` are handled before the token scan and
-    their spans are then excluded from it, because they are functions *of*
-    colors: the two hexes in `light-dark(#fff, #18191b)` are one color, chosen
-    by the theme, and the arguments to a `color-mix()` are not colors the page
-    paints — the mix is.
+    Tokenized once with `tinycss2` (T17) rather than scanned twice as text —
+    `_whole_value_spans` used to re-scan the same string a second time to find
+    `color-mix()`/`light-dark()` spans ahead of the general token scan; a
+    single walk (`_collect_colors`) now finds and dispatches both in one pass,
+    since a flat `tinycss2` token list already tells the two kinds of call
+    apart by `.lower_name` without a second scan.
+
+    `color-mix()` and `light-dark()` are evaluated as a unit rather than
+    walked into, because they are functions *of* colors: the two hexes in
+    `light-dark(#fff, #18191b)` are one color, chosen by the theme, and the
+    arguments to a `color-mix()` are not colors the page paints — the mix is.
 
     **A call this tool cannot evaluate contributes nothing, rather than falling
     back to the arguments inside it.** `color-mix(in oklch, #b4d455 calc(50% -
@@ -1113,19 +1155,9 @@ def find_colors(value: str, appearance: str = "light") -> list[Color]:
     remains visible only at the per-declaration level — see `PLAN.md` phase 4
     and T5.
     """
-    out = []
-    spans = _whole_value_spans(value)
-    cursor = 0
-    for start, end in spans + [(len(value), len(value))]:
-        for m in COLOR_TOKEN.finditer(value, cursor, start):
-            c = parse_color(m.group(0), appearance)
-            if c is not None:
-                out.append(c)
-        if end > start:
-            c = parse_color(value[start:end], appearance)
-            if c is not None:
-                out.append(c)
-        cursor = end
+    tokens = tinycss2.parse_component_value_list(value, skip_comments=True)
+    out: list[Color] = []
+    _collect_colors(tokens, appearance, out)
     return out
 
 

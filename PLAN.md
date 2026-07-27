@@ -775,11 +775,12 @@ Repo and process:
       rules — **landed 2026-07-27**; see T16's own write-up below for the
       `/**/`-vs-comment-blind-scanner hazard it found and the measured
       corpus/perf blast radius
-- [ ] **T17** — rewrite `COLOR_TOKEN` on `tinycss2` tokens (a `FunctionBlock`'s
+- [x] **T17** — rewrite `COLOR_TOKEN` on `tinycss2` tokens (a `FunctionBlock`'s
       `.lower_name` identifying `rgb()`/`hsl()`/`oklch()`/etc. instead of a
       name regex plus a hand-bounded nesting allowance) to fill its known
-      nesting gap — **owner-authorized 2026-07-26 as tracked work, not yet
-      started**
+      nesting gap — **landed 2026-07-27**; see T17's own write-up below for
+      the corpus diff, which found two real bugs the nesting gap itself
+      never appears to cause
 - [x] **License** — `LICENSE.md` + the `[project.license]` and classifier
       entries — **landed 2026-07-26**. Owner chose the Hippocratic License
       3.0; see "License" under Outstanding work below
@@ -1698,7 +1699,7 @@ left orphaned.
 parity confirmed, `palettekit.pyz` rebuilt via `build.py` and verified on
 `uv run --python 3.11 --no-project` with neither dependency installed.
 
-### T17 — Rewrite `COLOR_TOKEN` on `tinycss2` tokens
+### T17 — Rewrite `COLOR_TOKEN` on `tinycss2` tokens — landed 2026-07-27
 
 `COLOR_TOKEN` is the regex that finds every hex, `rgb()`/`rgba()`/`hsl()`/
 `hsla()`/`oklch()`/`oklab()`/`color()`/`lab()`/`lch()`, and named-color literal
@@ -1743,6 +1744,214 @@ all" is not the success criterion the way it was for T5 and T15's landed half.
 frozen corpus, predicting the blast radius before writing code — specifically,
 search the corpus first for any second-level-nesting shape this would newly
 catch, so the prediction is falsifiable rather than "probably nothing changes."
+
+**Landed.** `COLOR_TOKEN`, `_whole_value_spans`, and `_WHOLE_VALUE_FUNCS` are
+gone. `find_colors` now tokenizes `value` once with
+`tinycss2.parse_component_value_list(value, skip_comments=True)` and walks it
+recursively (`_collect_colors`): a `HashToken` or an `IdentToken` matching
+`NAMED` is read directly; a `FunctionBlock` whose `.lower_name` is
+`color-mix`/`light-dark` is evaluated as a unit exactly as before and not
+recursed into; a `FunctionBlock` naming one of the known color functions is
+handed whole to `parse_color` via `tinycss2.serialize`; anything else — a
+gradient, a shadow, an unrecognised function, a bare `( … )` grouping — is
+recursed into, because a color can appear anywhere inside those. This also
+folds `_whole_value_spans`'s separate re-scan into the same walk, which the
+proposed fix flagged as worth doing rather than tokenizing the value twice.
+
+**The predicted finding did not occur, and a different, real one did — caught
+by the corpus diff rather than by the prediction.** The write-up above
+predicted "closing the nesting gap **will** find colors the current regex
+reports nothing for, on any corpus site that has one." It does not, on this
+corpus: `_num`/`_hue` (the channel-value parsers `rgb()`/`hsl()`/`oklch()`/etc.
+call into) only understand a literal number or percentage, never `calc()` or
+`min()`/`max()`, so a color function nested two levels deep still resolves to
+no color once correctly delimited — the boundary was never the only thing
+standing between the old code and a real answer. Confirmed directly:
+`find_colors("rgb(min(calc(1 + 2), 3) 0 0)")` is `[]` both before and after,
+and a color declared *after* an unreadably-nested one is unaffected either way
+(`test_a_color_function_nested_two_levels_deep_finds_nothing`). No corpus site
+exercises a shape that would flip this — the four frozen bundles produced zero
+diffs of this kind.
+
+**What the corpus diff found instead: 58 declarations, all removals, all one
+of two shapes neither the original write-up named.** Diffed at the
+per-declaration resolved-value level (`resolve_vars` output, per theme, old
+`find_colors` against new) across all four frozen bundles. Both shapes are
+`background-image: url(...)`, and both land on `tailwindcss.com.har` and
+`ground.news.har` — the DocSearch CSS below is bundled directly into
+`tailwindcss.com`'s own Next.js build
+(`https://tailwindcss.com/_next/static/chunks/0de0_fu7khccy.css`,
+first-party, not a third-party sheet):
+
+1. **A quoted `url()` read its own SVG markup as color** — 52 of the 58 (40 on
+   `tailwindcss.com.har`'s DocSearch-icon CSS, 2 on
+   `fleshandbonedesign.com.har`'s checkbox glyph). All are
+   `background-image: url("data:image/svg+xml,...")` where the embedded SVG
+   carries `stroke='black'`/`fill='white'` attributes. The old flat-text regex
+   scanned straight through the quote marks; the new walk never opens a
+   `url()`'s argument beyond checking it isn't one of the recursed-into cases,
+   and the argument itself is a lone `StringToken`, which no branch of
+   `_collect_colors` visits. This is invariant 9's own mistake
+   (`content: "#fff"` is not a color) one `url()` layer deeper than that
+   invariant's test reaches — `content` happens to be filtered out by
+   `PROPERTY_ROLE` before it ever reaches `find_colors`, so that test never
+   exercised a case where the string survives to the scanner; `background-image`
+   is legitimately color-bearing (gradients), so its quoted `url()` argument
+   does reach `find_colors`, and did not get the same protection until now.
+2. **A bare `url()` read a filename as a named color** — 6 of the 58, all
+   `ground.news.har`'s `url(https://…/bg-black.png)`, each paired in the same
+   `background-image` value with an unrelated second `url(...)`
+   (`about_page_newspaper_watermark.png` or `background-img.png`) that
+   contributes nothing either way. `\bblack\b` matched the word inside the
+   filename the same way it matches a real `black` keyword elsewhere in a
+   value; every one of the six old results is a single `#000000`, confirmed by
+   re-reading the six records directly rather than the mechanism first
+   guessed at (no `color: black` shares any of these six declarations — that
+   guess was wrong and is not repeated here). A bare `url(...)` is tokenized
+   as its own `URLToken` type, distinct from the `FunctionBlock` a quoted
+   `url("...")` produces, and neither is ever opened by the walk.
+
+Every one of the 58 diffs is a pure removal — `new` is `[]` in all of them,
+confirmed by grep rather than eyeballed — and no diff appears on any
+declaration shape other than these two. Regression tests:
+`test_a_quoted_url_does_not_read_its_own_markup_as_color`,
+`test_a_bare_url_does_not_read_its_filename_as_a_named_color`. Both were
+checked against the pre-T17 implementation and fail there, per the "a test
+that passes before and after tests nothing" discipline; the nesting-gap safety
+test does not discriminate against the old code and says so in its own
+docstring, kept as forward regression coverage rather than proof of a
+behavior change.
+
+**The removals are not confined to occurrence counts — invariant 25's own
+precedent, checked directly rather than assumed away.** A per-declaration diff
+undercounts what a change like this actually does, because `Entry.score`
+feeds `_assign_names`'s natural-sort ranking (invariant 25's own write-up
+makes exactly this point about a different removal). So the real check is the
+full palette JSON, old build against new, `generated` dropped — same recipe as
+phase 2/3/4's own verification:
+
+```bash
+git stash push palettekit/ && for h in ground.news tailwindcss.com \
+  ui.shadcn.com fleshandbonedesign.com; do
+    python3 -m palettekit "$h.har" -o "out-old/$h"
+  done && git stash pop
+# then the same into out-new/, and diff hex sets, grounds, warnings, names,
+# occurrences, and scores per theme
+```
+
+`ui.shadcn.com` is untouched entirely on every field this script compares
+(`ground`, `groundSource`, hex set, names, occurrences, scores, statuses,
+warnings) — 0 of the 58 removals came from it. That is not the same claim as
+"full JSON byte-identical": `stats`, `usedIn`, `examples`, and `source` were
+not diffed field-by-field, though a direct dict-equality check on this one
+bundle's two JSON files (`generated` dropped) does come back `True`, so the
+stronger claim happens to hold here too — just not because the summary script
+above proves it in general. `ground.news.har` and `fleshandbonedesign.com.har`
+move `occurrences`/`score` on two or three entries per theme each, by exactly
+the amount the removed declarations contributed, and **no token is renamed**
+on either — their score gaps between neighbours are wide enough that a few
+fewer occurrences doesn't cross a rank boundary. Grounds, warnings, and hex
+sets are unchanged on all four bundles.
+
+**`tailwindcss.com.har` is the exception, and it is a consolidation, not just
+a rename.** The base theme's entry count drops from 305 to 303 — two fewer
+entries, not merely reshuffled names — and tracing it down to one hex shows
+why. `#785800` is not a literal color anywhere in the stylesheet: it is
+Tailwind's `black/50` utility, `rgb(0 0 0 / 0.502)`, flattened over this
+theme's yellow ground (`#f0b100`). In the old build it landed as **three**
+separate entries, kept apart by invariant 7's `(hexa, role)` bucketing —
+`yellow-14` (role `surface`, 7 occurrences: `--tw-ring-color`,
+`--tw-text-shadow-color`, `.bg-black/50`, and two hits on
+`.DocSearch-MagnifierLabel`'s `background-image`), `yellow-16` (role `text`,
+8 occurrences: `.text-black/50` and kin), `yellow-23` (role `line`, 4
+occurrences: `.border-black/50`, `.divide-black/50`) — 19 occurrences total.
+The new build folds all three into one: `yellow-7`, role `text`, 17
+occurrences.
+
+Two of those 19 were themselves spurious, and directly traceable: the
+`.DocSearch-MagnifierLabel` declaration is `background-image:
+url("data:image/svg+xml,...")`, and its embedded SVG spells out
+`stroke='rgba(0, 0, 0, 0.5)'` twice (once on a `<path>`, once on a `<circle>`)
+— confirmed against the per-declaration diff, `old = ['#00000080',
+'#00000080'] -> new = []` at `theme=base sheet=0 order=4455`. Flattened over
+the same yellow ground, `rgba(0, 0, 0, 0.5)` renders to the identical
+`#785800` as the real `black/50` utility — a coincidental collision between a
+fake reading and a real one, not a new color the removal invents. That alone
+drops the old `surface` entry from 7 to 5 and the cluster total from 19 to 17,
+matching the new count exactly.
+
+The 3-to-1 entry consolidation is a second, larger effect riding on top of
+that count change, and it is invariant 6 doing exactly what it is specified to
+do. `_merge_near_duplicates` walks entries in descending global score order,
+and its `compatible()` check treats a `token`-role entry — a custom property,
+which "has no role of its own" per its own comment — as mergeable into
+*anything*, while `surface`/`text`/`line` are never mergeable into each other
+directly. Old's `--tw-ring-color`/`--tw-text-shadow-color` usages (role
+`token`) merged into the `surface` entry specifically — visible in its
+`customProperties` field — leaving `text` and `line` as separate,
+already-`kept` anchors by the time each was reached. The only anchor role
+that admits all three of `surface`/`text`/`line` into one entry is `token`
+itself: `k.role` is fixed once before the merge loop runs and not recomputed
+until after it ends, `surface` and `text` are never compatible with each
+other directly, and `compatible()` makes `token` the one role compatible with
+everything — so an entry ending up with usages from all three roles is only
+possible if a `token`-role entry was the kept anchor each of them was compared
+against. That the new build's ordering puts the `token` bucket in that
+position is a direct consequence of removing 58 spurious declarations
+elsewhere and shifting the global score ranking of dozens of nearby entries
+(the occurrence drops on `grey-1`/`grey-58` etc. above are part of the same
+shift) — plausible and consistent with everything measured, though the loop
+itself was not instrumented to watch the swap happen. This is existing,
+correct invariant-6/-7 behavior responding to a correct input change, not a
+new mechanism T17 introduces — the same shape invariant 25's own write-up
+describes for a different removal, and the reason that write-up is the right
+precedent to check against here.
+
+Net effect: hex set unchanged, the same rendered color that used to be three
+entries is now one, `yellow-7` through roughly `yellow-50` each pointing
+at a different hex than before (`yellow-7` was `#fdc700`, is now `#785800`;
+`yellow-10` was `#fff085`, is now `#ffd230`; and so on down the cluster) as
+everything below the consolidation point shifts up two ranks. Not a bug — the
+new occurrence counts and the merged entry are both correct, per the findings
+above — but a real consumer-visible effect worth recording rather than
+glossing over: anyone pinning a specific `--c-yellow-7` value across a rebuild
+of this exact site sees it change. `grey`/`surface` groups on this same
+bundle, and every group on the other three bundles, keep their names — this
+is specific to `tailwindcss.com`'s unusually large single-hue cluster
+colliding with a `token`-role merge target, not a general renaming risk from
+this change.
+
+**A rough timing check, since this replaces one compiled-regex `finditer`
+with a full tokenize-and-walk on every declaration, including the majority
+that hold no color at all** (T16 sat on a hotter path — up to four
+`resolve_vars` passes per declaration — and got a measured number; this one
+deserved a check rather than an assumed "same shape"). Over
+`tailwindcss.com.har`'s 5,191 declarations, old vs new `find_colors`, 20
+warmed-up passes: new measured **~52–59ms/pass** across separate runs, old
+**~82ms/pass** — new is faster, not slower, and the spread doesn't change that
+conclusion. Plausible cause, not confirmed further: the old scanner ran two
+separate regex passes per declaration (`_whole_value_spans`'s span search,
+then `COLOR_TOKEN`'s own finditer, the latter carrying a ~140-way named-color
+alternation tried at every position), where the new code tokenizes once and
+dispatches on `dict`/`frozenset` membership.
+
+**Full corpus re-verification, same shape as T5's and T16's:** 106/106 tests
+pass (103 plus the three new ones), `ruff check .` clean, the reference
+fixture's every anchor unmoved (`fleshandbonedesign.com.har --images`: ground
+`#151515`, 20 tokens, one theme, no warnings, `#ffc600` saved, `#13330d`
+inert, `#c4c4c4` at 10.47:1), the Python 3.11/3.12/3.13/3.14 matrix all green,
+and module/console-script/zipapp JSON identical across all four bundles with
+the interpreter held constant. One unrelated wrinkle surfaced while checking
+that last one: `ground.news.har`'s `score` field differs in its last decimal
+place between a 3.11 and a 3.14 interpreter (`51.7` vs `51.71`, and similarly
+on three other entries) — confirmed present identically in the pre-T17 code
+built the same way, so it is a pre-existing floating-point rounding difference
+between interpreter versions unconnected to this task, not a T17 regression;
+`color.py` has no part in computing `score` at all. `palettekit.pyz` rebuilt
+(after also deleting `_WHOLE_VALUE_FUNCS`, a leftover unused frozenset caught
+on review — the dispatch in `_collect_colors` compares `.lower_name` to the
+two literal strings directly and never read it) and verified on a bare 3.11
+interpreter with neither dependency installed.
 
 ### License
 

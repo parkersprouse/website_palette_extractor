@@ -87,6 +87,62 @@ class TestParsing(unittest.TestCase):
         self.assertEqual(got, ["#aabbcc", "#000000"])
         self.assertEqual(find_colors("none"), [])
 
+    def test_a_color_function_nested_two_levels_deep_finds_nothing(self):
+        """T17: the old `COLOR_TOKEN` regex tolerated exactly one level of
+        nested parens and failed closed past that — `rgb(min(calc(1 + 2), 3)
+        0 0)` matched nothing, silently, rather than reading a wrong color.
+
+        A `tinycss2` token walk delimits a `FunctionBlock` correctly no
+        matter how deep its arguments nest, so the boundary itself is no
+        longer the reason this returns nothing — `min()`/`calc()` channel
+        values are still outside what `_num`/`_hue` evaluate, which is a
+        separate, still-open gap (see `PLAN.md` T17's "Known limits" note).
+        What matters here is that a color *after* the unreadable one is not
+        swallowed along with it, the way an under-bounded scanner could.
+
+        Does not discriminate against the old regex — it already failed
+        closed the same way for this exact shape, since the PLAN.md write-up
+        that motivated T17 predicted no corpus site exercises the gap in a
+        way that flips output. Kept as forward regression coverage for the
+        new mechanism, not as proof of a behavior change; see the two tests
+        below for what the corpus diff actually found.
+        """
+        self.assertEqual(find_colors("rgb(min(calc(1 + 2), 3) 0 0)"), [])
+        got = find_colors("rgb(min(calc(1 + 2), 3) 0 0) red")
+        self.assertEqual([c.hex for c in got], ["#ff0000"])
+
+    def test_a_quoted_url_does_not_read_its_own_markup_as_color(self):
+        """T17, found by the corpus diff rather than predicted in advance.
+
+        `background-image: url("data:image/svg+xml,...stroke='black'...")` is
+        a real corpus shape (tailwindcss.com.har's bundled DocSearch icon CSS,
+        fleshandbonedesign.com's checkbox glyph): a quoted `url()` whose
+        content is inline SVG markup, itself carrying `stroke=`/`fill=`
+        attributes that look exactly like CSS color syntax. The old regex
+        scanned the whole declaration value as flat text and read those as
+        real colors — the same class of mistake invariant 9 exists to
+        forbid for `content: "#fff"`, just one `url()` layer deeper than that
+        invariant's own test reaches. A `url()`'s argument arrives as a
+        `StringToken`, which the walk never opens, so nothing inside it is
+        ever visited.
+        """
+        value = ('url("data:image/svg+xml,%3Csvg stroke=\'black\' '
+                 "fill='white'/%3E\")")
+        self.assertEqual(find_colors(value), [])
+
+    def test_a_bare_url_does_not_read_its_filename_as_a_named_color(self):
+        """T17, the corpus diff's other finding: ground.news links a
+        `bg-black.png` background image, unquoted — `url(.../bg-black.png)`.
+
+        `\\bblack\\b` matched the word inside the filename, the same way it
+        would match a real `black` keyword sitting anywhere else in the
+        value; a bare `url(...)` is its own token type in `tinycss2`
+        (a `URLToken`, distinct from the `FunctionBlock` a quoted `url("...")`
+        produces), and the walk does not open it either way.
+        """
+        got = find_colors("black url(https://example.com/assets/bg-black.png)")
+        self.assertEqual([c.hex for c in got], ["#000000"])
+
 
 class TestColorMaths(unittest.TestCase):
     def test_alpha_flatten(self):

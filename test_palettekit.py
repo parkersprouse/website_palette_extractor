@@ -1112,11 +1112,13 @@ class TestColorMix(unittest.TestCase):
 
         Every one of these has a perfectly readable color in it, and reporting
         that color would be the plausible-looking guess this module exists to
-        refuse. It costs six real declarations on the corpus, all of them
-        `calc()` percentages.
+        refuse. `calc(50% - var(--x))` stays in this list even after T5 taught
+        `_mix_component` literal `calc()` arithmetic — a `var()` inside `calc()`
+        is outside the supported subset on purpose, same as everywhere else a
+        `var()` in an unexpected place is refused rather than guessed at.
         """
         for value in (
-            "color-mix(in oklch, #b4d455 calc(2 * 30%), transparent)",
+            "color-mix(in oklch, #b4d455 calc(50% - var(--x)), transparent)",
             "color-mix(in oklab, currentcolor 50%, #b4d455)",
             "color-mix(in jzazbz, #b4d455 50%, transparent)",
             "color-mix(#b4d455 50%, transparent)",
@@ -1124,6 +1126,51 @@ class TestColorMix(unittest.TestCase):
         ):
             self.assertIsNone(parse_color(value), value)
             self.assertEqual(find_colors(value), [], value)
+
+    def test_a_literal_calc_percentage_in_a_mix_is_evaluated(self):
+        """T5: `calc()` percentages made of literal arithmetic now resolve.
+
+        `calc(60 * 1%)` is the exact shape ui.shadcn.com ships across six
+        `.shimmer-color-*` declarations — corpus-driven, not a hypothetical.
+        Each assertion is checked against the same mix written as a plain
+        percentage, so this tests the arithmetic rather than merely "some
+        color came back".
+        """
+        self.assertEqual(
+            parse_color("color-mix(in oklch, #b4d455 calc(60 * 1%), transparent)").hexa,
+            parse_color("color-mix(in oklch, #b4d455 60%, transparent)").hexa)
+        self.assertEqual(
+            parse_color("color-mix(in oklab, #ff0000 calc(2 * 30%), #0000ff)").hex,
+            parse_color("color-mix(in oklab, #ff0000 60%, #0000ff)").hex)
+        self.assertEqual(
+            parse_color("color-mix(in srgb, #ff0000 calc(90% - 30%), #0000ff)").hex,
+            parse_color("color-mix(in srgb, #ff0000 60%, #0000ff)").hex)
+        self.assertEqual(
+            parse_color("color-mix(in srgb, #ff0000 calc(120% / 2), #0000ff)").hex,
+            parse_color("color-mix(in srgb, #ff0000 60%, #0000ff)").hex)
+        # Scientific notation is valid CSS numeric syntax, tokenized correctly
+        # by tinycss2; a hand-rolled digit regex is the thing that misses it.
+        self.assertEqual(
+            parse_color("color-mix(in srgb, #ff0000 calc(1e2% / 2), #0000ff)").hex,
+            parse_color("color-mix(in srgb, #ff0000 50%, #0000ff)").hex)
+
+    def test_calc_outside_the_supported_subset_yields_nothing(self):
+        """`calc()` evaluation is a deliberately small subset, not a parser.
+
+        Mixed units, a percentage multiplied by a percentage, and division by
+        a percentage are all outside CSS's own type rules for this position —
+        evaluating them would require guessing a unit conversion this tool has
+        no basis for. Malformed `calc()` (unbalanced parens, trailing junk)
+        stays unreadable too.
+        """
+        for value in (
+            "color-mix(in srgb, #ff0000 calc(50% - 5rem), #0000ff)",
+            "color-mix(in srgb, #ff0000 calc(50% * 50%), #0000ff)",
+            "color-mix(in srgb, #ff0000 calc(50% / 50%), #0000ff)",
+            "color-mix(in srgb, #ff0000 calc(50%) extra, #0000ff)",
+            "color-mix(in srgb, #ff0000 calc(50% +), #0000ff)",
+        ):
+            self.assertIsNone(parse_color(value), value)
 
     def test_a_powerless_hue_is_carried_forward(self):
         """A grey has no hue, so mixing it must not sweep through hues.

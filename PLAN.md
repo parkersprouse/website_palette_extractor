@@ -680,7 +680,19 @@ Accuracy gaps left by phases 1–4:
       byte-identical before and after (minus `generated`) — the shimmer trap
       T4 warns about is ui.shadcn.com's, not on either local fixture. That
       trap (T9's half) is untouched by this change, as predicted
-- [ ] **T5** — evaluate `calc()` in a `color-mix()` percentage (6 declarations)
+- [x] **T5** — evaluate `calc()` in a `color-mix()` percentage — **landed
+      2026-07-26**. Tokenized with `tinycss2` (not a hand-rolled scanner — see
+      the corollary this prompted, below); a small recursive-descent evaluator
+      (`color.eval_calc_percentage`) handles literal `+ - * /` arithmetic over
+      the resulting numbers and percentages;
+      anything outside that — `var()`, mixed units, percent×percent, division
+      by a percentage — returns `None`, same as an unreadable mix always has.
+      Verified against a frozen `ui.shadcn.com` bundle, old code against new,
+      at the per-declaration color list: exactly six declarations move, all
+      `.shimmer-color-blue-500\/60 { --shimmer-color }`, three per theme — the
+      whole predicted blast radius and nothing else. Ground, warnings and
+      every other token are byte-identical; one new token (`#7caefb`) appears
+      in both themes. 98 → 100 tests, `ruff` clean, 3.11–3.14 verified
 - [ ] **T6** — an at-rule nested in a style rule loses its declarations —
       **the one that grows on its own** as CSS nesting spreads
 - [ ] **T7** — resolve `<html>` and `<body>` in separate pools
@@ -699,6 +711,19 @@ Repo and process:
 - [ ] **T14** — fixture corpus of small committed HTML files — **unblocks
       checking every other task**; a fresh clone can currently regenerate
       nothing
+- [ ] **T15** — audit hand-rolled scanning/parsing across the whole codebase
+      against the T5 corollary (defer to a library already in the dependency
+      set for anything it does correctly; hand-roll only what it can't do).
+      Candidates to check, not pre-judged: `cssparse.py`'s `var()`-fallback
+      and `!important` scanning, `color.py`'s `_split_top`/`_split_component`
+      (`tinycss2` groups commas and parens for you the same way it now does
+      for `calc()`), and `dom.py`'s `html.parser` tree shim versus `lxml`. The
+      last is the expensive one and not a mechanical swap like T5's: `lxml` is
+      a C extension, and `build.py`'s vendoring (`pip install --target`,
+      structurally asserted rather than smoke-tested — see T1) assumes pure
+      Python packages with no platform-specific wheels. Needs the owner's
+      explicit sign-off the same way the original `tinycss2`/`cssselect2`
+      migration did, not a unilateral swap under this task's cover
 - [x] **License** — `LICENSE.md` + the `[project.license]` and classifier
       entries — **landed 2026-07-26**. Owner chose the Hippocratic License
       3.0; see "License" under Outstanding work below
@@ -1018,21 +1043,68 @@ prop) → [hexa]`, per theme. Expect **additions** — this restores colors that
 currently resolve to nothing — which is the opposite direction from phase 4 and
 worth predicting before running.
 
-### T5 — Evaluate `calc()` in a `color-mix()` percentage
+### T5 — Evaluate `calc()` in a `color-mix()` percentage — landed 2026-07-26
 
 Six declarations corpus-wide, all `.shimmer-color-*` on ui.shadcn.com writing
-`color-mix(in oklch, <color> calc(60 * 1%), transparent)`. The mix is skipped
-whole (invariant 22), which is correct — defaulting to 50% would print a color
-the page does not paint.
+`color-mix(in oklch, <color> calc(60 * 1%), transparent)`. The mix used to be
+skipped whole (invariant 22), which was correct at the time — defaulting to
+50% would have printed a color the page does not paint.
 
-Needs a small `calc()` evaluator: the corpus only exercises literal arithmetic,
-but `calc()` also takes `var()`, nested calls, and mixed units, so decide the
-supported subset up front and **return `None` outside it**, per the standing
-"parse or return `None`, never guess" convention.
+**Landed.** `color.py` gained a small recursive-descent `calc()` evaluator
+(`_calc_expr` / `_calc_term` / `_calc_factor`, entry point
+`eval_calc_percentage`) restricted to `+ - * /` and parens over bare numbers
+and percentages, typed the way CSS itself types them: like units add,
+`<number> * <percentage>` gives a percentage, `<percentage> * <percentage>`
+and division by a percentage do not. `_mix_component` calls it when a
+component's percentage is a `calc(...)` call spanning the rest of the
+component text; anything outside the subset — `var()` inside the `calc()`,
+another unit, trailing junk after the call, an unbalanced expression — returns
+`None` and the whole mix stays unreadable, exactly as it was before this task
+for everything not in scope.
 
-**Diff level:** per-declaration color list on ui.shadcn.com. Six declarations
-is the whole predicted blast radius — if anything else moves, the evaluator is
-reaching further than intended.
+**Tokenizing went through one revision.** The first cut hand-rolled a regex
+tokenizer (`_calc_tokenize`) over the `calc()` body's raw text — the exact
+"parsing refuses to guess" module reaching for its own string scanner instead
+of the `tinycss2` dependency already sitting one file away. Challenged on it:
+`tinycss2.parse_component_value_list()` already tokenizes CSS numeric syntax
+correctly (percentages, a dimension's unit split cleanly off, scientific
+notation, a leading sign folded into the number) and groups nested parens
+into a `ParenthesesBlock` and nested functions into a `FunctionBlock` — the
+regex re-derived a worse version of exactly that, and silently failed to
+tokenize `calc(1e2% / 2)` (valid CSS) because the regex had no scientific-
+notation branch. Replaced `_calc_tokenize` with `_calc_tokens`, which calls
+`tinycss2` directly and hands the recursive-descent evaluator real token
+objects instead of raw strings; the evaluator itself — the arithmetic and
+type-checking, which no CSS tokenizer performs — is unchanged. Re-verified
+byte-identical against the same frozen `ui.shadcn.com` bundle (below), and
+`calc(1e2% / 2)` now evaluates where it previously returned `None`. This
+prompted a standing corollary to the accuracy-first priority note at the top
+of this file: defer to a library already in the dependency set for anything
+it does correctly, codebase-wide, not only in the parser — see `CLAUDE.md`.
+
+Verified against a **frozen** `ui.shadcn.com` bundle (fetched once, same
+pickle fed to old and new code via `git stash push palettekit/color.py`, so
+the diff cannot be site drift), at the per-declaration color list — the level
+this task specified before writing any code: **exactly six declarations
+move**, three per theme, all `.shimmer-color-blue-500\/60 { --shimmer-color }`
+— the whole predicted blast radius, integer for integer. Ground
+(`#f5f5f5` / `#262626`, both inferred) and every warning are unchanged; the
+only palette-level change is one new token, `#7caefb` (`blue-15`/`blue-16`
+depending on theme, merged from `#3080ff` at the mix's own alpha), appearing
+in both themes.
+
+Two new tests: `test_a_literal_calc_percentage_in_a_mix_is_evaluated` (the
+corpus shape and a few other operators, each checked against the same mix
+written as a plain percentage rather than merely asserting *some* color came
+back) and `test_calc_outside_the_supported_subset_yields_nothing` (mixed
+units, percent×percent, division by a percentage, and two malformed shapes).
+`test_a_mix_that_cannot_be_evaluated_yields_nothing`'s old `calc(2 * 30%)`
+example was replaced with `calc(50% - var(--x))`, since the former is now
+evaluable and would no longer illustrate the invariant it sits under. Both new
+tests were run against the pre-fix code first and confirmed to fail/pass as
+expected (the "evaluated" test errors with `NoneType has no attribute hexa`;
+the "outside the subset" test already passes, since everything currently
+returns `None`). 98 → 100 tests, `ruff` clean, 3.11–3.14 verified.
 
 ### T6 — An at-rule nested inside a style rule loses its declarations
 

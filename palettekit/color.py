@@ -1,14 +1,23 @@
-"""Color parsing and conversion. Standard library only.
+"""Color parsing and conversion.
 
 Everything downstream depends on this being right, so the conversions are the
 published matrices rather than approximations, and parsing refuses to guess:
 a value it doesn't understand returns None instead of a plausible-looking color.
+
+Reuses `tinycss2`'s tokenizer where a sub-value needs real CSS tokenization —
+a `calc()` body, currently — rather than re-deriving CSS numeric syntax and
+paren/function nesting by hand. Defer to a library already in the dependency
+set for anything it already does correctly; hand-roll only what it can't do
+(the arithmetic and CSS-type-checking `calc()` evaluation itself, which no
+CSS tokenizer performs).
 """
 from __future__ import annotations
 
 import math
 import re
 from dataclasses import dataclass
+
+import tinycss2
 
 # ---------------------------------------------------------------- named colors
 
@@ -825,6 +834,129 @@ def _split_component(text: str) -> tuple[str, str] | None:
     return (text[:end].strip(), text[end:].strip())
 
 
+_CALC_CALL = re.compile(r"^calc\(", re.I)
+
+
+def _calc_tokens(body: str) -> list:
+    """A `calc()` body's meaningful tokens, via `tinycss2`'s own tokenizer.
+
+    `tinycss2` already tokenizes CSS numeric syntax correctly — percentages,
+    a unit split cleanly off a dimension, scientific notation, a leading sign
+    folded into the number — and groups nested parens into a
+    `ParenthesesBlock` and nested functions into a `FunctionBlock`. Re-deriving
+    any of that by hand (as an earlier version of this function did, with a
+    regex) duplicates work the tokenizer this project already depends on does
+    correctly, for a worse result. Whitespace and comments carry no meaning
+    here, so they are dropped rather than threaded through the grammar below.
+    """
+    return [t for t in tinycss2.parse_component_value_list(body, skip_comments=True)
+            if t.type != "whitespace"]
+
+
+def _calc_factor(tokens: list, pos: list[int]) -> tuple[float, str | None] | None:
+    """One signed number/percentage, or a parenthesized sub-expression."""
+    if pos[0] >= len(tokens):
+        return None
+    tok = tokens[pos[0]]
+    if tok.type == "literal" and tok.value == "+":
+        pos[0] += 1
+        return _calc_factor(tokens, pos)
+    if tok.type == "literal" and tok.value == "-":
+        pos[0] += 1
+        inner = _calc_factor(tokens, pos)
+        if inner is None:
+            return None
+        return (-inner[0], inner[1])
+    if tok.type == "() block":
+        pos[0] += 1
+        inner_tokens = [t for t in tok.content if t.type != "whitespace"]
+        inner_pos = [0]
+        result = _calc_expr(inner_tokens, inner_pos)
+        if result is None or inner_pos[0] != len(inner_tokens):
+            return None
+        return result
+    if tok.type == "number":
+        pos[0] += 1
+        return (tok.value, None)
+    if tok.type == "percentage":
+        pos[0] += 1
+        return (tok.value, "%")
+    # A dimension (any unit but `%`), a function (`var()`, `min()`, nested
+    # `calc()`), or anything else is outside the supported subset.
+    return None
+
+
+def _calc_term(tokens: list, pos: list[int]) -> tuple[float, str | None] | None:
+    left = _calc_factor(tokens, pos)
+    if left is None:
+        return None
+    value, unit = left
+    while (pos[0] < len(tokens) and tokens[pos[0]].type == "literal"
+           and tokens[pos[0]].value in ("*", "/")):
+        op = tokens[pos[0]].value
+        pos[0] += 1
+        right = _calc_factor(tokens, pos)
+        if right is None:
+            return None
+        rvalue, runit = right
+        if op == "*":
+            # CSS types this as <number> * <percentage>; percent * percent has
+            # no percentage-typed result, so it is outside the subset.
+            if unit and runit:
+                return None
+            value, unit = value * rvalue, (unit or runit)
+        else:
+            # A percentage divisor has no reciprocal in this type system.
+            if runit or rvalue == 0:
+                return None
+            value = value / rvalue
+    return (value, unit)
+
+
+def _calc_expr(tokens: list, pos: list[int]) -> tuple[float, str | None] | None:
+    left = _calc_term(tokens, pos)
+    if left is None:
+        return None
+    value, unit = left
+    while (pos[0] < len(tokens) and tokens[pos[0]].type == "literal"
+           and tokens[pos[0]].value in ("+", "-")):
+        op = tokens[pos[0]].value
+        pos[0] += 1
+        right = _calc_term(tokens, pos)
+        if right is None:
+            return None
+        rvalue, runit = right
+        # <percentage> + <number> is not a valid CSS type; only like units add.
+        if unit != runit:
+            return None
+        value = value + rvalue if op == "+" else value - rvalue
+    return (value, unit)
+
+
+def eval_calc_percentage(body: str) -> float | None:
+    """Evaluate a `calc()` body restricted to literal percentage arithmetic.
+
+    Tokenizing is `tinycss2`'s job (`_calc_tokens`); this is the part no CSS
+    library does for you — walking the token tree with CSS's own type rules
+    for `calc()` (matched at each operator above) and refusing anything
+    outside that: `var()`, a unit other than `%`, nested `min()`/`max()`,
+    percent×percent, division by a percentage. `None` rather than a guess,
+    same as an unrecognised interpolation space or a `color-mix()` this tool
+    cannot otherwise read.
+    """
+    tokens = _calc_tokens(body)
+    if not tokens:
+        return None
+    pos = [0]
+    result = _calc_expr(tokens, pos)
+    if result is None or pos[0] != len(tokens):
+        return None
+    value, unit = result
+    if unit != "%":
+        return None
+    return value
+
+
 def _mix_component(text: str, appearance: str) -> tuple[Color, float | None] | None:
     """One `color-mix()` argument: its color and its percentage, if written.
 
@@ -833,8 +965,9 @@ def _mix_component(text: str, appearance: str) -> tuple[Color, float | None] | N
     is the entire mechanism by which Tailwind expresses opacity, and reading it
     as "no color" would throw the declaration away.
 
-    A percentage this tool cannot evaluate — `calc(2 * 30%)` — makes the whole
-    mix unreadable rather than defaulting. Guessing 50% would print a color the
+    A `calc()` percentage evaluates when it is literal arithmetic (T5); outside
+    that subset — a `var()` inside it, mixed units — it makes the whole mix
+    unreadable rather than defaulting. Guessing 50% would print a color the
     page does not paint.
     """
     split = _split_component(text)
@@ -849,6 +982,14 @@ def _mix_component(text: str, appearance: str) -> tuple[Color, float | None] | N
             return None
     if not pct_text:
         return (color, None)
+    if _CALC_CALL.match(pct_text):
+        end = balanced_end(pct_text, pct_text.index("("))
+        if end < 0 or end != len(pct_text):
+            return None
+        pct = eval_calc_percentage(pct_text[pct_text.index("(") + 1:end - 1])
+        if pct is None:
+            return None
+        return (color, max(0.0, min(100.0, pct)))
     m = _PERCENT.match(pct_text)
     if not m:
         return None
@@ -961,11 +1102,13 @@ def find_colors(value: str, appearance: str = "light") -> list[Color]:
     paints — the mix is.
 
     **A call this tool cannot evaluate contributes nothing, rather than falling
-    back to the arguments inside it.** `color-mix(in oklch, #b4d455 calc(2 *
-    30%), transparent)` has a readable hex in it and that hex is not on the
-    page; reporting it would be exactly the plausible-looking guess this module
-    exists to refuse. It costs a handful of real declarations on the corpus and
-    is visible only at the per-declaration level — see `PLAN.md` phase 4.
+    back to the arguments inside it.** `color-mix(in oklch, #b4d455 calc(50% -
+    var(--x)), transparent)` has a readable hex in it and that hex is not on
+    the page; reporting it would be exactly the plausible-looking guess this
+    module exists to refuse. A `calc()` percentage that is literal arithmetic
+    — `calc(60 * 1%)` — evaluates instead (`eval_calc_percentage`, T5); this
+    remains visible only at the per-declaration level — see `PLAN.md` phase 4
+    and T5.
     """
     out = []
     spans = _whole_value_spans(value)

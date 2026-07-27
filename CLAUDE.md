@@ -29,6 +29,27 @@ the old one and have both since been acted on: the cascade is implemented
 (invariant 21), and `color-mix()`/`light-dark()` are parsed rather than skipped
 (invariants 22–23). `PLAN.md`'s four phases are all landed.
 
+**Corollary, set by the owner (2026-07-26): defer to a library already in the
+dependency set for anything it already does correctly; hand-roll only what it
+cannot do.** This applies everywhere in the codebase, not only in the parser.
+`color.py`'s `calc()` evaluator is the example that prompted stating it
+explicitly: it tokenizes a `calc()` body with `tinycss2` (which already
+handles CSS numeric syntax, dimension units, and paren/function nesting
+correctly) and hand-rolls only the arithmetic and CSS-type-checking evaluation
+on top — the one part no CSS tokenizer performs. An earlier version of that
+evaluator hand-rolled its own regex tokenizer instead, alongside a comment
+claiming `color.py` was "standard library only"; both were wrong under this
+priority and have been corrected. Read this alongside invariants 16 and 17
+before assuming every remaining hand-rolled scanner in the codebase is stale
+by the same reasoning, though — some already weighed the library option and
+were kept for a stated reason unrelated to slimness (`dom.py`'s tree shim
+rules out `lxml` because it is a C extension and the zipapp's vendoring model
+assumes pure Python; `split_selector_list` survived cssselect2 because several
+of its callers run over selectors that are not guaranteed to compile).
+Whether a broader dependency, like trading the pure-Python floor for `lxml`,
+is worth taking is still the owner's call to make explicitly, the same way the
+`tinycss2`/`cssselect2` migration itself was.
+
 The core takes two dependencies, both pure Python and both by the same authors:
 **`tinycss2`** (one transitive dep, `webencodings`) tokenises, and
 **`cssselect2`** (whose only dep is `tinycss2`) parses selectors, matches them,
@@ -41,7 +62,7 @@ reached only through `images.py`, behind `--images`.
 
 ```bash
 python3 -m palettekit <target> -o out    # target: .har | URL | .html/.css path
-python3 test_palettekit.py               # 98 tests, all must pass (needs the deps)
+python3 test_palettekit.py               # 100 tests, all must pass (needs the deps)
 python3 -m palettekit x.har --no-themes  # collapse a two-theme site into one
 ruff check .                             # must stay clean; config in pyproject
 python3 -m palettekit x.har --list-sources   # diagnose framework noise first
@@ -157,7 +178,7 @@ sources.py   →  cssparse.py  →  extract.py  →  emit.py
 
 | File | Lines | Holds |
 |---|---:|---|
-| `color.py` | 1004 | `Color`, parsing, sRGB↔OKLab/CIE Lab/XYZ both ways, `color-mix()`, `light-dark()`, contrast, hue names |
+| `color.py` | 1147 | `Color`, parsing, sRGB↔OKLab/CIE Lab/XYZ both ways, `color-mix()`, `light-dark()`, `calc()`, contrast, hue names |
 | `cssparse.py` | 803 | `tinycss2` integration, `var()`, `selector_weight`, roles, theme scopes, `@layer` names |
 | `dom.py` | 300 | `html.parser` → `ElementTree` shim, `cssselect2` matching of `<html>`/`<body>`, specificity |
 | `sources.py` | 292 | `load_har` / `load_url` / `load_paths` → `Bundle` |
@@ -176,10 +197,24 @@ a `<script type="application/json">`.
 bumps it, a removed or re-typed one does. The compatibility promise lives in
 `README.md`'s Output section, not only here.
 
-**`Declaration` is the parser seam.** `tinycss2` stops at `cssparse._walk`;
-nothing downstream of `Declaration` knows a tokeniser exists, which is what
-made the phase-1 swap reviewable and revertible. Keep it that way. Three notes
-on what `_walk` produces:
+**`Declaration` is the parser seam for the declaration-producing pipeline.**
+`tinycss2` stops at `cssparse._walk` for *that* purpose — turning a
+stylesheet into `Declaration` objects — which is what made the phase-1 swap
+reviewable and revertible, and still describes how a `Declaration`'s `value`
+reaches everything downstream: as a plain string, not a token stream.
+
+That is narrower than "nothing downstream of `Declaration` knows a tokeniser
+exists," which this file used to claim outright and which the T5 corollary
+above supersedes: `color.py`'s `calc()` evaluator (downstream of
+`Declaration` by any reading) tokenizes a `calc()` body with `tinycss2`
+directly, because it is the right tool for that narrow, self-contained
+sub-problem and re-deriving it by hand was the actual mistake. The
+distinction that still matters is that this is a **library used directly for
+what it's good at**, not the cascade-aware pipeline the seam language was
+protecting — nothing about var() resolution, theme scoping, or the cascade
+itself moved into `color.py`, and `color.py`'s own tests still call
+`parse_color()`/`find_colors()` on a plain string with no `Declaration`
+involved. Three notes on what `_walk` produces:
 
 - `var_refs` is collected from **every** declaration, including properties the
   role table drops. It decides `live` vs `saved` (invariant 10), and narrowing
@@ -596,15 +631,37 @@ because the obvious implementation produced plausible but wrong output.
 
 22. **A `color-mix()` this tool cannot evaluate contributes nothing — not the
     colors written inside it** (`find_colors`, phase 4). `color-mix(in oklch,
-    #b4d455 calc(2 * 30%), transparent)` has a perfectly readable hex in it and
-    the page paints a translucent version of it, not that. Before phase 4 the
-    token scan reached inside and reported the hex at full opacity; now the
-    call is evaluated as a unit or skipped as a unit. Same for `light-dark()`:
-    if the branch this theme selects will not parse, the *other* branch is not
-    a fallback, because it is a color this theme does not use. Costs six
-    declarations corpus-wide, all `calc()` percentages. Tests:
-    `test_a_mix_that_cannot_be_evaluated_yields_nothing`,
+    #b4d455 calc(50% - var(--x)), transparent)` has a perfectly readable hex in
+    it and the page paints a translucent version of it, not that. Before
+    phase 4 the token scan reached inside and reported the hex at full
+    opacity; now the call is evaluated as a unit or skipped as a unit. Same
+    for `light-dark()`: if the branch this theme selects will not parse, the
+    *other* branch is not a fallback, because it is a color this theme does
+    not use. Tests: `test_a_mix_that_cannot_be_evaluated_yields_nothing`,
     `test_a_branch_that_will_not_parse_yields_nothing`.
+
+    **A `calc()` percentage evaluates when it is literal arithmetic** (`T5`,
+    `color.eval_calc_percentage`) — `calc(60 * 1%)` is the shape
+    ui.shadcn.com's `.shimmer-color-*` declarations ship, six of them
+    corpus-wide, and defaulting them to 50% would have printed a color the
+    page does not paint, same reasoning as everywhere else in this invariant.
+    The evaluator is a small recursive-descent grammar over `+ - * /` and
+    parens, typed the way CSS itself types `calc()`: like units add,
+    `<number> * <percentage>` is a percentage, `<percentage> * <percentage>`
+    and division by a percentage are not (there is no percentage-squared or
+    percentage-reciprocal type to hand back). **`var()` inside the `calc()`,
+    any unit other than `%`, and anything else outside that grammar returns
+    `None`** — the guaranteed-invalid-keyword handling invariant 26 needed for
+    `initial` is a narrow, deliberate exception to "parse or refuse" made at
+    one call site for one keyword; this is the opposite shape, a generic
+    evaluator that refuses everything it wasn't built to type-check, rather
+    than special-casing the one shape the corpus happens to ship. Verified
+    against a frozen `ui.shadcn.com` bundle, old code against new, at the
+    per-declaration color list: exactly six declarations move, three per
+    theme, all `.shimmer-color-blue-500\/60 { --shimmer-color }` — the whole
+    predicted blast radius. Ground and every other token are unchanged. Tests:
+    `test_a_literal_calc_percentage_in_a_mix_is_evaluated`,
+    `test_calc_outside_the_supported_subset_yields_nothing`.
 
     **The zero-alpha short circuit in `mix_colors` is accuracy, not speed.**
     `color-mix(in <space>, X p%, transparent)` is Tailwind's opacity modifier
@@ -826,9 +883,11 @@ Tailwind config should even look like first.
   **`color-mix()` and `light-dark()` are parsed** since phase 4 — 895 and 70
   declarations on the corpus respectively — in eleven interpolation spaces:
   `srgb`, `srgb-linear`, `hsl`, `hwb`, `lab`, `lch`, `oklab`, `oklch`, `xyz`,
-  `xyz-d50`, `xyz-d65`. A space outside that list returns `None`, as does a
-  `calc()` percentage. Invariants 22–23 are what the implementation is *not*
-  allowed to do; read them before touching `mix_colors`.
+  `xyz-d50`, `xyz-d65`. A space outside that list returns `None`. A `calc()`
+  percentage evaluates when it is literal arithmetic (`T5`) and returns `None`
+  outside that subset — see invariant 22's `calc()` note. Invariants 22–23 are
+  what the implementation is *not* allowed to do; read them before touching
+  `mix_colors`.
 - Comments explain *why*, especially where a line looks redundant. Most of the
   invariants above are also stated at their call site — keep them in sync.
 - Emitted token names sort naturally (`_natural`): `ink-2` before `ink-10`.
@@ -920,12 +979,14 @@ Tailwind config should even look like first.
   real rule, by a defensible mechanism, and was still not the color on the
   screen. Both wrong answers were self-consistent. What settled it each time was
   evidence from outside the parse: a screenshot of the running site.
-- **A `calc()` inside a `color-mix()` percentage is not evaluated**, so the
-  whole mix is skipped (invariant 22). Six declarations corpus-wide, all
-  `.shimmer-color-*` on ui.shadcn.com writing
-  `color-mix(in oklch, <color> calc(60 * 1%), transparent)`. Reaching them
-  needs a `calc()` evaluator, which is a separate piece of work; defaulting to
-  50% would print a color the page does not paint.
+- **A `calc()` inside a `color-mix()` percentage evaluates only literal
+  arithmetic** (`T5`, landed 2026-07-26 — see invariant 22). `var()` inside the
+  `calc()`, a unit other than `%`, percent×percent, and division by a
+  percentage all still skip the whole mix rather than guessing, because none
+  of them has a defined percentage-typed answer this tool can compute without
+  either resolving a variable it isn't positioned to resolve or inventing a
+  unit conversion. Not observed on the corpus beyond the shape T5 already
+  fixed; the remaining gap is theoretical until a site exercises it.
 
 - **A custom property whose winning definition is a value set on an element
   the `var()` is not consumed on resolves to that value anyway.** This is the

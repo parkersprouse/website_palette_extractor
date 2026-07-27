@@ -714,22 +714,61 @@ Repo and process:
 - [ ] **T14** — fixture corpus of small committed HTML files — **unblocks
       checking every other task**; a fresh clone can currently regenerate
       nothing
-- [ ] **T15** — audit hand-rolled scanning/parsing across the whole codebase
+- [x] **T15** — audit hand-rolled scanning/parsing across the whole codebase
       against the T5 corollary (defer to a library already in the dependency
       set for anything it does correctly; hand-roll only what it can't do).
-      **Partially landed 2026-07-26; see the full write-up below.** Done:
+      **Landed 2026-07-27; see the full write-up below.** Done:
       `color.py`'s `_split_top`/`_split_component` now tokenize with
       `tinycss2` instead of hand-rolled depth-counting — same risk profile as
       T5, verified byte-identical on the frozen `ui.shadcn.com` bundle.
+      **A second, real bug turned up finishing the audit's second half**
+      (`cssparse.py`/`extract.py`, not `color.py`): `_VAR_NAME` was defined
+      twice at `cssparse.py` module scope, so the second definition silently
+      shadowed the first, and the `var_refs` collection that decides `live`
+      vs `saved` (invariant 10) was running the *wrong* pattern — one with no
+      `var(` anchor at all, so it read any `--name`-shaped text anywhere in a
+      value as a reference. Confirmed on the live corpus, not just a
+      synthetic case: ground.news ships Tailwind arbitrary-value utilities
+      like `.bg-\[--color-bg\]{background-color:--color-bg}`, a bare dashed
+      identifier used directly as a value (invalid CSS, paints nothing) —
+      the old pattern misread that literal text as a reference to
+      `--color-bg`. Replaced with a token walk (`_var_ref_names`) that only
+      recognizes an actual `FunctionBlock` named `var`, recursing into every
+      function/block's contents so a `var()` nested in another `var()`'s own
+      fallback still counts. `extract.py` carried its own duplicate of the
+      correct pattern for the same job in `_triplet_warning`; both now share
+      `cssparse.var_refs`. 101 → 103 tests, `ruff` clean. Diffed at the
+      aggregate `var_refs`-set level per phase 4's methodology: byte-identical
+      `to_document` output on `fleshandbonedesign.com.har` and on frozen
+      `ui.shadcn.com`/`tailwindcss.com` bundles; ground.news is the only
+      corpus site that moves, `customPropertiesReferenced` 159 → 158 for the
+      light theme, exactly the predicted shape.
       Reviewed and left alone: `_whole_value_spans`/`balanced_end` — already
       delegates the hard part to a shared, quote/escape-aware utility, and
       switching to tokens would trade a working solution for the fragility of
       reconstructing string offsets from a token list, with no accuracy gain.
-      **Two findings need the owner's explicit sign-off before anyone touches
-      them, each roughly the size of the `dom.py`/`lxml` question — filed as
-      T16 and T17 rather than left as unfiled findings.** Not touched:
-      `dom.py`'s `html.parser` tree shim versus `lxml` — see its own note
-      below, unchanged from the original scope of this task
+      `cssparse.py`'s theme/selector regexes (`_THEME_MEDIA`, `_THEME_CLASS`,
+      `_THEME_IS`, `_THEME_ATTR`, `_REDUNDANT_HTML`, `_NOT_OPEN`) and
+      `extract.py`'s `_PAGE_SEL` — invariant 17 already covers these: every
+      caller runs over raw preludes that may not compile, or over
+      `strip_theme_scope` output that can itself be invalid, so a
+      `cssselect2`-compiled form isn't available to switch to. The anchored
+      validators (`_HEX`, `_FUNC`, `_PERCENT`, `_CALC_CALL`, `_TRIPLET`,
+      `_ZERO_LEN`, `_WS`) match a whole, already-delimited string rather than
+      scanning one, so there is no tokenization being re-derived.
+      `is_inert_shadow`'s regexes work the same way, on an already-isolated
+      `drop-shadow()`/shadow value. The HTML-scanning regexes
+      (`_STYLE_OR_LINK`/`_document_order`, `extract_style_blocks`,
+      `extract_stylesheet_links`, `parse_inline_styles`'s attribute regex) are
+      a different domain entirely — neither `tinycss2` nor `cssselect2` parses
+      HTML, and `dom.py`'s `html.parser` shim is deliberately narrow (only
+      `<html>`/`<body>` ancestry); reusing it for general markup extraction is
+      a `dom.py`/`lxml`-sized question of its own, not a mechanical swap, and
+      stays unfiled. **Two findings still need the owner's explicit sign-off
+      before anyone touches them, each roughly the size of the `dom.py`/`lxml`
+      question — filed as T16 and T17 rather than left as unfiled findings.**
+      Not touched: `dom.py`'s `html.parser` tree shim versus `lxml` — see its
+      own note below, unchanged from the original scope of this task
 - [ ] **T16** — rewrite `resolve_vars`'s `var()` substitution on `tinycss2`
       tokens instead of text, replacing the `_GLUE_LEFT`/`_GLUE_RIGHT`
       glue-padding heuristic with `tinycss2.serialize()`'s own adjacency
@@ -1303,7 +1342,7 @@ all six of its anchors exactly**. It cannot detect a parser regression. The
 breadth check can, and the breadth check needs network and frozen bundles —
 committed fixtures are what make that offline and reviewable.
 
-### T15 — Audit hand-rolled scanning against the T5 corollary — partially landed 2026-07-26
+### T15 — Audit hand-rolled scanning against the T5 corollary — landed 2026-07-27
 
 Raised while reviewing T5: the first cut of the `calc()` evaluator hand-rolled
 a regex tokenizer even though `tinycss2` — already a dependency — tokenizes
@@ -1351,6 +1390,110 @@ a new and less obvious source of drift, for no accuracy gain. Not everything
 that scans a string by hand is the mistake T5 found — only the part that
 re-derives something a library already gets right *and* fails on real input,
 which this does not.
+
+**The rest of the audit, finishing the "whole codebase" scope the task title
+promises, turned up one more landed fix and a set of fast verdicts:**
+
+**Landed:** `cssparse.py` defined `_VAR_NAME` twice at module scope —
+`r"var\(\s*(--[\w-]+)"` (intended for `var_refs` collection) and, later in the
+file, `r"\s*(--[\w-]+)\s*"` (intended only for `_var_call`'s already-positioned
+`.match()`). The second silently shadowed the first, so `_walk`'s
+`sheet.var_refs.update(_VAR_NAME.findall(value))` — the collection invariant
+10 relies on to decide `live` vs `saved` — was actually running the unanchored
+pattern, which reads any `--name`-shaped text anywhere in a value as a
+reference, `var(` or not.
+
+This is exactly the corollary's two-prong test, not a style complaint: it
+re-derives what a `FunctionBlock` token already gives unambiguously, *and* it
+fails on real input. Confirmed on the corpus rather than a synthetic case —
+ground.news ships Tailwind arbitrary-value utilities that put a bare custom
+property name directly in the value position:
+
+```css
+.bg-\[--color-bg\]{background-color:--color-bg}
+.border-\[--color-border\]{border-color:--color-border}
+```
+
+Neither is a `var()` call — Tailwind's `[--name]` arbitrary-value syntax means
+"use this exact text as the value," and a bare dashed-ident isn't a valid
+`background-color`, so the declaration paints nothing. The shadowed pattern
+still matched the literal text `--color-bg`/`--color-border` inside it and
+counted both as referenced. A third name,
+`--radix-dropdown-menu-content-transform-origin`, moved the same way via
+`.origin-\[--radix-dropdown-menu-content-transform-origin\]`.
+
+Fixed with `_var_ref_names`, a recursive token walk: only a `FunctionBlock`
+whose `.lower_name` is `var` contributes a name, taken from the first
+non-whitespace token in `.arguments`; every function/block's contents are
+still recursed into regardless, so a `var()` nested inside another `var()`'s
+own fallback — `var(--a, var(--b, red))` — still yields both names, matching
+what the old regex's unrestricted `.findall` happened to catch by accident.
+`extract.py` carried an exact duplicate of the correctly-anchored pattern for
+the same job in `_triplet_warning`; both call sites now share one function,
+`cssparse.var_refs`.
+
+**Diffed at the aggregate `var_refs`-set level, phase 4's shape.** Per-sheet
+`var_refs` sets are identical old-to-new on every stylesheet and inline-style
+source in `ground.news.har` and `fleshandbonedesign.com.har` **except** the
+one file above; `to_document` output (minus `generated`) is **byte-identical**
+on `fleshandbonedesign.com.har` and on frozen `ui.shadcn.com` and
+`tailwindcss.com` bundles (fetched live and pickled once, then run old code
+against new against the same frozen `Bundle` — the T4 lesson about not
+re-fetching between runs, applied here since no committed fixture exists for
+either site per T14). ground.news is the only site that moves: the aggregate
+`var_refs` set shrinks by 3 (228 → 225: `--color-bg`, `--color-border`,
+`--radix-dropdown-menu-content-transform-origin`), but
+`customPropertiesReferenced` only drops by one, 159 → 158 for the light theme
+— that stat is `len([k for k in table if k in all_var_refs])`, an intersection
+with the theme's *defined* custom-property table, and `--color-bg` and the
+`--radix-…` name are referenced-but-never-defined on this site, so only
+`--color-border` was ever a key in `table` to begin with. That one token's
+score shifts (83.94 → 79.48, ~5%) because `_build`'s `w *= 1.2 if d.prop in
+all_var_refs else 0.35` (`extract.py`) no longer boosts *the one declaration*
+that defines `--color-border` — the boost is per-declaration, not applied to
+the token as a whole, which is why a 3.4× swing on one input only moves the
+merged score a few percent. The exact shape T15's corollary predicts either
+way: a library doing the job more correctly moves occurrence-derived numbers,
+not hex sets. No color, ground, or hex entered or left any palette. Two new
+tests
+(`test_var_refs_do_not_read_string_content`,
+`test_var_refs_recurse_into_a_fallback`) cover the invariant-9-shaped case
+(a string literal is not a reference) directly, since the corpus shape that
+actually tripped it — a bare value, not a string — is ground.news-specific and
+not worth hard-coding into a unit test. 101 → 103 tests, `ruff` clean.
+
+**Fast verdicts, the rest of the file-by-file pass:**
+
+- `cssparse.py`'s theme/selector regexes (`_THEME_MEDIA`, `_THEME_CLASS`,
+  `_THEME_IS`, `_THEME_ATTR`, `_REDUNDANT_HTML`, `_NOT_OPEN`) and
+  `extract.py`'s `_PAGE_SEL`/`selector_weight` regexes — invariant 17 already
+  settled this and says not to re-derive the prediction a third time: every
+  caller runs over raw preludes that may not compile, or over
+  `strip_theme_scope` output that can itself be invalid (`:is( , …)`), so
+  there is no guaranteed-valid `cssselect2`-compiled form to switch to.
+- The anchored validators — `_HEX`, `_FUNC`, `_PERCENT`, `_CALC_CALL`,
+  `_TRIPLET`, `_ZERO_LEN`, `_WS` — match a whole, already-delimited string
+  (`^...$`) rather than scanning one for a match anywhere in it. They are
+  validators, not scanners, and re-derive no tokenization.
+- `is_inert_shadow`'s regexes (strip color literals out of a `drop-shadow()`
+  body, check what's left is all zero-length) work the same way
+  `_whole_value_spans` does: on an already-isolated single value, needing the
+  leftover text rather than a token list. Same verdict, same reasoning.
+- The HTML-scanning regexes — `extract.py`'s `_STYLE_OR_LINK`/
+  `_document_order`, and `cssparse.py`'s `extract_style_blocks`,
+  `extract_stylesheet_links`, and `parse_inline_styles`'s attribute regex —
+  are a different domain than the rest of this task entirely. Neither
+  `tinycss2` nor `cssselect2` parses HTML; the closest thing in the
+  dependency set is `dom.py`'s own `html.parser` tree shim, and that shim is
+  deliberately narrow, built to answer one question (does `<html>`/`<body>`
+  match a selector) and documented as not modelling general structure.
+  Extending it to general markup extraction — ident recognition, tag/attr
+  scanning in document order — is a project roughly the size of the
+  `dom.py`/`lxml` question below, not a mechanical swap, and is noted here
+  rather than filed. (In passing: `cssparse.extract_style_blocks` has no
+  remaining caller — `extract.py` grew its own `_document_order` and uses
+  that instead. Dead code, not a corollary finding; left alone rather than
+  pulled into this task's diff.)
 
 **Two findings are flagged, not landed, and need the owner's sign-off before
 anyone acts on them — each is roughly the size of the `dom.py`/`lxml`

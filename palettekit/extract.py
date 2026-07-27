@@ -21,6 +21,7 @@ from .cssparse import (
     resolve_vars,
     selector_weight,
     split_selector_list,
+    var_refs,
 )
 from .dom import (
     PageElement,
@@ -508,7 +509,6 @@ def _theme_plan(scopes: set[str]) -> list[tuple[str, str]]:
 # any function, and allowing more invites false matches on ordinary lengths.
 _NUM = r"[+-]?(?:\d+\.?\d*|\.\d+)%?"
 _TRIPLET = re.compile(rf"^{_NUM}(?:\s+{_NUM}){{2}}(?:\s*/\s*{_NUM})?$")
-_VAR_NAME = re.compile(r"var\(\s*(--[\w-]+)")
 
 
 def _triplet_warning(sheets: list[Stylesheet], table: dict[str, str]) -> str:
@@ -540,7 +540,7 @@ def _triplet_warning(sheets: list[Stylesheet], table: dict[str, str]) -> str:
             resolved = resolve_vars(d.value, table).strip()
             if _colors_of(resolved) or not _TRIPLET.match(resolved):
                 continue
-            for name in _VAR_NAME.findall(d.value):
+            for name in var_refs(d.value):
                 if _TRIPLET.match(table.get(name, "").strip()):
                     culprits.setdefault(name, set()).add(d.prop)
     if not culprits:

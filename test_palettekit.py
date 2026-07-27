@@ -27,6 +27,7 @@ from palettekit.cssparse import (
     split_selector_list,
     strip_theme_scope,
     theme_scope,
+    var_refs,
 )
 from palettekit.dom import matches_page_element, page_elements
 from palettekit.extract import layer_order
@@ -153,6 +154,36 @@ class TestCss(unittest.TestCase):
         sheet = parse_stylesheet(css, "t")
         found = [c.hex for d in sheet.declarations for c in find_colors(d.value)]
         self.assertEqual(found, ["#0000ff"])
+
+    def test_var_refs_do_not_read_string_content(self):
+        """A `--name`-shaped string literal is not a reference to that property.
+
+        `var_refs` used to be a regex over the serialized value with no token
+        boundaries, so `content: "--foo"` counted as a reference to `--foo`
+        the same way `var(--foo)` would — invariant 9's mistake, recurring one
+        step downstream of color reading, in the collection that decides
+        `live` vs `saved` (invariant 10) rather than in `find_colors` itself.
+        """
+        sheet = parse_stylesheet(
+            '.a { content: "--foo"; } .b { width: var(--used); }', "t")
+        self.assertNotIn("--foo", sheet.var_refs)
+        self.assertIn("--used", sheet.var_refs)
+
+    def test_var_refs_recurse_into_a_fallback(self):
+        """A `var()` nested inside another `var()`'s own fallback still counts.
+
+        Tailwind's gradient stops nest three deep this way (invariant 25):
+        `var(--tw-gradient-stops, var(--tw-gradient-via-stops, var(--x) 0%,
+        var(--y) 100%))`. Every name has to survive the recursion, not just
+        the outermost one.
+        """
+        self.assertEqual(var_refs("var(--a, var(--b, red))"), {"--a", "--b"})
+        self.assertEqual(
+            var_refs("var(--tw-gradient-stops, var(--tw-gradient-via-stops, "
+                     "var(--tw-gradient-from) 0%, var(--tw-gradient-to) 100%))"),
+            {"--tw-gradient-stops", "--tw-gradient-via-stops",
+             "--tw-gradient-from", "--tw-gradient-to"},
+        )
 
     def test_var_resolution(self):
         table = {"--a": "#123456"}

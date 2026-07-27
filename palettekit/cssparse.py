@@ -395,7 +395,37 @@ def strip_comments(css: str) -> str:
     return _COMMENT.sub(" ", css)
 
 
-_VAR_NAME = re.compile(r"var\(\s*(--[\w-]+)")
+def _var_ref_names(tokens) -> set[str]:
+    """Custom-property names referenced by `var()`, found by walking tokens.
+
+    A `FunctionBlock` named `var` is unambiguous regardless of what it sits
+    inside, so recursing into every function/block's contents finds a `var()`
+    nested arbitrarily deep — including inside another `var()`'s own
+    fallback, which is why a call's own arguments are still recursed into
+    after its name is read. This replaces a regex that matched any
+    `--name`-shaped text anywhere in the serialized value, string literals
+    included — the exact class of mistake invariant 9 already ruled out for
+    color reading (`content: "--foo"` is not a reference to `--foo` either).
+    """
+    names = set()
+    for t in tokens:
+        if t.type == "function":
+            if t.lower_name == "var":
+                for arg in t.arguments:
+                    if arg.type == "whitespace":
+                        continue
+                    if arg.type == "ident":
+                        names.add(arg.value)
+                    break
+            names |= _var_ref_names(t.arguments)
+        elif t.type in ("() block", "[] block", "{} block"):
+            names |= _var_ref_names(t.content)
+    return names
+
+
+def var_refs(value: str) -> set[str]:
+    """Custom-property names `value` references via `var()`."""
+    return _var_ref_names(tinycss2.parse_component_value_list(value))
 
 
 def _norm(text: str) -> str:
@@ -494,7 +524,7 @@ def _walk(sheet: Stylesheet, nodes: list, source: str,
             # (invariant 10), and a property consumed only by `font-family` is
             # still a property something consumes.
             value = tinycss2.serialize(node.value)
-            sheet.var_refs.update(_VAR_NAME.findall(value))
+            sheet.var_refs.update(_var_ref_names(node.value))
             if selector:
                 _record(sheet, node, value, selector, source, at_rules, theme,
                         theme_media, layer)

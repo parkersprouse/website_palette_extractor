@@ -770,47 +770,48 @@ def balanced_end(text: str, start: int) -> int:
 
 
 def _split_top(body: str) -> list[str]:
-    """Split on the commas that separate arguments, not the ones inside them."""
-    parts, depth, quote, start, i = [], 0, "", 0, 0
-    while i < len(body):
-        ch = body[i]
-        if quote:
-            if ch == "\\":
-                i += 2
-                continue
-            if ch == quote:
-                quote = ""
-        elif ch == "\\":
-            i += 2
-            continue
-        elif ch in "\"'":
-            quote = ch
-        elif ch in "([":
-            depth += 1
-        elif ch in ")]":
-            depth = max(0, depth - 1)
-        elif ch == "," and depth == 0:
-            parts.append(body[start:i])
-            start = i + 1
-        i += 1
-    parts.append(body[start:])
-    return [p.strip() for p in parts]
+    """Split on the commas that separate arguments, not the ones inside them.
+
+    Tokenized with `tinycss2` rather than hand-rolled depth-counting: it
+    already groups parens/brackets and quoted strings — with their own escape
+    rules — into single tokens, so a top-level comma is just a `LiteralToken`
+    sitting directly in the flat top-level list. `serialize` reconstructs the
+    original text losslessly, which is what makes round-tripping through
+    tokens here safe rather than lossy.
+    """
+    tokens = tinycss2.parse_component_value_list(body)
+    parts, current = [], []
+    for t in tokens:
+        if t.type == "literal" and t.value == ",":
+            parts.append(current)
+            current = []
+        else:
+            current.append(t)
+    parts.append(current)
+    return [tinycss2.serialize(p).strip() for p in parts]
 
 
 _PERCENT = re.compile(r"^([+-]?(?:\d+\.?\d*|\.\d+))%$")
-_LEADING_PERCENT = re.compile(r"^[+-]?(?:\d+\.?\d*|\.\d+)%")
-_LEADING_FUNC = re.compile(r"^[a-zA-Z][\w-]*\(")
-_LEADING_TOKEN = re.compile(r"^(?:#[0-9a-fA-F]+|[a-zA-Z][\w-]*)")
+
+
+def _is_percentage_like(tok) -> bool:
+    """A literal percentage, or a `calc()` call — the other percentage-typed
+    thing `<color> <percentage>?` can hold in this position."""
+    return tok.type == "percentage" or (
+        tok.type == "function" and tok.lower_name == "calc"
+    )
 
 
 def _split_component(text: str) -> tuple[str, str] | None:
     """`<color> <percentage>?` split into its two halves, either possibly empty.
 
-    Written as a scan rather than a whitespace split because minified CSS omits
-    the space: ground.news ships `color-mix(in oklab,var(--ring)50%,transparent)`
-    and `var(--ring)50%` has no boundary a `split()` can find. The color token
-    is read first — a balanced function call, a hex, or an identifier — and
-    whatever trails it is the percentage.
+    Tokenized rather than scanned by hand: a percentage is typed directly
+    (`PercentageToken`) by `tinycss2` regardless of whether whitespace
+    separates it from a preceding color, so the minified-CSS case this used to
+    hand-scan for — ground.news ships
+    `color-mix(in oklab,var(--ring)50%,transparent)`, and `var(--ring)50%` has
+    no boundary a `split()` can find — is just "is the first or last token a
+    percentage (or a `calc()` standing in for one)."
 
     A percentage may also be written first, which the spec allows and nothing
     on the corpus does.
@@ -818,20 +819,19 @@ def _split_component(text: str) -> tuple[str, str] | None:
     text = text.strip()
     if not text:
         return None
-    lead = _LEADING_PERCENT.match(text)
-    if lead:
-        return (text[lead.end():].strip(), lead.group(0))
-
-    if _LEADING_FUNC.match(text):
-        end = balanced_end(text, text.index("("))
-        if end < 0:
-            return None
-    else:
-        m = _LEADING_TOKEN.match(text)
-        if not m:
-            return None
-        end = m.end()
-    return (text[:end].strip(), text[end:].strip())
+    raw = tinycss2.parse_component_value_list(text)
+    tokens = [t for t in raw if t.type != "whitespace"]
+    if not tokens:
+        return None
+    if _is_percentage_like(tokens[0]):
+        pct = tinycss2.serialize([tokens[0]]).strip()
+        rest = tinycss2.serialize(tokens[1:]).strip()
+        return (rest, pct)
+    if _is_percentage_like(tokens[-1]):
+        pct = tinycss2.serialize([tokens[-1]]).strip()
+        rest = tinycss2.serialize(tokens[:-1]).strip()
+        return (rest, pct)
+    return (tinycss2.serialize(tokens).strip(), "")
 
 
 _CALC_CALL = re.compile(r"^calc\(", re.I)

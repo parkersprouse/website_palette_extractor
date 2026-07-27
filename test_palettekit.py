@@ -1107,6 +1107,14 @@ class TestColorMix(unittest.TestCase):
             parse_color("color-mix(in oklab,rgb(0 0 255)50%,transparent)").hexa,
             "#0000ff80")
 
+    def test_a_component_percentage_may_be_written_first(self):
+        """`<percentage> <color>` is spec-legal; nothing on the corpus uses it,
+        which is exactly why it was never exercised by a test until T15's
+        `_split_component` refactor made it worth checking directly."""
+        self.assertEqual(
+            parse_color("color-mix(in srgb, 30% #ff0000, #0000ff)").hex,
+            parse_color("color-mix(in srgb, #ff0000 30%, #0000ff)").hex)
+
     def test_a_mix_that_cannot_be_evaluated_yields_nothing(self):
         """Not the arguments inside it — those are colors the page never paints.
 

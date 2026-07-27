@@ -714,16 +714,26 @@ Repo and process:
 - [ ] **T15** — audit hand-rolled scanning/parsing across the whole codebase
       against the T5 corollary (defer to a library already in the dependency
       set for anything it does correctly; hand-roll only what it can't do).
-      Candidates to check, not pre-judged: `cssparse.py`'s `var()`-fallback
-      and `!important` scanning, `color.py`'s `_split_top`/`_split_component`
-      (`tinycss2` groups commas and parens for you the same way it now does
-      for `calc()`), and `dom.py`'s `html.parser` tree shim versus `lxml`. The
-      last is the expensive one and not a mechanical swap like T5's: `lxml` is
-      a C extension, and `build.py`'s vendoring (`pip install --target`,
-      structurally asserted rather than smoke-tested — see T1) assumes pure
-      Python packages with no platform-specific wheels. Needs the owner's
-      explicit sign-off the same way the original `tinycss2`/`cssselect2`
-      migration did, not a unilateral swap under this task's cover
+      **Partially landed 2026-07-26; see the full write-up below.** Done:
+      `color.py`'s `_split_top`/`_split_component` now tokenize with
+      `tinycss2` instead of hand-rolled depth-counting — same risk profile as
+      T5, verified byte-identical on the frozen `ui.shadcn.com` bundle.
+      Reviewed and left alone: `_whole_value_spans`/`balanced_end` — already
+      delegates the hard part to a shared, quote/escape-aware utility, and
+      switching to tokens would trade a working solution for the fragility of
+      reconstructing string offsets from a token list, with no accuracy gain.
+      **Two findings need the owner's explicit sign-off before anyone touches
+      them, each roughly the size of the `dom.py`/`lxml` question**:
+      `resolve_vars`'s `_GLUE_LEFT`/`_GLUE_RIGHT` glue-padding heuristic (could
+      plausibly be replaced by substituting tokens directly and using
+      `tinycss2.serialize()`'s real adjacency rules, but it sits on the hot
+      path for every declaration and invariants 24–26 are all pinned to its
+      current text-substitution behaviour), and the `COLOR_TOKEN` regex itself
+      — the base hex/`rgb()`/`hsl()`/`oklch()`/`lab()`/`lch()`/named-color
+      scanner, the single largest piece of hand-rolled domain logic in the
+      file, touching essentially every invariant in `color.py` if rewritten.
+      Not touched: `dom.py`'s `html.parser` tree shim versus `lxml` — see its
+      own note below, unchanged from the original scope of this task
 - [x] **License** — `LICENSE.md` + the `[project.license]` and classifier
       entries — **landed 2026-07-26**. Owner chose the Hippocratic License
       3.0; see "License" under Outstanding work below
@@ -1274,6 +1284,92 @@ single-theme, hand-written-CSS site, and the **pre-`tinycss2` parser reproduces
 all six of its anchors exactly**. It cannot detect a parser regression. The
 breadth check can, and the breadth check needs network and frozen bundles —
 committed fixtures are what make that offline and reviewable.
+
+### T15 — Audit hand-rolled scanning against the T5 corollary — partially landed 2026-07-26
+
+Raised while reviewing T5: the first cut of the `calc()` evaluator hand-rolled
+a regex tokenizer even though `tinycss2` — already a dependency — tokenizes
+CSS numeric syntax correctly and was one file away. Fixed in T5 itself, and it
+raised the obvious next question: **what else in the codebase re-derives by
+hand what a library already does?** The owner's answer was explicit and
+general — accuracy and comprehensiveness beat slimness/portability everywhere
+in the codebase, not only in the parser — recorded as a corollary to the
+priority-order note at the top of `CLAUDE.md`.
+
+**Landed:** `color.py`'s `_split_top` (splits a `color-mix()`/`light-dark()`
+body on top-level commas) and `_split_component` (splits `<color>
+<percentage>?`) both hand-counted parens/brackets/quotes/escapes character by
+character. `tinycss2.parse_component_value_list` already groups all of that —
+parens and brackets into `ParenthesesBlock`, function calls into
+`FunctionBlock`, quoted strings with their own escape handling — into single
+tokens, so a top-level comma is just a `LiteralToken` in the flat list, and
+`tinycss2.serialize()` reconstructs each part losslessly. `_split_component`
+gained one new concept it didn't need before: a `calc()` call is
+percentage-typed the same way a literal `50%` is, so `_is_percentage_like`
+checks for either a `PercentageToken` or a `FunctionBlock` named `calc`, at
+either edge of the component (a percentage may be written first).
+
+Verified against the frozen `ui.shadcn.com` bundle from T5: the full
+`to_document` output (minus `generated`) is **byte-identical** to the T5
+commit's baseline, and all 100 pre-existing tests — including
+`test_a_minified_mix_has_no_space_before_the_percentage`, the test that exists
+specifically because a whitespace `split()` cannot find the boundary in
+`var(--ring)50%` — pass unchanged. One new test,
+`test_a_component_percentage_may_be_written_first`, covers a spec-legal shape
+(`<percentage> <color>`) that was never actually exercised before — nothing on
+the corpus writes it, which is exactly why it went untested until this
+refactor's leading-percentage branch made it worth checking directly. 100 →
+101 tests, `ruff` clean, 3.11–3.14 verified.
+
+**Reviewed and left alone:** `_whole_value_spans` (finds top-level
+`color-mix()`/`light-dark()` call spans) and `balanced_end` (the shared
+paren-counter it and `cssparse._var_call` both use). These already delegate
+the hard part — quote/escape-aware bracket matching — to a single, general,
+well-tested utility rather than re-deriving CSS tokenization from scratch, and
+`_whole_value_spans` needs its answer as **character offsets into the
+original value string**, which tokens don't carry directly; reconstructing
+them from serialized token lengths would trade a working, simple scanner for
+a new and less obvious source of drift, for no accuracy gain. Not everything
+that scans a string by hand is the mistake T5 found — only the part that
+re-derives something a library already gets right *and* fails on real input,
+which this does not.
+
+**Two findings are flagged, not landed, and need the owner's sign-off before
+anyone acts on them — each is roughly the size of the `dom.py`/`lxml`
+question below, not a mechanical swap like T5's:**
+
+1. **`resolve_vars`'s `_GLUE_LEFT`/`_GLUE_RIGHT` glue-padding** (invariant 24).
+   It exists because this function substitutes *text*, not *tokens* — CSS
+   substitutes tokens, so a browser never has to guess whether two adjacent
+   values need a separator. A token-based rewrite (substitute a `var()`
+   `FunctionBlock` with its resolved value's own tokens, then
+   `tinycss2.serialize()` the result) would let the library's own
+   adjacency-aware serializer replace a hand-derived character-class
+   heuristic — the exact class of thing this task exists to fix. But
+   `resolve_vars` sits on the hot path for every declaration in every
+   stylesheet, up to four passes deep, and invariants 24, 25, and 26 are all
+   pinned to specifics of its current string behaviour. A rewrite here needs
+   the same full-corpus, per-declaration re-verification phase 3 and 4 used,
+   not a unit-test pass.
+2. **`COLOR_TOKEN`**, the regex that finds every hex/`rgb()`/`hsl()`/`oklch()`/
+   `oklab()`/`color()`/`lab()`/`lch()`/named-color literal in a declaration
+   value. It is the single largest piece of hand-rolled domain logic left in
+   `color.py`, it already has a known fragility (`[^()]*(?:\([^()]*\)[^()]*)*`
+   only tolerates one level of nested parens), and a `FunctionBlock`'s
+   `.lower_name` would identify these functions more reliably than a name
+   regex followed by a hand-bounded nesting allowance. Rewriting it would
+   touch nearly every invariant in this file (9, 22, 23, 24, 25, 26) and is at
+   least as large as the `dom.py` question, dependency-free or not.
+
+**Not touched:** `dom.py`'s `html.parser` tree shim versus `lxml` — out of
+scope for this task from the start; see the note below.
+
+`dom.py`'s tree shim is a C-extension question, not a mechanical one.
+`lxml` is a C extension; `build.py`'s vendoring
+(`pip install --target`, structurally asserted per T1) assumes pure-Python
+packages with no platform-specific wheels, and swapping it in would need that
+model re-examined, not just a code change. Needs the owner's explicit
+sign-off the same way the original `tinycss2`/`cssselect2` migration did.
 
 ### License
 

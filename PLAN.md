@@ -723,17 +723,19 @@ Repo and process:
       switching to tokens would trade a working solution for the fragility of
       reconstructing string offsets from a token list, with no accuracy gain.
       **Two findings need the owner's explicit sign-off before anyone touches
-      them, each roughly the size of the `dom.py`/`lxml` question**:
-      `resolve_vars`'s `_GLUE_LEFT`/`_GLUE_RIGHT` glue-padding heuristic (could
-      plausibly be replaced by substituting tokens directly and using
-      `tinycss2.serialize()`'s real adjacency rules, but it sits on the hot
-      path for every declaration and invariants 24–26 are all pinned to its
-      current text-substitution behaviour), and the `COLOR_TOKEN` regex itself
-      — the base hex/`rgb()`/`hsl()`/`oklch()`/`lab()`/`lch()`/named-color
-      scanner, the single largest piece of hand-rolled domain logic in the
-      file, touching essentially every invariant in `color.py` if rewritten.
-      Not touched: `dom.py`'s `html.parser` tree shim versus `lxml` — see its
-      own note below, unchanged from the original scope of this task
+      them, each roughly the size of the `dom.py`/`lxml` question — filed as
+      T16 and T17 rather than left as unfiled findings.** Not touched:
+      `dom.py`'s `html.parser` tree shim versus `lxml` — see its own note
+      below, unchanged from the original scope of this task
+- [ ] **T16** — rewrite `resolve_vars`'s `var()` substitution on `tinycss2`
+      tokens instead of text, replacing the `_GLUE_LEFT`/`_GLUE_RIGHT`
+      glue-padding heuristic with `tinycss2.serialize()`'s own adjacency
+      rules — **owner-authorized 2026-07-26 as tracked work, not yet started**
+- [ ] **T17** — rewrite `COLOR_TOKEN` on `tinycss2` tokens (a `FunctionBlock`'s
+      `.lower_name` identifying `rgb()`/`hsl()`/`oklch()`/etc. instead of a
+      name regex plus a hand-bounded nesting allowance) to fill its known
+      nesting gap — **owner-authorized 2026-07-26 as tracked work, not yet
+      started**
 - [x] **License** — `LICENSE.md` + the `[project.license]` and classifier
       entries — **landed 2026-07-26**. Owner chose the Hippocratic License
       3.0; see "License" under Outstanding work below
@@ -1338,28 +1340,15 @@ which this does not.
 anyone acts on them — each is roughly the size of the `dom.py`/`lxml`
 question below, not a mechanical swap like T5's:**
 
-1. **`resolve_vars`'s `_GLUE_LEFT`/`_GLUE_RIGHT` glue-padding** (invariant 24).
-   It exists because this function substitutes *text*, not *tokens* — CSS
-   substitutes tokens, so a browser never has to guess whether two adjacent
-   values need a separator. A token-based rewrite (substitute a `var()`
-   `FunctionBlock` with its resolved value's own tokens, then
-   `tinycss2.serialize()` the result) would let the library's own
-   adjacency-aware serializer replace a hand-derived character-class
-   heuristic — the exact class of thing this task exists to fix. But
-   `resolve_vars` sits on the hot path for every declaration in every
-   stylesheet, up to four passes deep, and invariants 24, 25, and 26 are all
-   pinned to specifics of its current string behaviour. A rewrite here needs
-   the same full-corpus, per-declaration re-verification phase 3 and 4 used,
-   not a unit-test pass.
-2. **`COLOR_TOKEN`**, the regex that finds every hex/`rgb()`/`hsl()`/`oklch()`/
-   `oklab()`/`color()`/`lab()`/`lch()`/named-color literal in a declaration
-   value. It is the single largest piece of hand-rolled domain logic left in
-   `color.py`, it already has a known fragility (`[^()]*(?:\([^()]*\)[^()]*)*`
-   only tolerates one level of nested parens), and a `FunctionBlock`'s
-   `.lower_name` would identify these functions more reliably than a name
-   regex followed by a hand-bounded nesting allowance. Rewriting it would
-   touch nearly every invariant in this file (9, 22, 23, 24, 25, 26) and is at
-   least as large as the `dom.py` question, dependency-free or not.
+**Owner-authorized 2026-07-26 as tracked work — filed as T16 and T17 below
+rather than left as unfiled findings, neither started yet:**
+
+1. **T16 — `resolve_vars`'s `_GLUE_LEFT`/`_GLUE_RIGHT` glue-padding**
+   (invariant 24). See T16's own write-up below for the full case and the
+   re-verification it needs before landing.
+2. **T17 — `COLOR_TOKEN`**, the regex that finds every
+   hex/`rgb()`/`hsl()`/`oklch()`/`oklab()`/`color()`/`lab()`/`lch()`/
+   named-color literal in a declaration value. See T17's own write-up below.
 
 **Not touched:** `dom.py`'s `html.parser` tree shim versus `lxml` — out of
 scope for this task from the start; see the note below.
@@ -1370,6 +1359,112 @@ scope for this task from the start; see the note below.
 packages with no platform-specific wheels, and swapping it in would need that
 model re-examined, not just a code change. Needs the owner's explicit
 sign-off the same way the original `tinycss2`/`cssselect2` migration did.
+**Kept as a note for now, per the owner (2026-07-26) — not filed as a task.**
+
+### T16 — Rewrite `resolve_vars`'s `var()` substitution on tokens, not text
+
+`resolve_vars` substitutes *text*: it finds a `var(` call in a plain string
+(`_var_call`, delimited by `color.balanced_end`), decides its replacement, and
+splices the replacement string back into the surrounding text. CSS substitutes
+*tokens* — a browser never has to guess whether two adjacent values need a
+separator — so this function carries its own guess: `_GLUE_LEFT`/
+`_GLUE_RIGHT`, a hand-derived set of characters a substitution is or isn't
+allowed to abut without a padding space. That heuristic exists because of
+invariant 24: Tailwind v4 minifies to
+`color-mix(in oklab,var(--color-white)var(--tw-shadow-alpha),transparent)`,
+two component values with no separator, and pasting the substitutions together
+without padding invented a bright yellow (`#fff100%` read as the hex
+`#fff100`) that painted nowhere on the page.
+
+**The proposed fix:** tokenize `value` with `tinycss2.parse_component_value_list`
+once, walk the resulting list for `FunctionBlock` tokens named `var`, and
+substitute each one with the *tokens* of its resolved value (itself obtained
+by recursively resolving that value's own `var()` calls) rather than a spliced
+string. Re-serializing the whole list with `tinycss2.serialize()` at the end
+would let the library's own adjacency-aware serializer decide spacing — the
+same mechanism that already inserts `/**/` to stop `:nth-child(3n+1)` from
+re-merging into `:nth-child(3n)` — instead of the hand-derived
+`_GLUE_LEFT`/`_GLUE_RIGHT` character-class check. This is the exact class of
+thing the T5 corollary targets: a library already in the dependency set
+solving a problem (token adjacency) that is currently solved by hand, worse.
+
+**Why this is not a mechanical swap, and needs the same weight as `dom.py`:**
+
+- **Hot path.** `resolve_vars` runs on every declaration in every stylesheet,
+  up to four passes deep (`depth` in the current signature). A rewrite that
+  tokenizes and re-serializes on each pass, rather than scanning a string once,
+  needs at least a rough benchmark against the corpus — phase 3's cascade work
+  already cost a measured 4–7%, and this sits on a hotter path than that did.
+- **Three invariants are pinned to the current text-substitution shape.**
+  Invariant 24 (glue-padding itself), invariant 25 (`balanced_end` delimiting a
+  fallback that may contain parentheses of its own — a `FunctionBlock`'s
+  `.arguments` already gives this structurally, but the *discard-fallback*
+  behavior when the name resolves must be preserved exactly), and invariant 26
+  (`initial` read as guaranteed-invalid, not a literal stored value — must
+  keep comparing the *value*, not incidentally break on how it's tokenized).
+  A rewrite has to reproduce specific, already-corpus-verified behavior for
+  each, not just "still resolve `var()` correctly" in the abstract.
+- **Re-verification must be the same shape phases 3 and 4 used**, not a unit
+  test: freeze the corpus bundles used before (`tailwindcss.com`,
+  `ui.shadcn.com`, `ground.news.har`, `fleshandbonedesign.com.har`), diff old
+  code against new at the per-declaration resolved-value level (not the
+  palette, which folds and merges and would hide a subtle glue regression the
+  same way invariant 25's bug hid behind unchanged hex sets), and predict the
+  blast radius before writing code — the corollary's whole point is a
+  library doing something *more correctly*, so occurrence counts and possibly
+  a token or two are expected to move, and "nothing moved at all" would be as
+  suspicious here as it was reassuring for T4.
+
+**Diff level:** resolved-value string, per declaration, per theme — the same
+`(sheet_order, order, selector, prop) → value` shape phase 4 used, since this
+is squarely var()-resolution territory and the palette folds too much to show
+a spacing regression.
+
+### T17 — Rewrite `COLOR_TOKEN` on `tinycss2` tokens
+
+`COLOR_TOKEN` is the regex that finds every hex, `rgb()`/`rgba()`/`hsl()`/
+`hsla()`/`oklch()`/`oklab()`/`color()`/`lab()`/`lch()`, and named-color literal
+in a declaration value — the base token scan every property's value goes
+through in `find_colors`, once `color-mix()`/`light-dark()` spans are already
+carved out (invariant 22, T5). It is the single largest piece of hand-rolled
+domain logic left in `color.py`.
+
+**The known gap:** the function-call branch,
+`(?:rgba?|hsla?|oklch|oklab|color|lab|lch)\s*\([^()]*(?:\([^()]*\)[^()]*)*\)`,
+tolerates exactly one level of nested parentheses. `rgb(calc(1 + 2) 0 0)`
+matches; `rgb(min(calc(1 + 2), 3) 0 0)` — a second level of nesting — does
+not, and the regex fails closed (finds nothing) rather than reading a wrong
+color, which is the safe direction for this codebase to fail in but is still
+a real gap. A `FunctionBlock`'s `.lower_name` identifies these functions
+directly regardless of how deeply their arguments nest, since `tinycss2`
+already resolved that nesting when it tokenized.
+
+**The proposed fix:** tokenize the value once (this can likely share a single
+tokenization pass with `_whole_value_spans`, which currently re-scans the same
+string separately to find `color-mix()`/`light-dark()` spans — worth
+resolving as part of this task rather than tokenizing the same value twice),
+walk the flat token list for `HashToken` (hex), `IdentToken` matching `NAMED`,
+and `FunctionBlock` tokens whose `.lower_name` is one of the known color
+functions, and hand each one's own tokens to the existing per-space parsers
+rather than a captured regex group.
+
+**Why this is not a mechanical swap:** this single function is exercised by
+essentially every invariant in the file that depends on "a color was found in
+this declaration" — 9 (strings/comments must not be misread as color, which a
+token-based scan gets for free since `StringToken`/`CommentToken` are already
+distinct types, rather than the regex's implicit reliance on not matching
+inside them), 22–23 (`color-mix()`/`light-dark()` span exclusion, which this
+scan runs alongside), and 24–26 indirectly (anything `resolve_vars` produces
+flows through this scanner next). A rewrite is a real behavior change to the
+most heavily-relied-on function in the file, not a refactor with an identical
+observable result — closing the nesting gap **will** find colors the current
+regex reports nothing for, on any corpus site that has one, so "no diff at
+all" is not the success criterion the way it was for T5 and T15's landed half.
+
+**Diff level:** per-declaration color list (phase 4's level) across the full
+frozen corpus, predicting the blast radius before writing code — specifically,
+search the corpus first for any second-level-nesting shape this would newly
+catch, so the prediction is falsifiable rather than "probably nothing changes."
 
 ### License
 

@@ -626,6 +626,58 @@ than all of the above and is still the wrong trade:
 Worth naming as the ceiling. Revisit only if phases 1–4 leave grounds
 materially wrong on real sites.
 
+## Potential future expansion
+
+**Not planned. Restricted by the "No JavaScript is executed" premise this
+tool is built on** (`CLAUDE.md`'s Known Limits, first entry) **— recorded
+here only because T18/T19's own investigation (2026-08-02) gives it sharper
+edges than "Explicitly out of scope" above had when that section was
+written**, at the owner's request to keep it visible rather than only
+implicitly ruled out.
+
+That section already rejected replacing the CSS-parsing pipeline with a
+headless browser's `getComputedStyle`, for two reasons that still hold: it
+can't run against a HAR (this tool's best input, and the only one that works
+on sites blocking automated requests), and `getComputedStyle` throws away
+provenance — which selector declared a value — that the JSON contract and
+most of the HTML report depend on.
+
+**What's different here is narrower and later-stage: not replacing the
+pipeline, only widening what document `dom.selector_reach`/
+`elements_matching_wrapped` test against.** Render the page far enough (with
+JS) to capture its post-hydration markup, then feed that markup into the
+exact real-tree matching machinery T9 already built (`full_tree`/
+`wrap_tree`/`elements_matching_wrapped`), unmodified. Provenance stays
+intact — declarations are still read from stylesheets exactly as today, only
+the DOM snapshot `selector_reach`/T9's ancestry walk test against would
+change. A HAR could stay the primary input, with a rendered-DOM pass as an
+optional supplement rather than a replacement — closer to `--images`'
+opt-in shape (invariant/Convention: "a dependency in the core is now allowed
+where it buys accuracy… but it should still earn its place against the
+corpus") than to a rewrite.
+
+**Concrete corpus motivation, not hypothetical.** ui.shadcn.com's
+`.shimmer`/`.shimmer-none` shapes (CLAUDE.md's Known Limits, T9's own
+write-up) resolve to "no basis" specifically because `.shimmer` lives on
+`/docs/utils/shimmer`, a page this HAR never fetched — and even within a
+fetched page, client-hydrated frameworks routinely inject markup a raw HAR
+capture won't contain at all. T18's own corpus investigation independently
+landed on the same declarations from a different angle (T18 asks "does
+`.shimmer`'s selector match anything real"; T9 asks "is there a real
+consumer to resolve a value for" — both unanswerable for the same reason).
+This isn't a one-off: any client-rendered app has the same shape.
+
+**Cost this would add, honestly, and it is not small.** A real browser
+engine dependency (Playwright or similar) breaks the pure-Python floor
+`build.py`'s vendoring model assumes — invariant 16 already rules out
+`lxml` for exactly this reason (a C extension the zipapp's vendoring model
+can't carry), and a browser binary is a much larger version of the same
+problem, not a smaller one. `PYTHON_FLOOR`, `build.py`'s "vendor into a
+`.pyz`" model, and the "runs anywhere with no compiled artifacts" promise
+would all need to be renegotiated, not just extended. That is the trade this
+section names without taking — filed here so the option is visible and
+its cost is written down next to it, not so it gets picked up.
+
 ## Checklist
 
 - [x] Decide the Python floor — **3.10, verified across 3.10–3.14**.
@@ -748,6 +800,21 @@ Accuracy gaps left by phases 1–4:
       per-status descriptions — **filed 2026-08-02, requested by the owner,
       depends on T18's new status value (landed: `unmatched`).** Not
       started. See T20's own entry below
+- [ ] **T21** — test a pseudo-element selector's base compound against the
+      real element, instead of treating every pseudo-element as no-basis —
+      **filed 2026-08-02, found while explaining T18/T19's "untestable"
+      cases to the owner.** `cssselect2` already evaluates `.card::after`
+      correctly against a real `.card` (`sel.test(element)` returns `True`
+      despite `sel.pseudo_element == "after"`); `dom._compile_usable` throws
+      that answer away unconditionally. Not started. See T21's own entry
+      below
+- [ ] **T22** — read `@property` registrations (`syntax`/`inherits`/
+      `initial-value`) — **filed 2026-08-02, found the same way as T21.**
+      Not a hypothetical: `@property` appears in 3 of 5 frozen bundles
+      (`ground.news.har`, `tailwindcss.com.har`, `ui.shadcn.com.har` — all
+      Tailwind v4's own registrations). Starts with measuring whether any
+      registered `initial-value` is color-bearing before touching the
+      parser. Not started. See T22's own entry below
 
 Repo and process:
 
@@ -2171,6 +2238,124 @@ category is identifiable while scrolling, with its description visible,
 without opening dev tools or hovering a tooltip. Invariant 11 (report must
 stay standalone, `file://`-openable) and the report-theme-readability test
 apply to any new markup this adds, same as the rest of the report.
+
+### T21 — Test a pseudo-element's base compound instead of refusing it outright
+
+**Filed 2026-08-02**, found while explaining to the owner why T18/T19 report
+`None`/"no basis" for some selectors — three different mechanisms produce
+that answer, and this is the one that turned out not to need to.
+
+**The gap, verified directly, not assumed.** `dom._compile_usable` (shared by
+`selector_reach` and `elements_matching_wrapped`, T18/T19's own shared
+filter) drops every selector branch with `sel.pseudo_element is not None`
+unconditionally, lumping `.card::after` in with genuinely untestable cases
+like `.card:hover`. But `cssselect2`'s compiled selector still evaluates
+`.test(element)` against the *base* compound when a pseudo-element is
+present — checked directly against a real tree:
+
+```python
+sel = cssselect2.compile_selector_list(".card::after")[0]
+sel.pseudo_element  # "after"
+sel.test(div_with_class_card)  # True
+```
+
+The library isn't refusing to answer here; the code is discarding an answer
+it already has. `:hover` is `never_matches=True` — cssselect2 itself says
+"this can never be true of static HTML," a real refusal. A pseudo-element
+selector is a different thing: cssselect2 happily tests its base compound,
+and only marks `.pseudo_element` as an annotation for the *caller* to decide
+what to do with a generated box it can't itself represent as a DOM node.
+
+**Why it matters beyond correctness-in-principle.** T18's `unmatched` status
+and T19's `matchCount`/`matches` both sit on top of `_compile_usable`. A
+normalize-style reset stylesheet with real `::before`/`::after` rules for
+classes the page actually carries — the same shape
+`parkersprouse.me.har`'s own `:where(dialog)`/`:where(fieldset)` entries are,
+per invariant 27's own write-up — currently reports `matched: None` /
+`matchCount: None` for any pseudo-element rule, regardless of whether the
+base selector is genuinely on the page. `None` should mean "no basis to
+test," and here there plainly is one.
+
+**Shape of the change, sketched rather than designed:** have
+`_compile_usable` (or a variant of it used by `selector_reach`/
+`elements_matching_wrapped` specifically) keep a pseudo-element branch as
+usable, testing its base compound rather than dropping it. `matched`/
+`matchCount`/`matches` for a `.card::after` rule would then reflect whatever
+real elements `.card` reaches — the right unit to report, since a generated
+box isn't a separate node this tool could name even if it wanted to.
+
+**What needs deciding, not just coding:** whether every pseudo-element
+should be treated identically for reach purposes, or only ones that render
+unconditionally (`::selection`, `::marker`, `::placeholder`) versus ones
+gated on a separate `content` declaration (`::before`/`::after`, which paint
+nothing without it). Leaning toward "identical" — this task asks "is the
+base selector on the page," not "does this rule paint," and the second
+question is explicitly out of scope for `unmatched` already (invariant 27:
+`unmatched` is about DOM presence, not paint — that boundary is `inert`'s
+job, for a different reason). Confirm that reading holds before
+implementing rather than assuming it.
+
+**Diff level:** same convention as T18/T19 — per-declaration `matched`/
+`matchCount` diff, old vs new, across all five frozen bundles. Expect any
+pseudo-element usages on real, present selectors to move from `None` to a
+determinate answer and nothing else to move; `parkersprouse.me.har`'s own
+reset stylesheet is the most likely site to actually exercise this.
+
+### T22 — Read `@property` registrations (`syntax`/`inherits`/`initial-value`)
+
+**Filed 2026-08-02**, found the same way as T21 — explaining what "not
+modelled" means for `@property` (already named in CLAUDE.md's Known Limits)
+turned into checking whether any corpus site actually uses it, which nobody
+had done.
+
+**Not a hypothetical — checked directly.** `@property` appears in three of
+the five frozen bundles: `ground.news.har` (135 occurrences),
+`tailwindcss.com.har` (123), `ui.shadcn.com.har` (101);
+`fleshandbonedesign.com.har` and `parkersprouse.me.har` have none. Sampled
+one from `tailwindcss.com.har`:
+
+```css
+@property --tw-content{syntax:"*";inherits:false;initial-value:""}
+```
+
+All three sites' usage is Tailwind v4 registering its own internal custom
+properties this way — the same mechanism invariant 26's `initial` handling
+already has to work around (`--tw-gradient-via-stops: initial` inside a
+`@layer properties` guard), from the other side: `@property` is where a
+browser gets the *real* fallback value invariant 26 currently has to treat
+as merely "absent."
+
+**What this would add, in two places already built to receive it:**
+
+- **Invariant 26's `initial` handling.** A stored value of the literal
+  keyword `initial` on a custom property currently falls through to "absent"
+  — `var()`'s own fallback, or nothing. With `@property` read, a registered
+  property's `initial-value` is not "absent," it's a specific value a
+  browser substitutes. Whether this changes anything measurable depends on
+  whether any registered `initial-value` in the corpus is color-bearing —
+  `--tw-content`'s own is an empty string, not a color, so this exact
+  occurrence is likely a no-op.
+- **T9's ancestry walk** (`resolve_by_ancestry_kind`). Real inheritance is
+  the *default* for an unregistered custom property, which is what T9 built
+  for. A property registered with `inherits: false` doesn't inherit at all,
+  and walking real ancestors for one would be answering a question that
+  doesn't apply to it. Whether any corpus property T9 currently resolves by
+  ancestry is also registered non-inheriting hasn't been checked.
+
+**This task starts with a measurement, not a parser change** — the same
+"predict the blast radius before writing the code" discipline the rest of
+this file uses. Before implementing: for every `@property` in the corpus,
+record its `initial-value` and `inherits` flag, and check whether either one
+touches a property this tool already resolves to a color, an ancestry
+answer, or an `initial`-keyword fallback. If nothing color-bearing turns up
+— plausible, given the one sample found is an empty string — this may be
+correct-but-inert the same way T5's `calc()` evaluator's untouched branches
+are, worth doing for completeness rather than for a corpus payoff.
+
+**Diff level:** per-declaration color list, old vs new, on the three bundles
+that carry `@property` at all. `fleshandbonedesign.com.har` and
+`parkersprouse.me.har` should be byte-identical by construction — neither
+has anything for this to read.
 
 ### T10 — Read `color-scheme` to confirm a `light-dark()` site is two-themed
 

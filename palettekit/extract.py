@@ -30,6 +30,7 @@ from .dom import (
     matches_page_element,
     page_elements,
     selector_matches,
+    selector_reach,
     selector_specificity,
     wrap_tree,
 )
@@ -73,6 +74,15 @@ class Usage:
     # theme-specific claim on `<html>` apart from an unscoped `<body>` rule
     # that merely happens to also be present in this theme's build.
     theme_scoped: bool = False
+    # T18: does `scope_selector` match a real element in the captured
+    # document? `True`/`False` mean it was actually tested; `None` means it
+    # could not be (no captured HTML, or `dom.selector_reach`'s own "no
+    # basis" cases — see that function). `Entry.all_unmatched` only trusts
+    # this when every usage in the entry got a determinate `False`; a `None`
+    # anywhere in the mix leaves the entry `live`, same "refuse rather than
+    # guess" contract as everywhere else this tool won't answer on no
+    # evidence.
+    matched: bool | None = None
 
 
 @dataclass
@@ -114,6 +124,20 @@ class Entry:
     @property
     def all_inert(self) -> bool:
         return bool(self.usages) and all(u.inert for u in self.usages)
+
+    @property
+    def all_unmatched(self) -> bool:
+        """T18: every usage's selector was tested and matched nothing.
+
+        `u.matched is False` rather than `not u.matched`, on purpose — a
+        `None` (no basis: untestable selector, or no captured HTML at all)
+        must not read as "unmatched" just because it is falsy. One `None`
+        anywhere in the usages means this entry stays whatever `_status_for`
+        would otherwise call it; only a unanimous, determinate `False`
+        across every usage is confident enough to report.
+        """
+        return bool(self.usages) and all(u.matched is False
+                                         for u in self.usages)
 
     @property
     def only_third_party(self) -> bool:
@@ -923,6 +947,20 @@ def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
                 if wrapped_root is not None else [])
         return consumer_cache[selector]
 
+    # T18: does this usage's own selector reach a real element at all — the
+    # same hoisted `wrapped_root` as `consumers_of`, memoized the same way.
+    # `None` (no captured HTML) rather than `[]`-style False when there is no
+    # tree, matching `dom.selector_reach`'s own "no basis" contract instead
+    # of manufacturing a determinate answer this build has no evidence for.
+    reach_cache: dict[str, bool | None] = {}
+
+    def reach_of(selector: str) -> bool | None:
+        if selector not in reach_cache:
+            reach_cache[selector] = (
+                selector_reach(selector, wrapped_root)
+                if wrapped_root is not None else None)
+        return reach_cache[selector]
+
     # Which branch a `light-dark()` resolves to. An unscoped build gets light,
     # which is what a browser does when the document says nothing about
     # `color-scheme`. That case is only reachable with `--no-themes`: a site
@@ -1002,6 +1040,7 @@ def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
                 w *= 1.2 if d.prop in all_var_refs else 0.35
 
             inert = is_inert_shadow(d.prop, value)
+            reach = reach_of(sel)
 
             for c in colors:
                 if c.a < 0.02:
@@ -1025,7 +1064,7 @@ def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
                           sheet_order=d.sheet_order, order=d.order,
                           scope_selector=sel, important=d.important,
                           layer=d.layer, theme_media=d.theme_media,
-                          theme_scoped=bool(d.theme))
+                          theme_scoped=bool(d.theme), matched=reach)
                 )
                 if d.is_custom_property:
                     entry.var_names.add(d.prop)
@@ -1251,18 +1290,31 @@ def _merge_near_duplicates(entries: list[Entry], threshold: float,
 
 
 def _status_for(entry: Entry, var_refs: set[str]) -> str:
-    """live / saved / inert.
+    """live / saved / inert / unmatched.
 
     saved: only ever defined as a custom property nothing references. On
     design-tool-generated sites this is the designer's saved swatches, which
     are worth keeping but are not on the page.
     inert: every use is a zero-length shadow, which paints nothing.
+    unmatched (T18): every usage's selector was tested against the real
+    captured document and matched no element there — see `all_unmatched`.
+    Checked last and only after `saved` has already had its say: `saved`
+    answers "does any `var()` call in the CSS ever name this custom
+    property" (a check over the stylesheets' own reference graph, no DOM
+    involved), which is a different, more specific diagnosis than "does this
+    declaration's selector reach a real element" — an already-`saved` entry
+    stays `saved` rather than being relabelled `unmatched`, and an
+    already-`inert` one stays `inert` for the same reason `all_inert` is
+    checked first: a value that paints nothing is worth saying so about
+    regardless of whether its selector would otherwise match.
     """
     if entry.all_inert:
         return "inert"
     non_token = [u for u in entry.usages if u.role != "token"]
     if not non_token and entry.var_names and not (entry.var_names & var_refs):
         return "saved"
+    if entry.all_unmatched:
+        return "unmatched"
     return "live"
 
 

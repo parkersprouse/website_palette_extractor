@@ -870,7 +870,10 @@ __UI_THEMES__
       "Ground " + theme().ground + ". Values are read from the site's " +
       "stylesheets, not sampled from pixels. \\u201csaved\\u201d means a custom " +
       "property nothing references; \\u201cinert\\u201d means a declaration that " +
-      "paints nothing. " +
+      "paints nothing; \\u201cunmatched\\u201d means a selector that matches " +
+      "nothing in the page this tool captured \\u2014 could be unused CSS, or " +
+      "could be markup only client-side JavaScript adds (a hover state, a " +
+      "toggled class), which this tool cannot run. " +
       (THEMES.length > 1
         ? "The site ships two themes; each was extracted separately, so every " +
           "ratio above is measured against that theme's own ground. "
@@ -923,9 +926,9 @@ def emit_html(doc: dict, pal: Palette) -> str:
     n_other = len(doc["colors"]) - n_live
 
     sub = (
-        f"{n_live} color{'s' if n_live != 1 else ''} rendered on the page"
-        + (f", plus {n_other} found in the source but not painted" if n_other
-           else "")
+        f"{n_live} color{'s' if n_live != 1 else ''} confirmed painted on the "
+        "page"
+        + (f", plus {n_other} more found in the source" if n_other else "")
         + ". Read from the site's own stylesheets, not sampled from a "
           "screenshot. Click any swatch to copy it."
     )

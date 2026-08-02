@@ -7,6 +7,8 @@ from palettekit.dom import (
     matches_page_element,
     page_elements,
     selector_matches,
+    selector_reach,
+    wrap_tree,
 )
 
 
@@ -171,6 +173,48 @@ class TestFullTree(unittest.TestCase):
         self.assertIsInstance(full_tree(""), object)
         self.assertIsNotNone(full_tree("not even close to html <<<"))
         self.assertIsNone(full_tree(12345))
+
+
+class TestSelectorReach(unittest.TestCase):
+    """T18: three answers, not two -- `True`/`False`/`None`, per `PLAN.md`."""
+
+    HTML = ('<html><body><div class="theme-neutral">'
+            '<p><span class="bg-card">x</span></p></div>'
+            '<span class="bg-card">y</span></body></html>')
+
+    def wrapped(self):
+        return wrap_tree(full_tree(self.HTML))
+
+    def test_a_selector_that_matches_is_true(self):
+        self.assertIs(selector_reach(".bg-card", self.wrapped()), True)
+
+    def test_a_selector_that_compiles_but_matches_nothing_is_false(self):
+        self.assertIs(selector_reach(".no-such-class", self.wrapped()), False)
+
+    def test_a_dynamic_state_is_none_not_false(self):
+        """`.bg-card:hover` has no resting state to test -- `cssselect2`
+        marks it `never_matches`, and that must not collapse into "matches
+        nothing". Collapsing it is the specific mistake this function exists
+        to prevent (see its own docstring): a hover rule on a real, present
+        class is not a statement that the class is missing from the page.
+        """
+        self.assertIsNone(selector_reach(".bg-card:hover", self.wrapped()))
+
+    def test_a_pseudo_element_is_none_not_false(self):
+        self.assertIsNone(selector_reach(".bg-card::after", self.wrapped()))
+
+    def test_a_selector_that_will_not_compile_is_none_not_false(self):
+        self.assertIsNone(selector_reach(":is( , .x)", self.wrapped()))
+
+    def test_a_list_with_one_testable_branch_answers_from_that_branch(self):
+        """`.bg-card:hover, .no-such-class` has one untestable branch and one
+        testable-but-absent branch. The testable branch answers the question;
+        the untestable one does not silently win by making the whole list
+        `None`.
+        """
+        self.assertIs(
+            selector_reach(".bg-card:hover, .no-such-class", self.wrapped()),
+            False)
 
 
 if __name__ == "__main__":

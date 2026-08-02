@@ -187,11 +187,11 @@ sources.py   →  cssparse.py  →  extract.py  →  emit.py
 | File | Lines | Holds |
 |---|---:|---|
 | `color.py` | 1182 | `Color`, parsing, sRGB↔OKLab/CIE Lab/XYZ both ways, `color-mix()`, `light-dark()`, `calc()`, contrast, hue names |
-| `cssparse.py` | 926 | `tinycss2` integration, `var()`, `selector_weight`, roles, theme scopes, `@layer` names |
-| `dom.py` | 441 | `html.parser` → `ElementTree` shim, `cssselect2` matching of `<html>`/`<body>`, specificity, plus `full_tree`/`elements_matching`/`wrap_tree` (T9: real DOM below the page element) |
+| `cssparse.py` | 908 | `tinycss2` integration, `var()`, `selector_weight`, roles, theme scopes, `@layer` names |
+| `dom.py` | 489 | `html.parser` → `ElementTree` shim, `cssselect2` matching of `<html>`/`<body>`, specificity, plus `full_tree`/`elements_matching`/`wrap_tree` (T9: real DOM below the page element) and `selector_reach` (T18: does a selector match anything, real/none/untestable) |
 | `sources.py` | 292 | `load_har` / `load_url` / `load_paths` → `Bundle` |
-| `extract.py` | 1438 | `extract()`, the cascade, per-theme `_build`, ground, merging, statuses, naming, `resolve_by_ancestry`/`resolve_by_ancestry_kind` (T9) |
-| `emit.py` | 952 | Emitters; `_HTML` is the report template |
+| `extract.py` | 1490 | `extract()`, the cascade, per-theme `_build`, ground, merging, statuses, naming, `resolve_by_ancestry`/`resolve_by_ancestry_kind` (T9), `Entry.all_unmatched` (T18) |
+| `emit.py` | 955 | Emitters; `_HTML` is the report template |
 | `images.py` | 148 | Optional image quantisation, not part of the token set |
 | `__main__.py` | 255 | CLI; `main()` guards `PYTHON_FLOOR` before anything else |
 
@@ -957,6 +957,122 @@ because the obvious implementation produced plausible but wrong output.
     still leaves `none` winning by last-wins. That half is the "scoped custom
     properties are not modelled" limit below, not this one.
 
+27. **`unmatched` requires every usage to be a confirmed non-match — one
+    untestable usage anywhere in the entry leaves it `live`** (T18,
+    `Entry.all_unmatched`, `dom.selector_reach`). `dom.selector_reach` answers
+    three things, not two: `True` (matched a real element), `False` (compiled,
+    was actually tested, matched nothing), `None` (could not be tested at
+    all — uncompilable, or every branch is a pseudo-element or a dynamic state
+    `cssselect2` marks `never_matches`). `all_unmatched` checks `u.matched is
+    False` specifically, not `not u.matched`, so a `None` cannot silently read
+    as a non-match.
+
+    This is not a hypothetical guard. `elements_matching_wrapped` — T9's own
+    existing function — already collapses `None` and `False` to the same `[]`,
+    because none of its callers needed the distinction; reusing it for T18
+    would have flagged every `:hover`/`:focus`/`::after`/`::before`
+    declaration on every site as content-not-on-the-page, including
+    hand-written, fully-static ones. `dom.selector_reach` is the tri-state
+    function built to keep the two apart, and `_compile_usable` is the shared
+    filter both functions now call so they can't drift on what counts as
+    untestable.
+
+    **The corpus investigation here is worth keeping because the first
+    reading of it was wrong, and wrong in a specific, catchable way.**
+    Measuring the naive "any usage zero-match" rule against
+    `fleshandbonedesign.com.har` — the reference fixture, hand-written,
+    trusted — found 7 of 14 `live` entries would flip, on selectors like
+    `.quick-view-background`, `.menu-copy-2`, `h2`. The first theory was that
+    these were classes JavaScript adds at runtime (a quick-view modal, a
+    hover-triggered menu variant) — plausible, and wrong: `grep`ing the
+    captured HTML for `quick-view` returned 28 hits, which looked like
+    confirmation. Every one of those hits was inside an embedded `<style>`
+    block's own CSS text, not a `class=` attribute — the grep matched the
+    selector's own definition, not markup carrying it. A second check,
+    restricted to `class="..."` attributes specifically, found zero real
+    elements for `.quick-view*`, `.menu-copy-2`, `.menu-copy-3`,
+    `.menu-copy-scroll`, `h2`, and several more — genuinely unused rules from
+    a general-purpose theme stylesheet (Cargo's "crass" template ships
+    variants this particular site never uses), not JS-gated content. The
+    corrected finding argues *for* this invariant rather than against it: the
+    signal is real, on the site it was most likely to be a false alarm.
+
+    **`parkersprouse.me.har` is the cleanest positive case**: its only
+    `unmatched` entries are `:where(dialog)` and `:where(fieldset)` — a
+    normalize-style reset shipping rules for elements the page's static markup
+    doesn't have yet, exactly the shape this status exists to name. Verified
+    directly against the reference fixture's own documented anchors
+    (ground `#151515`, 20 tokens, `#ffc600` `saved`, `#13330d` `inert`, no
+    warnings) — all five held before and after; the `all_unmatched` check
+    only ever narrows an entry that is *already* `live`, so `saved` and
+    `inert` entries are never reconsidered (invariant priority: `inert` →
+    `saved` → `unmatched` → `live`, `_status_for`).
+
+    **A looser rule — flip whenever at least one usage is a confirmed
+    non-match, ignoring `None` usages in the same entry — was measured and
+    rejected.** Across `ground.news.har`/`tailwindcss.com.har`/
+    `ui.shadcn.com.har` it flagged 8–13% more entries than the strict rule,
+    and every additional case was an entry that also had a genuine `:hover`/
+    `:focus`/`::placeholder` usage mixed in — exactly the ambiguous shape
+    unanimity is meant to protect. The strict rule's own flips, read by hand
+    across all five bundles, converged on cases this file already documents
+    independently as correct: ui.shadcn.com's `.shimmer`/`.shimmer-none`
+    (the "scoped custom properties are not modelled" limit below — a page
+    this HAR never fetched) and `.theme-sketch` (a theme variant not selected
+    on the captured page) both turn up here as `unmatched`, matching what was
+    already known about them from other investigations.
+
+    **A document-level "is this capture trustworthy" gate — flip nothing if
+    the whole document's overall selector match rate is too low — was
+    considered before measuring and abandoned after.** The premise was that a
+    truncated HAR or client-hydrated shell (T9's own 2026-08-02 finding, off
+    -page custom properties only) would show a visibly lower match rate than
+    a trustworthy static capture. Measured, it does not discriminate:
+    `fleshandbonedesign.com.har` — trusted, hand-written, complete — has a
+    match rate of 0.29, statistically indistinguishable from
+    `tailwindcss.com.har`'s 0.25–0.33. A generic theme stylesheet on a small
+    site and a component library's full utility set on a docs site both
+    produce "most selectors don't match this one page" for entirely different,
+    equally legitimate reasons. There is no threshold that separates them, so
+    none is used; the per-usage unanimity rule above is the check that
+    actually holds up.
+
+    **Performance:** reuses `_build`'s already-hoisted `wrapped_root` (T9) and
+    memoizes by selector text (`reach_of`, mirroring `consumers_of`), same
+    pattern, same reason. Measured on `tailwindcss.com.har`: existing baseline
+    (T9 already wired in) 35s, with T18's per-declaration reach check added,
+    ~47s — a real but proportional addition, not a new dominant cost, and a
+    one-time per-extraction cost rather than a hot-path one.
+
+    **The report's own reading colors move, because `_pick_report_theme`
+    (`emit.py`) draws its neutral ramp from `live` entries only, and that
+    pool shrank — invariant 11's own failure shape, so this was checked, not
+    assumed.** Every corpus theme still clears its contrast floor with room
+    to spare (lowest margin: 3.86:1 against a 3.0 floor, `tailwindcss.com`
+    light). A before/after diff of the picked hex values on the three
+    largest-shrink bundles shows only cosmetic drift — a different, equally
+    real site grey chosen once its previous neighbour became `unmatched`,
+    never a fall-back to the derived-from-ground synthetic tones. This is
+    the mechanism `choose()`'s own derived-fallback comment describes
+    working as intended, not a coincidence. Visually confirmed in a browser
+    on `ground.news.har` (the largest shrink, 119→46 `live`), which caught a
+    real bug in the process: `emit_html`'s report subtitle read "N found in
+    the source but not painted" — true for `saved`/`inert`, false for
+    `unmatched`, whose entire premise is that the tool *can't* confirm that.
+    Fixed to "N more found in the source", dropping the overclaim rather than
+    hedging it further inline.
+
+    Tests: `TestSelectorReach` (`tests/test_dom.py`, the tri-state contract
+    in isolation — a real match, a confirmed non-match, a dynamic state, a
+    pseudo-element, an uncompilable selector, and a mixed list where one
+    untestable branch does not make the whole list `None`), and
+    `TestUnmatchedStatus` (`tests/test_extract.py`, end-to-end through
+    `extract()` — a genuine non-match, a real match, one matching usage
+    keeping a merged entry `live`, a hover-only usage staying `live` rather
+    than guessing, `saved`/`inert` priority holding over `unmatched`, and a
+    bare `.css` input with no captured HTML at all staying `live` rather than
+    manufacturing a determinate answer from zero evidence).
+
 ## Status vocabulary
 
 | Status | Means | Detected by |
@@ -964,6 +1080,7 @@ because the obvious implementation produced plausible but wrong output.
 | `live` | Actually painted | default |
 | `saved` | Custom property nothing references — usually a design tool's saved swatches | `_status_for` vs `var_refs` |
 | `inert` | Declaration that paints nothing, e.g. `drop-shadow(0 0 0 #13330d)` | `is_inert_shadow` |
+| `unmatched` | Every usage's selector was tested against the real captured document and matched nothing there (T18) | `Entry.all_unmatched` vs `dom.selector_reach` |
 
 ## Themes
 
@@ -1178,6 +1295,17 @@ Tailwind config should even look like first.
   compounded by which pages a HAR happens to fetch — not "scoped custom
   properties are not modelled."** That modelling gap is closed; this
   particular example was never reachable by closing it.
+
+  **T18 (invariant 27, landed 2026-08-02) reaches this same `.shimmer`/
+  `.shimmer-none` shape independently, from the other direction.** Where T9
+  asks "is there a real consumer to resolve a value for" and finds none, T18
+  asks the plainer question "does `.shimmer`'s own selector match any real
+  element at all" — also none, so the entry lands `unmatched`. Two different
+  investigations landing on the same declarations by different routes is
+  corroboration, not redundancy: it was checked directly (not assumed) as
+  part of T18's own corpus verification, and it is one of the cases invariant
+  27 cites as the strict per-usage rule converging with what this file
+  already knew independently.
 
   **Not a regression, either way, on the original phase-4 finding this entry
   describes.** HEAD reported a color here only because the truncated call

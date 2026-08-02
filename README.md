@@ -85,6 +85,14 @@ things are already load-bearing for any consumer written before themes
 existed: `themes` is always present and holds at least one entry, and the
 top-level `ground`, `stats` and `colors` always mirror `themes[0]`.
 
+A new *value* for an existing string key – `status` gaining `unmatched`
+alongside `live`/`saved`/`inert` – does not bump it either, under the same
+promise: the key is still present, still a string. A consumer that switches
+on every status value it knows about and treats anything else as `live` (or
+otherwise fails open) is unaffected; one that hard-rejects an unrecognized
+status string should treat that as a bug in the consumer, not a signal this
+tool should have bumped the version for.
+
 ## Light and dark themes
 
 When a site ships two themes, both are extracted and the report gets a toggle.
@@ -168,7 +176,7 @@ and `#191919` become one token. A grey used for body text and the same grey used
 for a card background stay two, because they are two things in any theme worth
 having. Use `--flat` for one token per distinct color instead.
 
-**Three statuses:**
+**Four statuses:**
 
 - `live` – actually painted on the page.
 - `saved` – a custom property nothing references. On sites built with a design
@@ -176,6 +184,14 @@ having. Use `--flat` for one token per distinct color instead.
   page.
 - `inert` – a declaration that paints nothing, such as
   `drop-shadow(0 0 0 #13330d)`, where every length is zero.
+- `unmatched` – every declaration's selector was checked against the page's
+  own markup and matched no real element there. Could be leftover CSS from an
+  old design or an unused template variant; could also be a selector that only
+  applies once client-side JavaScript runs – a hover state, a toggled class, a
+  modal – which this tool cannot execute and so cannot rule out. Reported when
+  every use is a confirmed non-match; a selector this tool can't even test
+  (`:hover`, `::after`, one it can't parse) leaves the color `live` rather than
+  guessing.
 
 Only `live` colors go into the css/scss/ts/tailwind files, so what you paste
 into a project is what the site actually paints. Everything stays in the JSON

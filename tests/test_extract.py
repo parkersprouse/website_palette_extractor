@@ -755,5 +755,102 @@ class TestAncestryWiredIntoBuild(unittest.TestCase):
         self.assertIn("#f5f5f5", colors)
 
 
+class TestUnmatchedStatus(unittest.TestCase):
+    """T18: a fourth status for a declaration whose selector reaches no real
+    element in the captured document -- distinct from `saved` (invariant
+    10's own check, over the CSS's `var()` reference graph, no DOM involved)
+    and from `live` (the default when there is no evidence otherwise).
+    """
+
+    def _status_of(self, hexval, html):
+        doc = emit.to_document(extract.extract(sources.load_any(
+            write_fixture(html))))
+        by_hex = {c["hex"]: c for c in doc["colors"]}
+        return by_hex[hexval]["status"]
+
+    def test_a_selector_matching_nothing_is_unmatched(self):
+        html = """<!DOCTYPE html><html><head><style>
+  body { background-color: #ffffff; }
+  .old-promo-banner { color: #ff0000; }
+</style></head><body></body></html>
+"""
+        self.assertEqual(self._status_of("#ff0000", html), "unmatched")
+
+    def test_a_selector_that_matches_stays_live(self):
+        html = """<!DOCTYPE html><html><head><style>
+  body { background-color: #ffffff; }
+  .promo-banner { color: #ff0000; }
+</style></head><body><div class="promo-banner">x</div></body></html>
+"""
+        self.assertEqual(self._status_of("#ff0000", html), "live")
+
+    def test_one_matching_usage_keeps_the_whole_entry_live(self):
+        """Two declarations share a color and a role -- one bucket. One
+        usage's selector is real, the other's is not. The entry is live
+        because it *is* painted, by the usage that matches; `all_unmatched`
+        requires unanimity for exactly this reason.
+        """
+        html = """<!DOCTYPE html><html><head><style>
+  body { background-color: #ffffff; }
+  .promo-banner { color: #ff0000; }
+  .old-promo-banner { color: #ff0000; }
+</style></head><body><div class="promo-banner">x</div></body></html>
+"""
+        self.assertEqual(self._status_of("#ff0000", html), "live")
+
+    def test_a_dynamic_state_selector_alone_stays_live_not_unmatched(self):
+        """`.cta:hover` has no resting state to test at all -- `None`, not
+        `False` -- so there is no basis to call this unmatched, the same
+        "refuse rather than guess" contract `resolve_by_ancestry_kind`'s own
+        "no basis" outcome keeps for T9. A real site's hover/focus states
+        must not flood the report as if they were dead CSS.
+        """
+        html = """<!DOCTYPE html><html><head><style>
+  body { background-color: #ffffff; }
+  .cta:hover { color: #ff0000; }
+</style></head><body><div class="cta">x</div></body></html>
+"""
+        self.assertEqual(self._status_of("#ff0000", html), "live")
+
+    def test_saved_takes_priority_over_unmatched(self):
+        """A custom property nothing references, whose own defining
+        selector also matches nothing real, stays `saved` -- the more
+        specific diagnosis over the CSS's own reference graph -- rather than
+        being relabelled `unmatched`. `_status_for` checks `saved` first and
+        only reaches `all_unmatched` if that check did not already answer.
+        """
+        html = """<!DOCTYPE html><html><head><style>
+  body { background-color: #ffffff; }
+  .old-swatches { --brand: #ff0000; }
+</style></head><body></body></html>
+"""
+        self.assertEqual(self._status_of("#ff0000", html), "saved")
+
+    def test_inert_takes_priority_over_unmatched(self):
+        """A zero-length shadow on a selector nothing in the document
+        carries stays `inert`, the same "paints nothing regardless" priority
+        `all_inert` already had over `saved`.
+        """
+        html = """<!DOCTYPE html><html><head><style>
+  body { background-color: #ffffff; }
+  .old-card { filter: drop-shadow(0 0 0 #13330d); }
+</style></head><body></body></html>
+"""
+        self.assertEqual(self._status_of("#13330d", html), "inert")
+
+    def test_no_captured_html_leaves_status_live_not_unmatched(self):
+        """A bare `.css` input has no document to test selectors against at
+        all -- `reach_of` returns `None` for everything, the same "unknown
+        is not the same as absent" contract `page_elements` keeps for
+        `<html>`/`<body>`. `--include-unused` output on a CSS-only input
+        must not turn into a wall of false "unmatched" tags.
+        """
+        css = ".old-promo-banner { color: #ff0000; }"
+        doc = emit.to_document(extract.extract(sources.load_any(
+            write_fixture(css, name="page.css"))))
+        by_hex = {c["hex"]: c for c in doc["colors"]}
+        self.assertEqual(by_hex["#ff0000"]["status"], "live")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

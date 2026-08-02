@@ -714,15 +714,25 @@ Accuracy gaps left by phases 1–4:
       132 tests, `ruff` clean, 3.11–3.14 green, corpus-verified (full
       per-entry diff, not just hex sets — see this task's own entry below
       for why that distinction mattered here). See T9's own entry below for
-      the full history and for what T18/T19 still need
+      the full history; T18 (below) has since landed on top of this tree,
+      T19 has not
 - [ ] **T10** — read `color-scheme` to confirm a `light-dark()` site is really
       two-themed — **waiting on a counter-example; do not do this yet**
-- [ ] **T18** — flag declarations whose selector matches nothing in the real
-      document — **filed 2026-08-02, depends on T9's tree.** Not started.
-      See T18's own entry below
+- [x] **T18** — flag declarations whose selector matches nothing in the real
+      document — **filed 2026-08-02, landed 2026-08-02.** New status
+      `unmatched`, gated on unanimity: every usage's selector must be a
+      *confirmed* non-match (`dom.selector_reach` returns `False`, not
+      `None`) or the entry stays `live`. 145 tests, `ruff` clean, 3.11–3.14
+      green, corpus-verified against all five frozen bundles including a
+      wrong first theory caught and corrected mid-investigation. See T18's
+      own entry below and invariant 27 (`CLAUDE.md`) for the full history
 - [ ] **T19** — report actual matched elements in `examples`, not just
       selector text — **filed 2026-08-02, depends on T9's tree.** Not
       started. See T19's own entry below
+- [ ] **T20** — categorize the HTML report's palette by status, with
+      per-status descriptions — **filed 2026-08-02, requested by the owner,
+      depends on T18's new status value (landed: `unmatched`).** Not
+      started. See T20's own entry below
 
 Repo and process:
 
@@ -1846,85 +1856,129 @@ counts above are exactly that prediction, one design-generation early.
 
 ### T18 — Flag declarations whose selector matches nothing in the real document
 
-**Filed 2026-08-02, alongside T9's `html5lib` decision — depends on it.** Not
-started; needs T9's real tree before it can be attempted at all. T9 itself
-landed the same day (see its own entry above) — the tree, `wrap_tree`, and
-the override/preserve split (`resolve_by_ancestry_kind`) all exist and are
-wired into the pipeline now. That answers *how* to tell a confirmed answer
-from a shrug, which is the design question this task shares with T9 — but it
-does not start this task's own remaining question, the new status-value
-decision two paragraphs below, which nothing in T9's wiring resolves.
+**Filed 2026-08-02, alongside T9's `html5lib` decision. Landed 2026-08-02.**
+New status `unmatched` (invariant 27, `CLAUDE.md`, which is the authority for
+the full design history — this entry is the short version, corrected against
+what was actually built rather than what was predicted here beforehand).
 
-**The gap, verified directly rather than assumed.** `extract._status_for`
-only distinguishes `live` from `saved`/`inert` two ways: `saved` fires when a
-custom property is never referenced by any `var()` call in the document (a
-text/reference-graph check over `var_refs` — invariant 10), and `inert` fires
-for a handful of known dead-declaration shapes (`is_inert_shadow`). Neither
-checks whether an *ordinary* declaration's selector matches any real element
-at all. `.old-promo-banner { color: #ff0000 }` — a leftover rule for a class
-nothing in the document carries anymore — is reported `live` today,
-indistinguishable from a color the page actually paints.
+**The gap, as originally scoped, held up.** `extract._status_for` used to
+distinguish `live` from `saved`/`inert` two ways only, and neither checked
+whether an *ordinary* declaration's selector matches any real element at
+all — `.old-promo-banner { color: #ff0000 }`, a leftover rule nothing in the
+document carries anymore, reported `live`, indistinguishable from a color
+the page actually paints. `dom.selector_reach` (new) plus
+`Entry.all_unmatched` close that gap.
 
-**What T9 unlocks that this depends on.** Once a real DOM tree and general
-selector matching exist (built for T9's inheritance question), the same
-matching machinery answers a different, simpler question for free: does this
-selector match *any* element in the document at all — not which ancestor,
-just whether the count is zero. `dom.matches_page_element` already proves the
-matching half works; T9 is what makes it available past `<html>`/`<body>`.
+**Two predictions made in this entry before implementation turned out
+wrong, and both were caught by measuring rather than trusting the
+prediction.** Both are worth keeping visible rather than quietly fixed,
+per this file's own standing discipline.
 
-**This task's own premise needs re-checking before it is picked up, not
-assumed to fall out of T9's tree for free.** T9's 2026-08-02 blast-radius
-measurement (above) counted exactly this signal — a consumer selector
-matching zero elements in `full_tree` — for off-page custom properties, and
-found it dominated by two causes that are not "dead CSS" at all: a HAR
-capture truncated mid-document (`ground.news.har`, cut off at exactly
-2^20 bytes), and a modern site's real content arriving as client-hydrated
-JSON rather than static markup (`tailwindcss.com.har`, `ui.shadcn.com.har` —
-both Next.js). On those bundles, "matches nothing in `full_tree`" was true
-for 120–143 properties each, and essentially none of that was a stale rule —
-it was markup the tool never saw. Filed as-is, T18 would flag most of a
-modern site's real, live CSS as dead. Whatever T18 builds needs to
-distinguish "confirmed absent from a complete capture" from "no basis to
-say" the same way T9's own resolution does, or it inherits false positives
-at the same scale this measurement found.
+1. *"Whatever T18 builds needs a confirmed-absent-vs-no-basis split at the
+   document level, the same shape as T9's."* Wrong shape. T9's own
+   `resolve_by_ancestry_kind` never actually has a "confirmed this selector
+   matches nothing" outcome to borrow — a consuming selector matching zero
+   elements is *always* T9's "no basis" case, full stop. The real fix
+   turned out to be per-*usage*, not per-document: `dom.selector_reach`
+   returns `True`/`False`/`None` (matched / confirmed zero / untestable —
+   pseudo-element, dynamic state, uncompilable), and `Entry.all_unmatched`
+   requires **every** usage to be a confirmed `False` — one `None` anywhere
+   in the entry leaves it `live`. A document-level "is this capture
+   trustworthy" gate (flip nothing if the whole document's overall match
+   rate is too low) was built and measured before being rejected: it does
+   not discriminate. `fleshandbonedesign.com.har` — the trusted, hand-written
+   reference fixture — has a match rate of 0.29, statistically
+   indistinguishable from `tailwindcss.com.har`'s 0.25–0.33. There is no
+   threshold that separates a small site's generic unused theme CSS from a
+   docs site's unused utility classes; both produce "most selectors miss
+   this one page" for legitimate, unrelated reasons.
+
+2. *"[This will] flag most of a modern site's real, live CSS as dead,"*
+   predicted from T9's blast-radius finding that off-page custom properties'
+   consumer selectors matched nothing 120–143 times on the Next.js bundles.
+   That finding was real but described a narrower population than T18
+   actually touches (custom-property *consumers* only, vs. every
+   color-bearing declaration), and checking T18's own broader population
+   directly found something closer to the opposite: `tailwindcss.com.har`
+   and `ui.shadcn.com.har` flip 21–29% of `live` entries, no worse than
+   `ground.news.har`'s truncated capture, and no worse than the fully
+   static, hand-written reference fixture — which the strict per-usage rule
+   above flips 7 of 14 `live` entries on (**not** a Next.js-only problem).
+   A first read of that number blamed client-side JS toggling; a `grep` for
+   `quick-view` in the captured HTML returned 28 hits and looked like
+   confirmation. Every hit was inside the site's own embedded `<style>` text
+   — the selector's own definition — not a `class=` attribute. Restricting
+   the check to real `class="..."` attributes found zero actual elements
+   for every flipped case: genuinely unused rules from a general-purpose
+   theme stylesheet (Cargo's "crass" template ships variants this site
+   never uses), not JS-gated content. The corrected finding argues *for*
+   this task rather than against it.
 
 **What this does not fix.** Same limit as everywhere else in this file that
 touches the DOM: only the static markup a HAR/URL fetch captured is visible.
-A class added by JavaScript at runtime, or toggled by a runtime interaction,
-reads as unmatched here even though a browser paints it — the existing
-"No JavaScript is executed" limit in `CLAUDE.md`, not a new one this task
-introduces. Worth naming in whatever status label this adds, not just in
-this file.
+A class added by JavaScript at runtime, or toggled by a runtime interaction
+(`:hover`, a modal open state), reads `None` (no basis) rather than `False`
+here, so it cannot make an entry `unmatched` by itself — but a *different*
+usage on the same entry that genuinely is a confirmed non-match still can,
+same as any other selector. `parkersprouse.me.har`'s `:where(dialog)` /
+`:where(fieldset)` are the cleanest positive case in the corpus: a
+normalize-style reset for elements the static markup doesn't have yet.
 
-**Scope question, undecided:** whether a zero-match declaration becomes a new
-status value (a fourth alongside `live`/`saved`/`inert`) or a `saved`-like
-flag layered on the existing status. `saved` currently means specifically "a
-custom property nothing references"; overloading it for "a plain declaration
-nothing matches" would blur two different reasons under one word. Decide
-before implementing rather than after — the CSS/SCSS/TS/Tailwind emitters key
-off status name (invariant 10: only `live` ships by default), so whatever
-this is called changes what those files gain or lose.
+**Priority: `inert` → `saved` → `unmatched` → `live`** (`_status_for`). The
+new check only ever narrows an entry that is already `live`; an
+already-`saved` or already-`inert` entry is never reconsidered. Verified
+directly against the reference fixture's own documented anchors — ground
+`#151515`, 20 tokens, `#ffc600` `saved`, `#13330d` `inert`, no warnings — all
+five held unchanged before and after.
 
-**Diff level:** per-declaration status, old vs new, on all four frozen corpus
-bundles (`fleshandbonedesign.com.har`, `ground.news.har`, `tailwindcss.com.har`,
-`ui.shadcn.com.har`) plus `parkersprouse.me.har`, now that it's committed and
-regenerable. Predict the count of newly-flagged declarations per site before
-writing code, per this project's own standing discipline.
+**Diff level, as predicted:** per-declaration/per-entry status, old vs new,
+on all five frozen bundles (`fleshandbonedesign.com.har`, `ground.news.har`,
+`tailwindcss.com.har`, `ui.shadcn.com.har`, `parkersprouse.me.har`). Results:
+fleshandbonedesign 7/14 `live` entries flip, ground.news 73–79/119–126,
+tailwindcss.com 65–77/304–318, ui.shadcn.com 21–29/153–168,
+parkersprouse.me 2–3/9 (base/dark themes, both directions of each range).
+Ground, warnings, and total token counts unchanged on every bundle — this
+task only narrows `status`, never what enters the palette or what the
+ground resolves to. **The report's own reading colors are status-derived
+and do move**, since `_pick_report_theme` (`emit.py`) draws its neutral
+ramp from `live` entries only, and that pool shrank on every corpus site.
+Checked rather than assumed, per invariant 11's own history of exactly this
+failure shape: on `ground.news.har`/`tailwindcss.com.har`/`ui.shadcn.com.har`
+every theme still clears its contrast floor with room to spare (lowest
+margin 3.86:1 against a 3.0 floor), and a before/after diff of the picked
+hex values shows only the expected cosmetic drift — a different, equally
+real site grey chosen as its previous neighbor became `unmatched` and left
+the candidate pool, never a fall-back to the derived-from-ground synthetic
+tones. Visually confirmed in a browser on `ground.news.har` (the largest
+pool shrink, 119→46), which also caught a real bug: `emit_html`'s report
+subtitle read "N found in the source but not painted," which was true for
+`saved`/`inert` but not for `unmatched` — fixed to "N more found in the
+source" rather than asserting a confidence the status doesn't have.
 
-**Machinery this task should reuse rather than re-derive, landed alongside
-T9's wiring:** `dom.wrap_tree(tree)` + `dom.elements_matching_wrapped` split
-wrapping the tree from querying it, specifically because `elements_matching`
-re-wrapping per call was T9's own dominant cost (55s on tailwindcss.com's
-~500 distinct selectors, per its blast-radius measurement). T18 will call
-this once per declaration in the document — every declaration, not just the
-off-page-referencing subset T9 checks — so it needs the same hoisted-wrapper
-pattern `_build` already uses (`wrap_tree` once per theme, a
-selector-keyed memo dict) from the start, not as a fix applied after the
-fact. Whether T18 shares `_build`'s existing `wrap_tree` call and cache or
-builds its own is an implementation detail to settle when this is picked
-up, not decided here — but re-wrapping per declaration on a
-`tailwindcss.com`-sized document, unmemoized, is the exact mistake T9's own
-measurement already found and fixed once.
+**Performance, measured rather than assumed:** reused `_build`'s
+already-hoisted `wrapped_root` (T9) and memoized by selector text
+(`reach_of`, mirroring `consumers_of`) rather than building separate
+machinery. `tailwindcss.com.har`: T9-only baseline 35s, with T18's
+per-declaration reach check added, ~47s — real but proportional, not a new
+dominant cost.
+
+**Tests:** `TestSelectorReach` (`tests/test_dom.py`, 6 tests, the tri-state
+contract in isolation) and `TestUnmatchedStatus` (`tests/test_extract.py`,
+7 tests, end-to-end through `extract()`) — both written to fail against the
+prior implementation before being trusted, per this file's own "a test that
+passes before and after tests nothing" rule. 145 tests total (132 → 145),
+`ruff` clean, 3.11–3.14 green, module/console-script/zipapp JSON identity
+re-verified on the reference fixture.
+
+**Schema note:** `status` gaining a fourth value does not bump
+`schemaVersion` — same key, same type (string), which is what T3's own
+compatibility promise actually says. Documented explicitly in `README.md`'s
+schema section rather than left for a consumer to infer, since "new enum
+value on an existing key" is a real third case T3's original two-case
+promise (additive key / re-typed key) didn't name.
+
+See **T20** below for the report-side categorization this status unlocks —
+still not started, no longer blocked.
 
 ### T19 — Report actual matched elements in `examples`, not just selector text
 
@@ -1957,11 +2011,11 @@ under T3's compatibility promise — `schemaVersion` does not need to move,
 since "additive keys do not bump" is already the stated rule.
 
 **What this does not fix:** the same static-markup-only limit as T18. A count
-of zero real matches here is exactly T18's signal, so **land T18 first, or
-land them together** — reporting "0 elements matched" without T18's status
-change alongside it surfaces the same information as a bare, unexplained
-number instead of a labelled status, which is a worse read for anyone
-looking at the report.
+of zero real matches here is exactly T18's signal — **T18 has now landed**
+(`unmatched`, above), so this task can proceed without the "land them
+together" hedge this entry originally carried: reporting a real match count
+alongside an already-existing labelled status is no longer a coordination
+problem, just an additive JSON key.
 
 **Diff level:** JSON key-set diff (T3's own convention) confirming only
 additive keys changed, plus a sample of `examples` entries old vs new on all
@@ -1977,6 +2031,63 @@ just that subset" need is the same lookup at wider scope, not a different
 one. If T18 and T19 land together (this task's own recommendation two
 paragraphs up), they can likely share one wrapped root and one memo cache
 per theme rather than each building their own.
+
+### T20 — Categorize the HTML report's palette by status, with descriptions
+
+**Filed 2026-08-02, requested by the owner alongside T18's status-shape
+decision. T18 has since landed** (`unmatched`, invariant 27) **— no longer
+blocked.** Not started.
+
+**The gap, verified directly in `emit.py`.** The report's swatch grid
+(`render()`, `emit.py:747`) groups entries by hue/role (`GROUP_ORDER`:
+ground/surface/ink/line/neutral/chroma — `emit.py:582`), each section with a
+title and blurb (`GROUP_TITLES`/`GROUP_BLURBS`). Status plays no part in that
+grouping. It surfaces three other ways, all secondary: a binary filter
+toggle (`FILTERS`, `emit.py:700` — "rendered only" vs. "everything found"),
+a small text tag on non-live swatches naming the status word (`swatch()`,
+`emit.py:726-729`), and one prose sentence in the footer defining `saved`,
+`inert`, and now `unmatched` for the whole document at once (`renderFooter()`,
+`emit.py:867` — updated when T18 landed, still one dense sentence covering
+three statuses at once). Nothing lets a reader scroll the palette and see,
+section by section, *why* a given color isn't painted — they'd have to
+toggle to "everything found", then read each small tag, then separately
+recall which clause in the footer sentence defined it. There are now four
+reasons a swatch might not be `live` (`saved`, `inert`, `unmatched`, each
+meaning something different), and the tag+footer treatment does not scale to
+explaining four independently-true reasons at a glance.
+
+**Shape of the change, sketched rather than designed.** The request is
+specifically to make status legible at scroll-through granularity, the same
+way hue/role grouping already is — not necessarily to replace the
+hue/role grouping, which answers a different, still-useful question ("what
+family is this color in"). Two shapes worth weighing when this is picked up:
+sub-group *within* each hue/role section by status (so "ink" shows its live
+inks, then its saved inks, each under a small status-labelled subheading with
+a one-line description — "rendered on the page" / "a custom property nothing
+in the CSS references" / "paints nothing" / "this selector matches nothing in
+the page this tool captured", the last one lifted from `renderFooter()`'s own
+already-landed wording rather than redrafted); or add status as an orthogonal
+second axis the existing filter toggle already gestures at, expanded from two
+states (`live`/`all`) to one button per status that narrows the same grid
+rather than replacing groups with statuses outright. Whichever shape, the
+description text for each status should read like the per-status bullets in
+`README.md`'s "Four statuses" section, not like the current footer's single
+dense sentence — one short line per status, near where that status's colors
+actually are, not deferred to a document-wide footnote.
+
+**What this does not fix.** Report-only; it's a presentation change over
+data `to_document` already emits (plus T18's new status field once that
+lands). No new extraction, no schema change beyond whatever key T18 itself
+adds — this task should not need its own `schemaVersion` bump.
+
+**Diff level:** no data diff at all — `to_document`'s output is unchanged by
+this task on its own. Verify by hand in a browser: load the report for a
+site exercising all four statuses (a corpus bundle with real `saved`/`inert`
+entries plus at least one T18-flagged declaration) and confirm every
+category is identifiable while scrolling, with its description visible,
+without opening dev tools or hovering a tooltip. Invariant 11 (report must
+stay standalone, `file://`-openable) and the report-theme-readability test
+apply to any new markup this adds, same as the rest of the report.
 
 ### T10 — Read `color-scheme` to confirm a `light-dark()` site is two-themed
 

@@ -230,6 +230,25 @@ def wrap_tree(root: ET.Element) -> cssselect2.ElementWrapper:
     return cssselect2.ElementWrapper.from_html_root(root)
 
 
+def _compile_usable(selector: str) -> list | None:
+    """The parts of a selector list a real element can be tested against.
+
+    None covers everything `elements_matching_wrapped`/`selector_reach` treat
+    as "no basis to answer": a selector `cssselect2` cannot compile, and a
+    selector list where every branch is a pseudo-element or a dynamic state
+    `cssselect2` marks `never_matches`. Shared so the two callers can't drift
+    on what counts as untestable — they used to duplicate this try/except and
+    filter inline.
+    """
+    try:
+        compiled = cssselect2.compile_selector_list(selector)
+    except Exception:
+        return None
+    usable = [sel for sel in compiled
+             if sel.pseudo_element is None and not sel.never_matches]
+    return usable or None
+
+
 def elements_matching_wrapped(
     selector: str, wrapped_root: cssselect2.ElementWrapper
 ) -> list[cssselect2.ElementWrapper]:
@@ -240,15 +259,44 @@ def elements_matching_wrapped(
     See `wrap_tree`'s own docstring for the measurement that made this worth
     splitting out.
     """
-    try:
-        compiled = cssselect2.compile_selector_list(selector)
-    except Exception:
-        return []
-    usable = [sel for sel in compiled
-             if sel.pseudo_element is None and not sel.never_matches]
-    if not usable:
+    usable = _compile_usable(selector)
+    if usable is None:
         return []
     return list(wrapped_root.query_all(*usable))
+
+
+def selector_reach(selector: str,
+                   wrapped_root: cssselect2.ElementWrapper) -> bool | None:
+    """Does this selector match at least one real element? `None` if untestable.
+
+    T18 (`PLAN.md`): three answers, not two, and the caller has to keep them
+    apart rather than treating "no basis" as a `False`. `True` and `False`
+    both mean the selector compiled and was actually tested — the difference
+    is only whether anything in the document matched. `None` means the
+    question could not be asked at all: uncompilable, or every branch is a
+    pseudo-element or a dynamic state `cssselect2` marks `never_matches` (see
+    `_compile_usable`, shared with `elements_matching_wrapped`).
+
+    Collapsing `None` into `False` is the specific mistake this function
+    exists to prevent. `.old-class:hover` and a genuinely-dead `.old-class`
+    both make `elements_matching_wrapped` return `[]` — that function's
+    empty-list contract does not distinguish "tested, matched nothing" from
+    "could not test the resting-state question at all" (`:hover` has no
+    resting state to test), because none of its existing callers needed that
+    distinction. This one does: flagging every `:hover`/`::after`/`:focus`
+    declaration in a hand-written site as content-not-on-the-page would be
+    wrong on exactly the sites this tool trusts most.
+
+    `bool(list(...))`, not `bool(...)` — `query_all` returns a generator, and
+    a generator object is truthy regardless of whether it yields anything.
+    Caught by a sanity check against a known-absent selector before this was
+    trusted for T18's own blast-radius measurement, which is why the list
+    call is spelled out here rather than assumed correct by inspection.
+    """
+    usable = _compile_usable(selector)
+    if usable is None:
+        return None
+    return bool(list(wrapped_root.query_all(*usable)))
 
 
 def elements_matching(selector: str,

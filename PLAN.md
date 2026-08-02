@@ -711,15 +711,19 @@ Accuracy gaps left by phases 1–4:
 
 Repo and process:
 
-- [ ] **T11** — CI: 3.11–3.14, `ruff`, and package/zipapp/console-script JSON
-      identity
+- [x] **T11** — CI: 3.11–3.14, `ruff`, and package/zipapp/console-script JSON
+      identity — **decided against 2026-08-01: won't do.** See T11's own
+      entry below for the owner's reasoning
 - [x] **T12** — `Makefile` or `build.py` for the zipapp incantation —
       **landed 2026-07-26** as `build.py`
 - [x] **T13** — move `test_palettekit.py` into `tests/`, split by module —
       **landed 2026-07-27**. See T13's own write-up below
-- [ ] **T14** — fixture corpus of small committed HTML files — **unblocks
-      checking every other task**; a fresh clone can currently regenerate
-      nothing
+- [ ] **T14** — fixture corpus of small committed HTML files per site
+      archetype — still open, but **partially discharged 2026-08-01**: the
+      `parkersprouse.me.har` + `example/` commit means a fresh clone can now
+      regenerate *that* output (verified byte-identical, `generated`
+      dropped). The reference fixture and the four breadth-check bundles are
+      still gitignored. See T14's own entry below
 - [x] **T15** — audit hand-rolled scanning/parsing across the whole codebase
       against the T5 corollary (defer to a library already in the dependency
       set for anything it does correctly; hand-roll only what it can't do).
@@ -806,9 +810,16 @@ acceptance bar; these are independent, and any of them can land alone.
 **Ordering, if you want one.** T4 was worth the most by a wide margin — it was
 the only open item that moved colors and token names on a real site today, and
 it landed 2026-07-26. T6 is the one that gets worse on its own, because native
-CSS nesting is making the shape it mishandles more common every year. T14 is
+CSS nesting is making the shape it mishandles more common every year. ~~T14 is
 the one that unblocks *checking* any of the others, since a fresh clone can
-currently regenerate no fixture at all. Everything else is genuine but static.
+currently regenerate no fixture at all.~~ **Partly true as of 2026-08-01**:
+the `parkersprouse.me.har` + `example/` commit gave a fresh clone its first
+regenerable fixture, and with T11 decided against, "unblocks checking the
+others" no longer points at a CI job — it just means the example is now a
+real, verifiable anchor rather than an unverifiable promise. T14's remaining
+job — a small corpus spanning framework-heavy, page-builder, dark, light and
+CSS-variable-driven archetypes — is still undone. Everything else is genuine
+but static.
 
 Each task carries the level its change should be **diffed** at. That is this
 project's most expensive lesson — phase 1 passed the whole suite and the
@@ -940,7 +951,7 @@ a smaller test matrix; it is not a free one.
 | `pyproject.toml` | the verified-floor comment at the top (lines 10–11) |
 | `pyproject.toml` | `[tool.ruff] target-version = "py311"` |
 | `CLAUDE.md` | the `**Python 3.10+, verified**` paragraph |
-| `CLAUDE.md` | the `for v in 3.10 …` matrix loop, and the CI entry in T11 |
+| `CLAUDE.md` | the `for v in 3.10 …` matrix loop, and ~~the CI entry in T11~~ (T11 was decided against 2026-08-01 and never produced a CI entry to update) |
 | `README.md` | "Python 3.10+ (tested on 3.10 through 3.14)" |
 
 **Sub-decision left open: bump `__version__` from `1.0.0`.** Narrowing the
@@ -1489,21 +1500,38 @@ not be done until one turns up.
 
 Moved here from `CLAUDE.md`'s Migration TODO, which now points at this section.
 
-### T11 — CI
+### T11 — CI — decided against 2026-08-01, won't do
 
-Run the suite on **3.11–3.14** (per T2), `ruff check`, and assert that the
-package, the zipapp and the installed console script produce identical JSON for
-the same input — that last is the cheapest real regression check the project
-has, and it is the one that would have caught T1's stale artifact.
+**Decided: this project does not get a CI pipeline.** It's a solo,
+unpublished tool, and a GitHub Actions workflow is a maintenance surface
+(matrix definitions, action-version pin drift, a second place secrets and
+permissions could go wrong) that buys back a check already cheap to run by
+hand. The owner made this call explicitly, recorded here as `[x]` rather
+than left `[ ]`, so a future session doesn't re-open it as an oversight.
 
-**Compare JSON output, not archive bytes.** `python3 build.py` (T12) calls
-`zipapp.create_archive`, which embeds each entry's mtime; two builds of
-identical source are never byte-identical, and that's fine — it was never the
-freshness guarantee. Whatever CI job implements this should run `python3
-build.py` then diff `to_document()` output (with `generated` dropped) between
-`python3 -m palettekit`, the installed `palettekit` script, and `python3
-palettekit.pyz`, the same way T1 was verified locally in the absence of this
-task.
+**What this does not undo.** The JSON-identity check T11 would have automated
+is still real and still worth running — it's what would have caught T1's
+stale artifact — it just stays a manual step, same as the
+neither-dependency-installed interpreter check already is:
+
+```bash
+python3 build.py
+# then diff to_document() output (generated dropped) between
+# python3 -m palettekit, the installed `palettekit` script, and
+# python3 palettekit.pyz
+```
+
+`CLAUDE.md`'s "Rebuild the zipapp before a work session is finished" section
+carries this as the standing manual replacement for what would have been
+T11's CI job.
+
+**What was planned, before the decision, kept for context rather than
+deleted:** run the suite on 3.11–3.14 (per T2), `ruff check`, and assert
+that the package, the zipapp and the installed console script produce
+identical JSON for the same input. `python3 build.py` (T12) calls
+`zipapp.create_archive`, which embeds each entry's mtime, so the comparison
+was always going to be JSON output, never archive bytes — that part of the
+design stands regardless of whether it runs in CI or by hand.
 
 ### T12 — `Makefile` or `build.py` for the zipapp
 
@@ -1639,18 +1667,32 @@ touched).
 
 Framework-heavy, page-builder, dark, light, CSS-variable-driven.
 
-**More urgent than it looks, and it is the item that unblocks checking every
-other one.** `.gitignore` carries both `*.har` and `palettes`, so **a fresh
-clone can regenerate nothing**: not the reference fixture, not the breadth
-check, not the `example/` directory `README.md` promises. All of it is
-reachable only on the owner's machine. Small committed fixtures are the only
-fix that does not mean committing an 11 MB HAR.
+**Still urgent, but no longer true that it's the item that unblocks checking
+every other one — T11 (the CI job that would have used a regenerable fixture)
+is decided against, so there is no other task left waiting on this.**
+`.gitignore` carries both `*.har` and `palettes`, so ~~a fresh clone can
+regenerate nothing~~ **as of 2026-08-01, that's no longer quite right**:
+not the reference fixture, not the breadth check, ~~not the `example/`
+directory `README.md` promises~~ **— that one's done.** `12a6ac5` ("Added
+example output and updated README") committed `parkersprouse.me.har` (via a
+`!parkersprouse.me.har` exception carved into `.gitignore`'s `*.har` rule)
+alongside the `example/` directory it produces. Regenerated from the
+committed HAR and diffed against the committed JSON with `generated`
+dropped: **byte-identical.** The reference fixture
+(`fleshandbonedesign.com.har`) and the four breadth-check bundles
+(`ground.news`, `tailwindcss.com`, `ui.shadcn.com`, plus
+fleshandbonedesign.com again) are still gitignored with no exception, so a
+fresh clone still can't regenerate either of those. Small committed fixtures
+remain the fix that doesn't mean committing an 11 MB HAR for those two.
 
 It also addresses a weakness found this session: the reference fixture is a
 single-theme, hand-written-CSS site, and the **pre-`tinycss2` parser reproduces
 all six of its anchors exactly**. It cannot detect a parser regression. The
 breadth check can, and the breadth check needs network and frozen bundles —
-committed fixtures are what make that offline and reviewable.
+committed fixtures are what make that offline and reviewable. `parkersprouse.me`
+doesn't substitute for this: it's one more real site, not the small
+per-archetype set this task asks for, and it's a single theme like the
+reference fixture already is.
 
 ### T15 — Audit hand-rolled scanning against the T5 corollary — landed 2026-07-27
 

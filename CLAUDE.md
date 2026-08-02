@@ -123,7 +123,9 @@ environment it just built in. On a development machine every interpreter has
 
 The package keeps its own `__main__.py` so `python3 -m palettekit` works from a
 checkout. Module / console-script / zipapp builds must produce identical JSON
-for the same input — worth asserting in CI (`PLAN.md` T11).
+for the same input — checked by hand each session rather than in CI
+(`PLAN.md` T11, decided against 2026-08-01: this project doesn't get a CI
+pipeline).
 
 **`main()` guards the Python floor before doing anything else**
 (`palettekit.PYTHON_FLOOR`, read from one place and checked by
@@ -150,19 +152,25 @@ reproduced the reference fixture's anchors *exactly* so no check caught it, and
 crashed on `ground.news.har` under a 3.9 interpreter. See `PLAN.md` **T1** for
 the full diagnosis.
 
-Two things make the rule stick:
+Two things were meant to make the rule stick; only one landed, and the other
+was decided against rather than left open:
 
 - **Automate it** (`PLAN.md` **T12** — done). `python3 build.py` replaces the
   six-command incantation, and its structural vendoring check replaces the
   silently-skippable step that let a human forget it.
-- **Assert it** (`PLAN.md` **T11** — still open). Module / console-script /
+- ~~**Assert it** (`PLAN.md` **T11** — still open). Module / console-script /
   zipapp JSON identity is already the rule two paragraphs up; in CI it turns a
-  stale artifact into a failed build instead of a silent one.
+  stale artifact into a failed build instead of a silent one.~~ — **T11
+  decided against, 2026-08-01.** This project doesn't get a CI pipeline; a
+  solo, unpublished tool doesn't carry the check's own maintenance surface
+  well enough to justify it. The identity check itself is not abandoned, just
+  manual.
 
-Until T11 lands, rebuild with `python3 build.py` at the end of a session that
-touched `palettekit/`, and **verify with an interpreter that has neither
-dependency installed** — on a development machine every interpreter has them
-and a missing vendoring step is invisible to a smoke test, though not to
+So this stays a manual step, permanently rather than "until T11 lands":
+rebuild with `python3 build.py` at the end of a session that touched
+`palettekit/`, and **verify with an interpreter that has neither dependency
+installed** — on a development machine every interpreter has them and a
+missing vendoring step is invisible to a smoke test, though not to
 `build.py`'s own structural check.
 
 ## Layout and data flow
@@ -179,11 +187,11 @@ sources.py   →  cssparse.py  →  extract.py  →  emit.py
 | File | Lines | Holds |
 |---|---:|---|
 | `color.py` | 1182 | `Color`, parsing, sRGB↔OKLab/CIE Lab/XYZ both ways, `color-mix()`, `light-dark()`, `calc()`, contrast, hue names |
-| `cssparse.py` | 881 | `tinycss2` integration, `var()`, `selector_weight`, roles, theme scopes, `@layer` names |
+| `cssparse.py` | 926 | `tinycss2` integration, `var()`, `selector_weight`, roles, theme scopes, `@layer` names |
 | `dom.py` | 300 | `html.parser` → `ElementTree` shim, `cssselect2` matching of `<html>`/`<body>`, specificity |
 | `sources.py` | 292 | `load_har` / `load_url` / `load_paths` → `Bundle` |
-| `extract.py` | 1126 | `extract()`, the cascade, per-theme `_build`, ground, merging, statuses, naming |
-| `emit.py` | 942 | Emitters; `_HTML` is the report template |
+| `extract.py` | 1209 | `extract()`, the cascade, per-theme `_build`, ground, merging, statuses, naming |
+| `emit.py` | 952 | Emitters; `_HTML` is the report template |
 | `images.py` | 148 | Optional image quantisation, not part of the token set |
 | `__main__.py` | 255 | CLI; `main()` guards `PYTHON_FLOOR` before anything else |
 
@@ -1334,12 +1342,20 @@ is rather than work to do:
 - [x] `[project.urls]` and `authors` — filled in
       (`github.com/parkersprouse/palettekit`, Parker Sprouse).
 - [x] `.gitignore` — present, and **narrower than earlier revisions of this
-      list specified.** It carries `*.har`, `.DS_Store`, `.remember`, `.venv`,
-      `palettes` and `**/*cache*`. The last covers `__pycache__/` and
-      `.ruff_cache/`; `dist/` and `out/` are **not** ignored, and neither is
-      `*.pyz` — which is why the stale `palettekit.pyz` is tracked at all
-      (`PLAN.md` T1), and why a fresh clone can regenerate no fixture
-      (`PLAN.md` T14).
+      list specified.** It carries `*.har` (with one exception, below),
+      `.DS_Store`, `.remember`, `.venv`, `palettes` and `**/*cache*`. The
+      last covers `__pycache__/` and `.ruff_cache/`; `dist/` and `out/` are
+      **not** ignored, and neither is `*.pyz` — which is why the stale
+      `palettekit.pyz` is tracked at all (`PLAN.md` T1).
+
+      **`!parkersprouse.me.har` carves an exception into the `*.har` rule**,
+      added 2026-07-27 alongside `example/` — the only HAR and the only
+      generated-output directory this repo tracks. It's why a fresh clone can
+      now regenerate the `example/` directory (verified byte-identical,
+      `generated` dropped): the claim that a fresh clone can regenerate *no*
+      fixture at all is no longer true for that one. It's still true for the
+      reference fixture (`fleshandbonedesign.com.har`, still gitignored with
+      no exception) and the four breadth-check bundles (`PLAN.md` T14).
 - [x] **`LICENSE.md`** and the `[project.license]` / classifier entries in
       `pyproject.toml` — the owner chose the Hippocratic License 3.0 on
       2026-07-26.

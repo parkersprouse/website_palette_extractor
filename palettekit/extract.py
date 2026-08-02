@@ -25,6 +25,7 @@ from .cssparse import (
 )
 from .dom import (
     PageElement,
+    element_signature,
     elements_matching_wrapped,
     full_tree,
     matches_page_element,
@@ -40,6 +41,16 @@ from .sources import Bundle
 # being a tinted grey. Deliberately higher than Color.is_neutral: that answers
 # "is this achromatic", this answers "would a person call this a color".
 MUTED_CHROMA = 0.06
+
+# T19: how many real matched elements to name per usage. `match_count` is the
+# true total; this only bounds the sample kept for display, the same
+# "bounded number of them" PLAN.md's own sketch of this task calls for.
+# Kept small deliberately — measured against tailwindcss.com and
+# ui.shadcn.com, each `examples` entry can carry up to 6 usages, and each
+# sample string is itself bounded (`dom.element_signature`'s own `max_len`)
+# but not free; this is the other half of keeping the payload growth this
+# task adds proportionate rather than doubling the document.
+MATCH_SAMPLES = 2
 
 # Role ordering for display and for naming.
 ROLE_ORDER = ["surface", "text", "line", "shadow", "graphic", "ui", "token",
@@ -83,6 +94,14 @@ class Usage:
     # guess" contract as everywhere else this tool won't answer on no
     # evidence.
     matched: bool | None = None
+    # T19: how many real elements `scope_selector` actually reached, and a
+    # bounded sample of which ones. `None` mirrors `matched`'s own "no basis"
+    # case rather than reading as zero — `match_count` is only ever an int
+    # when `matched` is determinate (`True` or `False`), never when it's
+    # `None`. `match_samples` is capped at build time (see `_build`), not
+    # here, so `Usage` stays a plain record of what was already decided.
+    match_count: int | None = None
+    match_samples: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -947,6 +966,18 @@ def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
                 if wrapped_root is not None else [])
         return consumer_cache[selector]
 
+    # T19: the bounded, formatted sample for `examples[].matches`, memoized
+    # by selector text the same way `consumer_cache` is — a selector reused
+    # across many declarations (a shared utility class, say) would otherwise
+    # re-run `element_signature` on the same elements once per declaration.
+    sample_cache: dict[str, list[str]] = {}
+
+    def samples_of(selector: str) -> list[str]:
+        if selector not in sample_cache:
+            sample_cache[selector] = [element_signature(n) for n in
+                                      consumers_of(selector)[:MATCH_SAMPLES]]
+        return sample_cache[selector]
+
     # T18: does this usage's own selector reach a real element at all — the
     # same hoisted `wrapped_root` as `consumers_of`, memoized the same way.
     # `None` (no captured HTML) rather than `[]`-style False when there is no
@@ -1041,6 +1072,22 @@ def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
 
             inert = is_inert_shadow(d.prop, value)
             reach = reach_of(sel)
+            # T19: how many real elements this usage's selector reaches, and
+            # a bounded sample of which ones. `reach is False` already means
+            # `selector_reach` ran `_compile_usable` + `query_all` on this
+            # exact selector against this exact root and found nothing, so
+            # `consumers_of` is guaranteed `[]` — asking it again would repeat
+            # that query for every distinct selector in the document, not
+            # just the off-page-var subset T9 needs it for. Only a confirmed
+            # `True` is worth a second, sample-bearing lookup; `None` (no
+            # basis to test at all) leaves both `None`/empty, same as `reach`
+            # itself.
+            if reach is True:
+                match_count, match_samples = len(consumers_of(sel)), samples_of(sel)
+            elif reach is False:
+                match_count, match_samples = 0, []
+            else:
+                match_count, match_samples = None, []
 
             for c in colors:
                 if c.a < 0.02:
@@ -1064,7 +1111,9 @@ def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
                           sheet_order=d.sheet_order, order=d.order,
                           scope_selector=sel, important=d.important,
                           layer=d.layer, theme_media=d.theme_media,
-                          theme_scoped=bool(d.theme), matched=reach)
+                          theme_scoped=bool(d.theme), matched=reach,
+                          match_count=match_count,
+                          match_samples=match_samples)
                 )
                 if d.is_custom_property:
                     entry.var_names.add(d.prop)
@@ -1472,7 +1521,18 @@ def describe(entry: Entry, ground: Color) -> dict:
         "wcagOnGround": wcag_label(ratio),
         "usedIn": sorted({u.prop for u in entry.usages}),
         "examples": [
-            {"selector": u.selector, "property": u.prop, "source": u.source}
+            {
+                "selector": u.selector, "property": u.prop, "source": u.source,
+                # T19: how many real elements in the captured document this
+                # usage's selector actually reached, not just its text.
+                # `None` mirrors `Usage.matched`'s own "no basis to test"
+                # case (no captured HTML, or an untestable selector) rather
+                # than reading as zero. `matches` is a bounded sample of
+                # which real elements they were — omitted, not an empty
+                # list, when there is nothing real to show.
+                "matchCount": u.match_count,
+                **({"matches": u.match_samples} if u.match_samples else {}),
+            }
             for u in top
         ],
     }

@@ -62,7 +62,7 @@ reached only through `images.py`, behind `--images`.
 
 ```bash
 python3 -m palettekit <target> -o out    # target: .har | URL | .html/.css path
-python3 -m unittest discover             # 132 tests, all must pass (needs the deps)
+python3 -m unittest discover             # 153 tests, all must pass (needs the deps)
 python3 -m palettekit x.har --no-themes  # collapse a two-theme site into one
 ruff check .                             # must stay clean; config in pyproject
 python3 -m palettekit x.har --list-sources   # diagnose framework noise first
@@ -188,10 +188,10 @@ sources.py   →  cssparse.py  →  extract.py  →  emit.py
 |---|---:|---|
 | `color.py` | 1182 | `Color`, parsing, sRGB↔OKLab/CIE Lab/XYZ both ways, `color-mix()`, `light-dark()`, `calc()`, contrast, hue names |
 | `cssparse.py` | 908 | `tinycss2` integration, `var()`, `selector_weight`, roles, theme scopes, `@layer` names |
-| `dom.py` | 489 | `html.parser` → `ElementTree` shim, `cssselect2` matching of `<html>`/`<body>`, specificity, plus `full_tree`/`elements_matching`/`wrap_tree` (T9: real DOM below the page element) and `selector_reach` (T18: does a selector match anything, real/none/untestable) |
+| `dom.py` | 535 | `html.parser` → `ElementTree` shim, `cssselect2` matching of `<html>`/`<body>`, specificity, plus `full_tree`/`elements_matching`/`wrap_tree` (T9: real DOM below the page element), `selector_reach` (T18: does a selector match anything, real/none/untestable), and `element_signature` (T19: a short label for one real matched element) |
 | `sources.py` | 292 | `load_har` / `load_url` / `load_paths` → `Bundle` |
-| `extract.py` | 1490 | `extract()`, the cascade, per-theme `_build`, ground, merging, statuses, naming, `resolve_by_ancestry`/`resolve_by_ancestry_kind` (T9), `Entry.all_unmatched` (T18) |
-| `emit.py` | 955 | Emitters; `_HTML` is the report template |
+| `extract.py` | 1550 | `extract()`, the cascade, per-theme `_build`, ground, merging, statuses, naming, `resolve_by_ancestry`/`resolve_by_ancestry_kind` (T9), `Entry.all_unmatched` (T18), per-usage `match_count`/`match_samples` (T19) |
+| `emit.py` | 959 | Emitters; `_HTML` is the report template |
 | `images.py` | 148 | Optional image quantisation, not part of the token set |
 | `__main__.py` | 255 | CLI; `main()` guards `PYTHON_FLOOR` before anything else |
 

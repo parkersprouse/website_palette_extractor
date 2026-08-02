@@ -852,5 +852,71 @@ class TestUnmatchedStatus(unittest.TestCase):
         self.assertEqual(by_hex["#ff0000"]["status"], "live")
 
 
+class TestMatchDetail(unittest.TestCase):
+    """T19: `examples` reports how many real elements a selector reached,
+    not just its text -- two rules sharing a selector no longer look
+    identical when one paints three elements and the other paints one.
+    """
+
+    def _examples_for(self, hexval, html):
+        doc = emit.to_document(extract.extract(sources.load_any(
+            write_fixture(html))))
+        by_hex = {c["hex"]: c for c in doc["colors"]}
+        return by_hex[hexval]["examples"]
+
+    def test_a_selector_matching_two_elements_samples_both(self):
+        """Two matches, at or below `MATCH_SAMPLES` -- both come back, no
+        truncation. `test_samples_are_bounded_below_the_real_match_count`
+        below covers the case where there are more matches than the sample
+        cap keeps.
+        """
+        html = """<!DOCTYPE html><html><head><style>
+  body { background-color: #ffffff; }
+  .card { color: #ff0000; }
+</style></head><body>
+  <div class="card">a</div><div class="card">b</div>
+</body></html>
+"""
+        ex = self._examples_for("#ff0000", html)
+        self.assertEqual(ex[0]["matchCount"], 2)
+        self.assertEqual(len(ex[0]["matches"]), 2)
+
+    def test_a_selector_matching_nothing_reports_zero_with_no_samples(self):
+        html = """<!DOCTYPE html><html><head><style>
+  body { background-color: #ffffff; }
+  .old-promo-banner { color: #ff0000; }
+</style></head><body></body></html>
+"""
+        ex = self._examples_for("#ff0000", html)
+        self.assertEqual(ex[0]["matchCount"], 0)
+        self.assertNotIn("matches", ex[0])
+
+    def test_no_captured_html_reports_match_count_as_none(self):
+        """No document to test against at all -- the same "no basis" `None`
+        `Usage.matched` already carries, not a false zero.
+        """
+        css = ".card { color: #ff0000; }"
+        doc = emit.to_document(extract.extract(sources.load_any(
+            write_fixture(css, name="page.css"))))
+        by_hex = {c["hex"]: c for c in doc["colors"]}
+        ex = by_hex["#ff0000"]["examples"]
+        self.assertIsNone(ex[0]["matchCount"])
+        self.assertNotIn("matches", ex[0])
+
+    def test_samples_are_bounded_below_the_real_match_count(self):
+        html = """<!DOCTYPE html><html><head><style>
+  body { background-color: #ffffff; }
+  .card { color: #ff0000; }
+</style></head><body>
+  <div class="card">a</div><div class="card">b</div>
+  <div class="card">c</div><div class="card">d</div>
+  <div class="card">e</div>
+</body></html>
+"""
+        ex = self._examples_for("#ff0000", html)
+        self.assertEqual(ex[0]["matchCount"], 5)
+        self.assertEqual(len(ex[0]["matches"]), extract.MATCH_SAMPLES)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

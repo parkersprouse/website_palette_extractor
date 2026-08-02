@@ -2,6 +2,7 @@
 import unittest
 
 from palettekit.dom import (
+    element_signature,
     elements_matching,
     full_tree,
     matches_page_element,
@@ -215,6 +216,53 @@ class TestSelectorReach(unittest.TestCase):
         self.assertIs(
             selector_reach(".bg-card:hover, .no-such-class", self.wrapped()),
             False)
+
+
+class TestElementSignature(unittest.TestCase):
+    """T19: a short label naming *which* real element a selector reached."""
+
+    HTML = ('<html><body><div class="container">'
+            '<div id="hero" class="card featured">a</div>'
+            '<div class="card">b</div>'
+            '</div></body></html>')
+
+    def elements(self, selector):
+        return elements_matching(selector, full_tree(self.HTML))
+
+    def test_tag_id_and_classes_are_all_named(self):
+        node = self.elements("#hero")[0]
+        self.assertEqual(element_signature(node), "body > "
+                         "div.container > div#hero.card.featured")
+
+    def test_two_matches_of_the_same_selector_are_distinguishable(self):
+        """Two `.card`s are identical on their own attributes -- the whole
+        reason a bare tag/id/class label isn't enough, and the ancestor
+        chain has to be there to tell them apart.
+        """
+        a, b = self.elements(".card")
+        self.assertNotEqual(element_signature(a), element_signature(b))
+
+    def test_chain_is_bounded_to_depth(self):
+        node = self.elements("#hero")[0]
+        sig = element_signature(node, depth=1)
+        self.assertEqual(sig, "div#hero.card.featured")
+        self.assertNotIn(">", sig)
+
+    def test_a_long_signature_is_truncated_to_max_len(self):
+        """Tailwind v4's own generated font-variable classes run past 200
+        characters on a single class -- a per-class cap wouldn't have been
+        enough, so this caps the whole formatted string instead. Load-bearing
+        for keeping the JSON/report payload proportionate (PLAN.md T19's own
+        measurement), not just cosmetic.
+        """
+        html = ('<html><body>'
+               '<div class="one-really-quite-long-generated-utility-class '
+               'another-one-just-as-long-as-the-first-one">a</div>'
+               '</body></html>')
+        node = elements_matching("div", full_tree(html))[0]
+        sig = element_signature(node, max_len=50)
+        self.assertLessEqual(len(sig), 50)
+        self.assertTrue(sig.endswith("…"))
 
 
 if __name__ == "__main__":

@@ -93,6 +93,17 @@ otherwise fails open) is unaffected; one that hard-rejects an unrecognized
 status string should treat that as a bug in the consumer, not a signal this
 tool should have bumped the version for.
 
+Each entry under `examples` also carries `matchCount` – how many real
+elements in the captured document that usage's selector actually reached,
+not just its text. `null` means there was no basis to test it at all (no
+captured HTML, or a selector `cssselect2` can't evaluate, such as `:hover`);
+`0` means it was tested and confirmed absent – the same evidence behind an
+`unmatched` status, at the level of one usage rather than a whole entry. When
+`matchCount` is a positive number, a bounded `matches` array names a few of
+the real elements (tag, id, classes, and a short ancestor chain) – omitted
+entirely, not an empty list, when there is nothing real to show. Both are
+additive.
+
 ## Light and dark themes
 
 When a site ships two themes, both are extracted and the report gets a toggle.

@@ -714,8 +714,8 @@ Accuracy gaps left by phases 1–4:
       132 tests, `ruff` clean, 3.11–3.14 green, corpus-verified (full
       per-entry diff, not just hex sets — see this task's own entry below
       for why that distinction mattered here). See T9's own entry below for
-      the full history; T18 (below) has since landed on top of this tree,
-      T19 has not
+      the full history; T18 and T19 (below) have since landed on top of
+      this tree
 - [ ] **T10** — read `color-scheme` to confirm a `light-dark()` site is really
       two-themed — **waiting on a counter-example; do not do this yet**
 - [x] **T18** — flag declarations whose selector matches nothing in the real
@@ -726,9 +726,24 @@ Accuracy gaps left by phases 1–4:
       green, corpus-verified against all five frozen bundles including a
       wrong first theory caught and corrected mid-investigation. See T18's
       own entry below and invariant 27 (`CLAUDE.md`) for the full history
-- [ ] **T19** — report actual matched elements in `examples`, not just
-      selector text — **filed 2026-08-02, depends on T9's tree.** Not
-      started. See T19's own entry below
+- [x] **T19** — report actual matched elements in `examples`, not just
+      selector text — **filed 2026-08-02, landed 2026-08-02.** `examples`
+      entries gain `matchCount` (real elements reached, `None` mirroring
+      `Usage.matched`'s own "no basis to test" case) and a bounded `matches`
+      sample (`dom.element_signature`, tag/id/class plus a short ancestor
+      chain, hard-capped in length — a bare `.card` needs the chain since two
+      matches of the same selector are otherwise identical). Reuses T9/T18's
+      hoisted `wrapped_root`/`consumers_of` rather than a new cache, and skips
+      the second query entirely for the confirmed-non-match majority (T18's
+      own corpus puts that at 70–75% of selectors). Measured, not assumed:
+      46.0s → 46.7s on `tailwindcss.com.har` (noise-level), JSON/report growth
+      capped to +15–19% after tuning down from an uncapped first cut that ran
+      to +38–46%. Additive-only: JSON key-set diff across all five frozen
+      bundles found no other key, hex set, status, or ground moved. Also
+      surfaced in the HTML report's "Where each color came from" table
+      (`emit.py`), the exact gap this task's own write-up named. 153 tests,
+      `ruff` clean, 3.11–3.14 green, module/zipapp JSON identity reverified.
+      See T19's own entry below for the full design and both measurements
 - [ ] **T20** — categorize the HTML report's palette by status, with
       per-status descriptions — **filed 2026-08-02, requested by the owner,
       depends on T18's new status value (landed: `unmatched`).** Not
@@ -1982,55 +1997,123 @@ still not started, no longer blocked.
 
 ### T19 — Report actual matched elements in `examples`, not just selector text
 
-**Filed 2026-08-02, alongside T9's `html5lib` decision — depends on it.** Not
-started; needs T9's real tree — which now exists and is wired in (T9's own
-entry above), so the tree itself is no longer the blocker. T18's own status
-decision still is, per this task's "land T18 first, or land them together"
-note below, unchanged by T9 landing.
+**Filed 2026-08-02, alongside T9's `html5lib` decision. Landed 2026-08-02.**
 
-**The gap, verified directly.** `extract.py`'s per-entry JSON builder sets
-`examples` to `[{"selector": u.selector, "property": u.prop, "source":
-u.source} for u in top]` — a sample of *selector text*, never resolved
-against the document. Two rules matching different numbers of real elements
-report identically if they share a selector: `.card { background: … }` used
-by three sidebar cards and one header card looks the same as `.card` used
-once, anywhere on the page. The report and the JSON can say which selector a
-color came from; neither can say how many real elements it painted, or where.
+**The gap, verified directly before starting.** `extract.py`'s per-entry JSON
+builder set `examples` to `[{"selector": u.selector, "property": u.prop,
+"source": u.source} for u in top]` — a sample of *selector text*, never
+resolved against the document. Two rules matching different numbers of real
+elements reported identically if they shared a selector: `.card { background:
+… }` used by three sidebar cards and one header card looked the same as
+`.card` used once, anywhere on the page.
 
-**What T9 unlocks that this depends on.** The same real tree and general
-matching T9 needs to test ancestor relationships already produces, as a side
-effect, the actual matched-element set for any selector — this task is
-mostly about deciding what to do with that set once it exists, not building
-new matching machinery of its own.
+**What landed.** `Usage` gains `match_count: int | None` and `match_samples:
+list[str]`, computed once per declaration in `_build` alongside the existing
+`reach_of(sel)` call (T18) rather than as a second pass. Three outcomes, not
+two, mirroring `reach_of`'s own tri-state: `reach is None` (no captured HTML,
+or an untestable selector) leaves both `None`/`[]`; `reach is False` — a
+*confirmed* non-match, `selector_reach` already ran the query and found
+nothing — sets `match_count = 0` **without** calling `consumers_of` again,
+since that would repeat a query already known to return `[]`; only
+`reach is True` calls `consumers_of(sel)` (T9's memoized wrapper around
+`elements_matching_wrapped`) for the real count and a sample. `describe()`
+emits these as `examples[].matchCount` (always present, nullable) and
+`examples[].matches` (omitted, not an empty list, when there is nothing real
+to show) — both **additive** JSON keys, no `schemaVersion` bump, per T3.
 
-**Shape of the change, sketched rather than designed:** extend each `examples`
-entry with a count of real matches and, for a bounded number of them, some
-identifying detail — tag name at minimum, a short ancestor-chain summary if
-it turns out cheap once T9's tree exists. This is an **additive** JSON key
-under T3's compatibility promise — `schemaVersion` does not need to move,
-since "additive keys do not bump" is already the stated rule.
+**`dom.element_signature(node, depth=3, max_len=50)`** is the new piece:
+`tag#id.class` for the matched element plus up to `depth` immediate ancestors
+chained by `>` (e.g. `div.container > div#hero.card.featured`), hard-capped
+to `max_len` characters as a whole string rather than per class — see its own
+docstring for why a per-class cap doesn't work on Tailwind v4's generated
+font-variable classes. Not a selector — a diagnostic label distinguishing
+*which* of several matches a given selector reached: two `.card` elements are
+identical on their own tag/id/classes by construction, and only where they
+sit tells them apart. Walks `node.ancestors`, already computed and cached by
+`wrap_tree`, so this is free — no new tree traversal. `_build`'s own
+`samples_of` memoizes the formatted sample by selector text, so a selector
+repeated across many declarations (a shared utility class) formats its
+sample once, not once per declaration.
 
-**What this does not fix:** the same static-markup-only limit as T18. A count
-of zero real matches here is exactly T18's signal — **T18 has now landed**
-(`unmatched`, above), so this task can proceed without the "land them
-together" hedge this entry originally carried: reporting a real match count
-alongside an already-existing labelled status is no longer a coordination
-problem, just an additive JSON key.
+**Reused rather than rebuilt, as this task's own earlier sketch called for:**
+`consumers_of`, `_build`'s existing memoized wrapper around
+`elements_matching_wrapped` against the one `wrapped_root` hoisted per theme
+(T9). T19 widens its call site from the off-page-var-consumer subset T9 needs
+to every declaration's own selector whose `reach_of` came back `True` — "the
+same lookup at wider scope, not a different one" — rather than adding a
+second cache or a second tree wrap. It does **not** fully eliminate the
+double query this widening risked: `reach_of`/`selector_reach` and
+`consumers_of`/`elements_matching_wrapped` still each run their own
+`_compile_usable` + `query_all` independently for the selectors that do
+match (there's no shared primitive returning both the tri-state answer and
+the list from one query), so those get queried twice. The `reach is False`
+short-circuit above matters because it skips this entirely for the
+majority case — T18's own corpus note puts match rates at 0.25–0.33, so
+70–75% of distinct selectors never pay the second query at all.
 
-**Diff level:** JSON key-set diff (T3's own convention) confirming only
-additive keys changed, plus a sample of `examples` entries old vs new on all
-four frozen bundles and `parkersprouse.me.har`, checked by hand rather than
-asserted in a test until the shape settles.
+**Measured, not assumed, on both axes a change touching every declaration in
+the document can move:**
 
-**Machinery this task should reuse, landed alongside T9's wiring:** the same
-`dom.wrap_tree`/`elements_matching_wrapped` split T18's own entry above
-points at — `_build` already wraps the tree once per theme and memoizes
-`elements_matching_wrapped` by selector text for the off-page-referencing
-subset it checks; this task's own "match every declaration's selector, not
-just that subset" need is the same lookup at wider scope, not a different
-one. If T18 and T19 land together (this task's own recommendation two
-paragraphs up), they can likely share one wrapped root and one memo cache
-per theme rather than each building their own.
+- **Time.** `tailwindcss.com.har` end to end, T18-only baseline vs this task,
+  `time.time()` around `extract.extract()`: 46.0s → 46.7s — noise-level, not
+  the ~59s a naive "query every selector twice" would have cost. The
+  `reach is False` short-circuit is why.
+- **Payload.** `to_document()`'s output is inlined verbatim into the HTML
+  report (invariant 11), so JSON growth is report growth. An uncapped first
+  cut (`MATCH_SAMPLES=3`, no `max_len`) grew `tailwindcss.com`'s JSON 38%
+  (1.57MB → 2.17MB) and its report 46% — driven by Tailwind's generated font
+  classes running past 200 characters each. Capping `element_signature` at
+  50 characters and `MATCH_SAMPLES` at 2 brought that to +19% JSON / +18%
+  report on `tailwindcss.com` and +17% JSON / +15% report on
+  `ui.shadcn.com` — real growth, proportionate to the real per-usage data
+  this task adds to every entry, not the near-doubling the first cut
+  produced. `dom.element_signature`'s own docstring carries these numbers
+  next to the code they justify.
+
+**Correctness verified separately from performance:** a JSON key-set diff
+(old vs new, `_build` stashed) across all five frozen bundles
+(`fleshandbonedesign.com`, `ground.news`, `tailwindcss.com`, `ui.shadcn.com`,
+`parkersprouse.me`) found exactly two new keys (`matchCount`, `matches`) and
+confirmed every hex set, status list, and ground was byte-identical to
+before. A sample of `examples` entries read by hand on `tailwindcss.com`
+showed the real signal this task exists for: `.border-gray-950\/5` reaching
+53 real elements next to a `.prose hr:where(…)` usage in the same entry
+confirmed at 0 (the entry stays `live` because another usage matches — T18's
+own unanimity rule, unaffected by this task). `::part(...)` selectors
+correctly report `matchCount: null` rather than a false zero, since
+`cssselect2` marks them `never_matches` the same way `selector_reach` already
+refuses to answer for `:hover`.
+
+**Also surfaced in the HTML report**, not just the JSON — the "Where each
+color came from" table (`emit.py`'s `renderProv`) now appends "(N matches)"
+to each example row when `matchCount` is a number, verified rendering
+correctly in a browser (`.old-promo-banner`-style selectors show "(0
+matches)", a real selector with no captured HTML shows nothing). This was not
+in the original sketch's stated diff level but is the exact gap this task's
+own opening paragraph named for the report, not only the JSON, so leaving it
+JSON-only would have half-finished the thing the gap analysis described.
+
+**What this does not fix:** the same static-markup-only limit as T18 — a
+`matchCount` of 0 means "not in the captured document", not "unused"; no
+JavaScript runs. `MATCH_SAMPLES` and `max_len` bound the *sample* shown,
+never the true `matchCount`.
+
+Tests: `TestElementSignature` (`tests/test_dom.py` — tag/id/class formatting,
+two same-selector matches staying distinguishable via the ancestor chain,
+`depth` actually bounding it, and a class list long enough to trip `max_len`
+actually getting truncated with the ellipsis) and `TestMatchDetail`
+(`tests/test_extract.py` — two real matches counted and fully sampled, a
+confirmed zero with no `matches` key, `None` on a bare `.css` input with no
+captured HTML, and the sample landing at exactly `MATCH_SAMPLES` when the
+real count is higher). All eight required to fail against the pre-T19 code
+before being trusted, per this file's own "a test that passes before and
+after tests nothing" rule — checked directly by stashing `palettekit/` and
+rerunning them. The `max_len` test needed a sharper check than that alone:
+stashing the whole feature makes it fail on an unrelated `ImportError`, which
+doesn't prove the truncation *logic* is what the test catches — verified
+separately by patching just the truncation lines out of a working
+`element_signature` and confirming the test fails on the length assertion
+specifically (105 chars vs the 50-char cap), not on import.
 
 ### T20 — Categorize the HTML report's palette by status, with descriptions
 

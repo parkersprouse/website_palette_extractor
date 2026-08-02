@@ -802,7 +802,11 @@ __UI_THEMES__
       tr.appendChild(el("td", "mono", String(c.score)));
       tr.appendChild(el("td", "mono", String(c.occurrences)));
       var ex = (c.examples || []).slice(0, 3).map(function (e) {
-        return e.selector + " { " + e.property + " }";
+        var s = e.selector + " { " + e.property + " }";
+        if (typeof e.matchCount === "number") {
+          s += " (" + e.matchCount + (e.matchCount === 1 ? " match" : " matches") + ")";
+        }
+        return s;
       }).join("  ·  ");
       tr.appendChild(el("td", "mono", ex));
       tb.appendChild(tr);

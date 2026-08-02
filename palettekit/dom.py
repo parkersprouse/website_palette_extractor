@@ -299,6 +299,52 @@ def selector_reach(selector: str,
     return bool(list(wrapped_root.query_all(*usable)))
 
 
+def element_signature(node: cssselect2.ElementWrapper, *, depth: int = 3,
+                      max_len: int = 50) -> str:
+    """A short, human-readable label for one real matched element (T19).
+
+    Not a selector — a diagnostic for `examples`, naming *which* element among
+    several a rule reached rather than restating the rule. `tag#id.class`,
+    with up to `depth` immediate ancestors chained by `>` for the cases that
+    matter most: a `.card` rule that lands on three different cards is only
+    distinguishable by where each one sits, not by its own attributes, which
+    are identical by construction. Bounded to the closest ancestors rather
+    than the full path to `<html>` — the root end of a long chain is rarely
+    what disambiguates a sibling from another; the immediate ones are.
+
+    `max_len` is a hard cap on the whole string, not a per-part budget —
+    class *count* is not a reliable proxy for length. Tailwind v4's own
+    generated font classes on tailwindcss.com
+    (`inter_6a166f28-module__775SPq__variable`, several per element) run
+    past 200 characters on a single class, so capping "the first N classes"
+    would still have let one pathological site blow up every `examples`
+    payload. Measured directly, uncapped: `tailwindcss.com`'s JSON grew 38%
+    (1.57MB → 2.17MB) and its report grew 46% — the report is not just the
+    JSON's home, it embeds the identical `to_document()` output verbatim
+    (invariant 11), so a payload regression here is a report regression too,
+    on every site, not only pathological ones. This `max_len` plus
+    `extract.MATCH_SAMPLES` capped at 2 (its own docstring) bring
+    `tailwindcss.com` down to +19% JSON / +18% report and `ui.shadcn.com` to
+    +17% JSON / +15% report — real growth for real new data, not the near-
+    doubling the uncapped version produced.
+
+    `node.ancestors` is already computed and cached during `wrap_tree`, so
+    walking it here is free — no new tree traversal, matching `wrap_tree`'s
+    own reasoning for why `resolve_by_ancestry_kind` and `selector_reach`
+    share one wrapped root instead of re-wrapping per call.
+    """
+    def part(n: cssselect2.ElementWrapper) -> str:
+        cls = "".join(f".{c}" for c in sorted(n.classes))
+        idpart = f"#{n.id}" if n.id else ""
+        return f"{n.local_name}{idpart}{cls}"
+
+    chain = [*node.ancestors, node][-depth:]
+    sig = " > ".join(part(n) for n in chain)
+    if len(sig) > max_len:
+        sig = sig[:max_len - 1] + "…"
+    return sig
+
+
 def elements_matching(selector: str,
                       root: ET.Element) -> list[cssselect2.ElementWrapper]:
     """Every real element in this tree that this selector matches.

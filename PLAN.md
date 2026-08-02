@@ -1734,23 +1734,41 @@ counts above are exactly that prediction, one design-generation early.
 > regression/preservation tests pass unchanged before and after, which is
 > the point of them. 132 tests total (124 + 8), `ruff` clean.
 >
-> **Corpus diff, at the level this task's own discipline calls for —
-> per-declaration hex, old vs new, on all five bundles**: grounds are
-> **byte-identical** on every bundle and match `CLAUDE.md`'s own documented
-> anchors exactly, including the reference fixture
-> (`fleshandbonedesign.com`: `#151515`, 20 tokens, 0 warnings). Four of five
-> bundles have **zero hex-set change** at all — `ground.news`,
-> `ui.shadcn.com`, `fleshandbonedesign.com`, `parkersprouse.me` — despite the
-> earlier measurement predicting 8 "real value" moves apiece for the first
-> two; a color moving to a different, more accurate resolution does not
-> guarantee the final hex differs; if it lands on a hue already present via
-> another route, or the change never reaches an off-page-referencing
-> declaration, the palette's hex set is untouched even though the fix is
-> real. Only **`tailwindcss.com`'s dark theme** changed: 2 hexes replaced by
-> 3 (`#201836`/`#28152b` → `#21274d`/`#33244d`/`#411e3b`), plus one new hex
-> in the base theme (`#e4a340`) with nothing removed. Traced to a concrete,
-> explicable shape rather than accepted on faith: Tailwind emits declarations
-> like `.shadow-pink-400\/50 { --tw-shadow-color: color-mix(in oklab,
+> **Corpus diff, first pass, was at the wrong level and understated the
+> change — corrected before this was trusted, not after.** A hex-set
+> comparison alone found only `tailwindcss.com` different and called the
+> other four bundles unchanged. Invariant 25's own write-up already records
+> why that is the wrong level for this class of fix: *"every hex set, ground
+> and warning... identical before and after. What moved was occurrence
+> counts, and through them the ranking that names tokens."* Re-run at the
+> right level — full per-entry document diff (`name`, `occurrences`,
+> `score`, `role`, `status`), old vs new (`git checkout 1cd2005 --
+> palettekit/dom.py palettekit/extract.py`, run, restore, diff) — and the
+> same pattern repeats here:
+>
+> - **`fleshandbonedesign.com` and `parkersprouse.me`: genuinely
+>   byte-identical**, every field, both themes — no off-page contention
+>   these bundles' declarations reach at all.
+> - **`ground.news`: hex set unchanged, but 3–4 entries per theme shift
+>   `occurrences`/`score` by single digits** (`#eeefe9` 181→176 occurrences
+>   in the base theme, for example) — real reranking, small enough not to
+>   move a name.
+> - **`ui.shadcn.com`: hex set unchanged, but the dark theme has 11 entries
+>   with a moved `name`** — `grey-2`↔`grey-4`, `surface-11`↔`surface-1`, and
+>   several more swap pairwise. **These are exactly the tokens a consuming
+>   project's CSS/SCSS/TS output would reference by name**, invariant 10's
+>   own point about why `live` colors ship to code — so "hex set unchanged"
+>   was true and also not the reassurance the first draft of this note
+>   implied.
+> - **`tailwindcss.com`: both a hex-set change and the largest name/rank
+>   churn** — 2 hexes replaced by 3 in the dark theme
+>   (`#201836`/`#28152b` → `#21274d`/`#33244d`/`#411e3b`), one new hex added
+>   in the base theme (`#e4a340`), and 26–28 entries per theme with a moved
+>   `name`, `occurrences`, or `score`.
+>
+> **The hex-level change is traced to a concrete, explicable shape rather
+> than accepted on faith.** Tailwind emits declarations like
+> `.shadow-pink-400\/50 { --tw-shadow-color: color-mix(in oklab,
 > color-mix(in oklab, var(--color-pink-400) 50%, transparent)
 > var(--tw-shadow-alpha), transparent) }`, where `--tw-shadow-alpha` is
 > itself off-page (defined per-utility, not on the page element) — so the
@@ -1762,8 +1780,18 @@ counts above are exactly that prediction, one design-generation early.
 > utility now gets its own opacity instead of borrowing one from an
 > unrelated utility declared later in the same stylesheet. A real fix, the
 > same shape as invariant 26's `initial` correction and T5's `calc()`
-> percentage evaluation: previously-arbitrary values on real corpus CSS,
-> found and corrected, not invented colors.
+> percentage evaluation.
+>
+> **The broader rerank on `ground.news`/`ui.shadcn.com`/`tailwindcss.com` is
+> not separately traced per-entry** the way the hex change is — each
+> individual occurrence-count shift is small and plausible (a handful of
+> declarations moving from "shared last-wins value" to "own ancestry-correct
+> value" changes which existing bucket each lands in), but this note does not
+> prove each one is correct the way the shadow-alpha trace does. Grounds,
+> warnings, and hex sets — the highest-stakes fields — are confirmed right;
+> token *names* moving on a real site's output is the accuracy improvement
+> this task exists for, not a regression, but say so plainly rather than
+> letting "zero hex-set change" stand as "nothing changed."
 >
 > **Perf, measured on the same corpus rather than assumed acceptable**:
 > `tailwindcss.com` (the one bundle with hundreds of distinct off-page
@@ -1783,7 +1811,31 @@ counts above are exactly that prediction, one design-generation early.
 >
 > `palettekit.pyz` **rebuilt** at the end of this session (`python3
 > build.py`), per the standing process rule — this changed real pipeline
-> behavior, not just documentation.
+> behavior, not just documentation. Verified on a fresh 3.11 interpreter with
+> neither dependency installed (`uv run --python 3.11 --no-project python
+> palettekit.pyz fleshandbonedesign.com.har …`), and module/console-script/
+> zipapp JSON confirmed identical.
+>
+> **Version matrix run this session, not skipped** — `dom.py` now imports
+> `html5lib` at module scope for core pipeline code, not just an optional
+> path, so the matrix command in `CLAUDE.md` was missing a dependency it
+> would need on every version (`ImportError` as written; fixed to add
+> `--with html5lib` in the same edit that caught this). All of 3.11–3.14
+> green, 132 tests, after the fix.
+>
+> **Two places in `CLAUDE.md` restated this task's own prior claim and were
+> now wrong, not just this file** — invariant 19's "off-page definitions stay
+> on last-wins" and the Known-limits "scoped custom properties... not
+> modelled" entry, plus the `--shimmer-image` limit write-up that pointed at
+> the second as its own fix. All three updated in the same commit as the
+> code, per this project's own "invariants restated at their call site stay
+> in sync" rule — the `--shimmer-image` update also records, checked
+> directly rather than assumed, that **this specific frozen bundle's example
+> is still not fixed**: its `.shimmer` element lives on a page
+> (`/docs/utils/shimmer`) this HAR never fetched, so it is a "no basis" case
+> under T9's own three-way split, not a "confirmed absent" one — last-wins
+> correctly stays untouched for it. Closing the modelling gap does not
+> retroactively give a capture gap an answer it never had the markup for.
 
 ### T18 — Flag declarations whose selector matches nothing in the real document
 

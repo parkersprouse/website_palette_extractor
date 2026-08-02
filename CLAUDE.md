@@ -17,8 +17,8 @@ trusting this line:
 
 ```bash
 for v in 3.11 3.12 3.13 3.14; do
-  uv run --python "$v" --with tinycss2 --with cssselect2 --no-project \
-    python -m unittest discover
+  uv run --python "$v" --with tinycss2 --with cssselect2 --with html5lib \
+    --no-project python -m unittest discover
 done
 ```
 
@@ -608,9 +608,26 @@ because the obvious implementation produced plausible but wrong output.
 
     What phase 3 changed is only how the page-reaching set resolves among
     itself: the full key of invariant 21 instead of last-wins. **Off-page
-    definitions stay on last-wins**, deliberately — they are a fallback, and
-    ranking declarations that match *different* elements by specificity is
-    precisely the error above.
+    definitions stay on last-wins as the shared table's own default**,
+    deliberately — ranking declarations that match *different* elements by
+    specificity is precisely the error above, and there is no single
+    specificity ranking that could replace last-wins here.
+
+    **T9 (`PLAN.md`, landed 2026-08-02) adds one exception, and it is not a
+    ranking — it is real inheritance for one specific consuming declaration
+    at a time**, not a change to the shared table. `resolve_by_ancestry_kind`
+    walks the real document tree from a consuming declaration's own matched
+    elements upward, and overrides last-wins only when it can *confirm* an
+    answer for that consumer: a real ancestor sets the property (`"value"`),
+    or every real consumer was checked and none has an ancestor that does
+    (`"absent"`, which then falls through to the declaration's own written
+    `var()` fallback, or nothing — the same route invariant 26's `initial`
+    already takes). When the real tree can't confirm either — consumers
+    disagree, or the consuming selector matches no element in the captured
+    markup at all, the dominant real-world case per T9's own corpus
+    measurement — last-wins is untouched. So "off-page definitions stay on
+    last-wins" is still the honest default; it is no longer the only answer
+    this tool can give.
 
 20. **A theme marker inside `:not()` is a negation, not a scope**
     (`_not_spans`, `_negation_free`). `theme_scope` takes its match outside
@@ -1054,8 +1071,21 @@ Tailwind config should even look like first.
     `@import` itself is still not followed, so nothing ever lands in that
     layer from this route; the reservation just stops a later real `@layer
     x {…}` elsewhere in the document from silently mis-ordering around it.
-  - **Scoped custom properties (`@property`, and inheritance down the tree)**
-    are not modelled. A property redefined on `.card` resolves globally here.
+  - **`@property` registration itself is not read** — a property's declared
+    syntax, inheritance flag, and initial value from an `@property` rule play
+    no part here; only the plain custom-property declarations in the cascade
+    do. **Inheritance down the tree, for the off-page population, is now
+    modelled where the real tree can confirm an answer** (T9, `PLAN.md`,
+    landed 2026-08-02, invariant 19's own T9 addendum) — a property redefined
+    on `.card` resolves per real consuming element, not globally, when a
+    consumer is in the captured markup and the real ancestors agree. It still
+    resolves globally (last-wins) when the tree can't confirm either
+    direction: consumers disagree, or — the dominant real-world case per
+    T9's own corpus measurement — the consuming selector matches no element
+    in the captured markup at all (a Next.js app's client-hydrated content,
+    or a truncated HAR capture; see T18's note on this same finding). "Not
+    modelled" is no longer the accurate description; "modelled where the
+    static capture can confirm it, last-wins elsewhere" is.
   - **An at-rule nested inside a style rule** still loses its declarations —
     see the limit above; it is a parse-shape gap, not a cascade one.
 
@@ -1121,26 +1151,39 @@ Tailwind config should even look like first.
   fixed; the remaining gap is theoretical until a site exercises it.
 
 - **A custom property whose winning definition is a value set on an element
-  the `var()` is not consumed on resolves to that value anyway.** This is the
-  gap the balanced parse of invariant 25 made visible. Its sibling gap —
-  `initial` read as a plain value rather than guaranteed-invalid — is fixed;
-  see invariant 26.
+  the `var()` is not consumed on resolves to that value anyway — fixed where
+  the real document tree can confirm the right answer, T9 (`PLAN.md`, landed
+  2026-08-02), invariant 19's own addendum.** This was the gap the balanced
+  parse of invariant 25 made visible. Its sibling gap — `initial` read as a
+  plain value rather than guaranteed-invalid — was fixed earlier; see
+  invariant 26.
 
-  ui.shadcn.com's 16 `.shimmer` declarations are the shape this limit still
-  describes: `--shimmer-image` is defined three times — `initial` in
-  Tailwind's `@property` guard, and `none` by the `.shimmer-none` and
-  `.md\:shimmer-none` utilities — and since none of the three reaches the page
-  element, `build_var_table` falls back to last-wins and takes `none` from a
-  class the shimmering element does not carry. Invariant 26 alone does not fix
-  this: it stops `initial` from winning, but `none` still does, from a rule
-  that was never a candidate to begin with. That needs the **scoped custom
-  properties are not modelled** limit below fixed first — resolving `.card`'s
-  definition only for elements under `.card` — which is `PLAN.md`'s T9.
+  **ui.shadcn.com's own 16 `.shimmer` declarations are the shape this limit
+  used to describe, and T9's landing does *not* fix this specific bundle's
+  example** — checked directly, not assumed, because it's the one case worth
+  not getting wrong twice. `--shimmer-image` is defined three times:
+  `initial` in Tailwind's `@property` guard, and `none` by the
+  `.shimmer-none` and `.md\:shimmer-none` utilities. Invariant 26 already
+  stops `initial` from winning. What's left needs the real element that
+  consumes `--shimmer-image` to be in the captured tree at all — and on this
+  frozen bundle it is not: the `.shimmer` element lives on
+  `/docs/utils/shimmer`, a page this HAR never fetched (confirmed by
+  searching the captured HTML directly — the string `shimmer` appears only
+  inside a nav link's own JSON, never as a class). T9's ancestry walk asks
+  "does any real ancestor of this consumer set the property," and with no
+  real consumer in the tree at all there is nothing to ask — the "no basis"
+  outcome, which correctly leaves last-wins (`none`) untouched rather than
+  guessing. **The limit this example now demonstrates is capture
+  completeness — the existing "No JavaScript is executed" entry above,
+  compounded by which pages a HAR happens to fetch — not "scoped custom
+  properties are not modelled."** That modelling gap is closed; this
+  particular example was never reachable by closing it.
 
-  **Not a regression, either way.** HEAD reported a color here only because
-  the truncated call left an orphaned tail that resolved separately — the same
-  accident invariant 25 fixed. No hex left any palette from either gap: all
-  eight corpus sites kept identical hex sets, grounds and warnings, and the
+  **Not a regression, either way, on the original phase-4 finding this entry
+  describes.** HEAD reported a color here only because the truncated call
+  left an orphaned tail that resolved separately — the same accident
+  invariant 25 fixed. No hex left any palette from either gap: all eight
+  corpus sites kept identical hex sets, grounds and warnings, and the
   effect was confined to occurrence counts, which `selector_weight` already
   calls a hint.
 

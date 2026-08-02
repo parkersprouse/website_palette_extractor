@@ -1,4 +1,4 @@
-"""The document's own `<html>` and `<body>`, and which selectors reach them.
+"""The document's own elements, and which selectors reach them.
 
 Ground detection has to know which rules actually land on the element the page
 is painted on, and a utility framework states that on the element rather than
@@ -21,8 +21,14 @@ unfamiliar pseudo-class simply failed to match and fell back to the
 a spec matcher answers `.a:is(.b) > body`, `html:not([data-theme="light"])` and
 `.dark\\:bg-x` alike, and answers them the way a browser does.
 
-The tree comes from stdlib `html.parser`, not `lxml` or `html5lib` — see
-`_TreeBuilder` for why that is enough here.
+**Two trees, for two different questions.** `page_elements`' tree comes from
+the stdlib `html.parser` shim below (`_TreeBuilder`) — enough for
+`<html>`/`<body>` ancestry, which is the only structure that question can
+ask about. `full_tree` (T9, `PLAN.md`) uses `html5lib` instead, because a
+question about a real element several levels below the page element —
+does this custom-property definition's selector match one of *its*
+ancestors — needs a conforming tree builder's implied-tag and misnesting
+handling to be right that far down, which `_TreeBuilder` deliberately isn't.
 """
 from __future__ import annotations
 
@@ -32,6 +38,7 @@ from functools import lru_cache
 from html.parser import HTMLParser
 
 import cssselect2
+import html5lib
 
 # `cssselect2.ElementWrapper.from_html_root` expects XHTML-namespaced tags,
 # which is how a real HTML parser reports them.
@@ -160,6 +167,105 @@ def page_elements(html: str) -> list[PageElement] | None:
             if len(found) == 2:
                 break
     return [found[t] for t in ("html", "body") if t in found] or None
+
+
+def full_tree(html: str) -> ET.Element | None:
+    """The complete document tree, for questions `page_elements` can't answer.
+
+    `_TreeBuilder` above is deliberately not a conforming tree builder below
+    `<html>`/`<body>` — see its own docstring — because the only structure a
+    selector could ask about the page element is its ancestry, which is
+    `<html>` or nothing. A question about a real element deeper in the
+    document (T9: does this custom-property definition's selector match an
+    *ancestor* of the element consuming it?) needs a tree that gets misnested
+    markup right below the page element too, not just at it.
+
+    `html5lib`, not the stdlib shim: this is exactly the class of correctness
+    `_TreeBuilder`'s docstring says buys nothing for `<html>`/`<body>`
+    ancestry alone and was deferred for that reason (`PLAN.md` phase 2's own
+    research: "`html5lib` would be more faithful and buys nothing for this
+    question"). It buys something now that the question has moved past
+    `<html>`/`<body>`. `namespaceHTMLElements=False` matches plain tag names
+    (`div`, not `{http://www.w3.org/1999/xhtml}div`) the way `cssselect2`
+    expects from `from_html_root` — verified directly, not assumed, against a
+    selector reaching a nested element.
+
+    Core install is pure Python: `six` and `webencodings` (the latter already
+    a transitive dependency via `tinycss2`), so `PYTHON_FLOOR` and
+    `build.py`'s vendoring model — which assumes no compiled wheels — are
+    unaffected. `lxml`/`genshi`/`chardet` are optional extras this project
+    does not install.
+
+    Returns `None` on non-string input rather than raising — checked directly:
+    `html5lib` is deliberately lenient about malformed *markup* (that is its
+    whole design; there is no such thing as invalid HTML5 to it, empty string
+    included, so `page_elements`' "unknown is not the same as absent"
+    contract does not carry over the way it first looked like it would), and
+    the only thing observed to make it raise is input that is not text at
+    all.
+    """
+    try:
+        return html5lib.parse(html, treebuilder="etree",
+                              namespaceHTMLElements=False)
+    except Exception:
+        return None
+
+
+def elements_matching(selector: str,
+                      root: ET.Element) -> list[cssselect2.ElementWrapper]:
+    """Every real element in this tree that this selector matches.
+
+    General-purpose, unlike `matches_page_element`: that function is deliberately
+    narrow to "is this a statement about the page's resting appearance" and
+    refuses pseudo-elements, dynamic states, and blanket selectors on purpose.
+    This one answers a different, plainer question — where in the real
+    document does this selector actually land — so it filters only what
+    `cssselect2` itself cannot evaluate (a pseudo-element styles a generated
+    box, not a real element; `never_matches` has no interaction state to test
+    against), and leaves the rest, including `*`, to the caller's judgment.
+
+    A selector `cssselect2` cannot compile returns no matches rather than
+    raising, the same contract every other matcher in this module keeps —
+    `strip_theme_scope` can hand callers something invalid, and real CSS
+    carries pseudo-classes no library knows.
+    """
+    try:
+        compiled = cssselect2.compile_selector_list(selector)
+    except Exception:
+        return []
+    usable = [sel for sel in compiled
+             if sel.pseudo_element is None and not sel.never_matches]
+    if not usable:
+        return []
+    wrapper_root = cssselect2.ElementWrapper.from_html_root(root)
+    return list(wrapper_root.query_all(*usable))
+
+
+def selector_matches(selector: str,
+                     element: cssselect2.ElementWrapper
+                     ) -> tuple[int, int, int] | None:
+    """This selector's specificity against one specific real element, or None.
+
+    None means the selector does not match here at all — the same "no
+    answer" contract `_page_specificity` (`extract.py`) keeps for
+    `<html>`/`<body>`, generalised to any real element T9's ancestry walk
+    visits. A selector list takes the highest specificity among the parts
+    that actually match this element, mirroring `selector_specificity`'s own
+    rule for a list scored as a whole — the two functions answer different
+    questions (that one has no element to test against; this one does) and
+    would otherwise silently disagree on a list where only one branch matches.
+    """
+    try:
+        compiled = cssselect2.compile_selector_list(selector)
+    except Exception:
+        return None
+    best = None
+    for sel in compiled:
+        if sel.pseudo_element is not None or sel.never_matches:
+            continue
+        if sel.test(element) and (best is None or sel.specificity > best):
+            best = sel.specificity
+    return best
 
 
 def _probe_element() -> cssselect2.ElementWrapper:

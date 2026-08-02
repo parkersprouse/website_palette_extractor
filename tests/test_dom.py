@@ -1,7 +1,13 @@
 """The html.parser -> ElementTree shim and cssselect2 page-element matching."""
 import unittest
 
-from palettekit.dom import matches_page_element, page_elements
+from palettekit.dom import (
+    elements_matching,
+    full_tree,
+    matches_page_element,
+    page_elements,
+    selector_matches,
+)
 
 
 class TestPageElement(unittest.TestCase):
@@ -110,6 +116,61 @@ class TestPageElement(unittest.TestCase):
         self.assertEqual(els[1].classes, frozenset({"flex"}))
         self.assertIs(matches_page_element("html > body", els), True)
         self.assertIs(matches_page_element("head .flex", els), False)
+
+
+class TestFullTree(unittest.TestCase):
+    """T9's `html5lib`-backed tree — real structure below `<html>`/`<body>`."""
+
+    HTML = ('<html><body><div class="theme-neutral">'
+            '<p><span class="bg-card">x</span></p></div>'
+            '<span class="bg-card">y</span></body></html>')
+
+    def test_matches_a_real_element_several_levels_deep(self):
+        tree = full_tree(self.HTML)
+        found = elements_matching(".bg-card", tree)
+        self.assertEqual(len(found), 2)
+        self.assertEqual({e.local_name for e in found}, {"span"})
+
+    def test_ancestor_relationship_is_real_not_assumed(self):
+        """The whole reason this tree exists: distinguish ancestor from sibling.
+
+        One `.bg-card` sits under `.theme-neutral`; the other does not. A
+        same-element-only check (T9's rejected first design) cannot tell
+        these apart at all.
+        """
+        tree = full_tree(self.HTML)
+        under_theme, outside_theme = elements_matching(".bg-card", tree)
+        theme_names = {a.local_name + "." + "".join(a.classes)
+                      for a in under_theme.ancestors}
+        self.assertIn("div.theme-neutral", theme_names)
+        outside_names = {a.local_name + "." + "".join(a.classes)
+                         for a in outside_theme.ancestors}
+        self.assertNotIn("div.theme-neutral", outside_names)
+
+    def test_selector_matches_returns_specificity_or_none(self):
+        tree = full_tree(self.HTML)
+        el = elements_matching(".bg-card", tree)[0]
+        self.assertEqual(selector_matches(".bg-card", el), (0, 1, 0))
+        self.assertIsNone(selector_matches(".theme-neutral", el))
+
+    def test_elements_matching_refuses_pseudo_elements_and_dynamic_state(self):
+        tree = full_tree(self.HTML)
+        self.assertEqual(elements_matching(".bg-card::after", tree), [])
+        self.assertEqual(elements_matching(".bg-card:hover", tree), [])
+
+    def test_a_selector_that_will_not_compile_finds_nothing(self):
+        tree = full_tree(self.HTML)
+        self.assertEqual(elements_matching(":is( , .x)", tree), [])
+
+    def test_non_string_input_is_none_not_a_raise(self):
+        """`html5lib` is lenient about malformed markup by design -- empty
+        string and outright garbage both come back a minimal tree, checked
+        directly rather than assumed. The one thing that actually raises is
+        input that isn't text.
+        """
+        self.assertIsInstance(full_tree(""), object)
+        self.assertIsNotNone(full_tree("not even close to html <<<"))
+        self.assertIsNone(full_tree(12345))
 
 
 if __name__ == "__main__":

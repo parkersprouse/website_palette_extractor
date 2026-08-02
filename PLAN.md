@@ -3,9 +3,13 @@
 Status: **all four phases landed 2026-07-26.** Written 2026-07-26.
 
 **The migration is done; the work it left behind is not.** See
-[Outstanding work](#outstanding-work) below — fourteen tasks, three of them
-decisions the owner has since settled, and it is the authority for what is
-left. `CLAUDE.md`'s Migration TODO points there rather than duplicating it.
+[Outstanding work](#outstanding-work) below — ~~fourteen tasks, three of them
+decisions the owner has since settled~~ **nineteen as of 2026-08-02** (T15–T19
+were added after this line was written; not updated each time a task was
+filed, since the count itself isn't load-bearing anywhere — the section
+below is), five of them decisions the owner has settled outright (T1, T2, T3,
+T9's direction, T11's won't-do) — and it is the authority for what is left.
+`CLAUDE.md`'s Migration TODO points there rather than duplicating it.
 
 ## Why
 
@@ -702,12 +706,21 @@ Accuracy gaps left by phases 1–4:
       **Landed 2026-07-27** — reserves the position only, per the plan's own
       "consider doing only that." See T8's own write-up below
 - [ ] **T9** — model scoped custom properties (`@property`, inheritance) —
-      **investigated 2026-07-27, blocked on an owner decision**: the fidelity
-      it needs (a real DOM below `<body>`, or per-element computed style)
-      doesn't exist yet. See T9's own write-up below before attempting this
-      again
+      investigated 2026-07-27, blocked on an owner decision. **Decided
+      2026-08-02: build the real-DOM direction with `html5lib`.** In
+      progress in a worktree, not yet merged: the tree and the
+      nearest-ancestor lookup are landed and tested (124 tests, `ruff`
+      clean, 3.11–3.14 green, provably a no-op on real output so far); wiring
+      it into `build_var_table`/`resolve_vars`'s single-table model is not.
+      See T9's own entry below for what's next
 - [ ] **T10** — read `color-scheme` to confirm a `light-dark()` site is really
       two-themed — **waiting on a counter-example; do not do this yet**
+- [ ] **T18** — flag declarations whose selector matches nothing in the real
+      document — **filed 2026-08-02, depends on T9's tree.** Not started.
+      See T18's own entry below
+- [ ] **T19** — report actual matched elements in `examples`, not just
+      selector text — **filed 2026-08-02, depends on T9's tree.** Not
+      started. See T19's own entry below
 
 Repo and process:
 
@@ -1373,6 +1386,24 @@ clean, 3.11–3.14 all pass.
 > can currently reach. What follows is the finding, not a restatement of the
 > caution already in this task's own opening paragraph below.
 
+> **Decided 2026-08-02: build the real-DOM direction, with `html5lib`.**
+> Between the two prerequisites this investigation surfaced (below), a real
+> DOM below `<body>` was chosen over per-element computed-style resolution —
+> the latter's own reasoning stands unchanged, it's still the cascade engine
+> `CLAUDE.md` is explicit the tool is not, and its accuracy ceiling was judged
+> not worth its scope against what T9 actually needs. `html5lib` over `lxml`:
+> pure Python, so `PYTHON_FLOOR` and `build.py`'s vendoring model (which
+> assumes no compiled wheels) stay unchanged — the same floor-vs-fidelity
+> logic this file already applies to the `lxml` question elsewhere. The cost
+> this defers isn't free: phase 2's own research called `html5lib` "slow,
+> heavy" when the tool needed nothing past `<html>`/`<body>` matching: worth
+> a real measurement once T9 is in shape to make one, not assumed away.
+> Work started in a worktree the same day. Two follow-ups the same dependency
+> unlocks, beyond what T9 itself needs to build, are filed separately rather
+> than folded in here — **T18** (flag selectors matching nothing in the real
+> document) and **T19** (report actual matched elements, not just selector
+> text) below.
+
 A property redefined on `.card` resolves globally here. `@property` and normal
 inheritance down the tree are both unmodelled.
 
@@ -1474,6 +1505,159 @@ key's terms printed beside them — phase 3's level, which is the only one that
 showed its twelve moves. Predict the blast radius on all four frozen bundles
 *before* writing code, the same discipline phase 4 used — the contention
 counts above are exactly that prediction, one design-generation early.
+
+> **Progress, 2026-08-02 — the tree and the lookup primitive are landed and
+> tested; wiring them into the actual pipeline is not, deliberately.**
+> Started in a worktree (`worktree-t9-scoped-custom-properties`), not yet
+> merged to `main`.
+>
+> **Landed, in `dom.py`:** `full_tree(html)` — `html5lib.parse(...,
+> treebuilder="etree", namespaceHTMLElements=False)`, verified directly to
+> hand `cssselect2.ElementWrapper.from_html_root` a tree it accepts the same
+> way `page_elements`' stdlib-shim tree does. `elements_matching(selector,
+> root)` and `selector_matches(selector, element)` — general-purpose
+> counterparts to `matches_page_element`/`selector_specificity` that answer
+> the same two questions for *any* real element, not only `<html>`/`<body>`.
+> Six new tests (`TestFullTree`), including one that reproduces this task's
+> own motivating shape (a `.bg-card` element under `.theme-neutral` versus
+> one outside it) and confirms the tree tells the two apart.
+>
+> **Landed, in `extract.py`:** `resolve_by_ancestry(candidates,
+> consumer_elements, layers)` — the nearest-ancestor-or-self lookup this
+> task's investigation found missing, cascade-resolving ties at whatever
+> level it stops on rather than assuming one candidate per level. Five new
+> tests (`TestResolveByAncestry`), run directly against this task's own
+> `.theme-neutral`/`--card`/`.bg-card` shape: it returns `#f5f5f5` where a
+> same-element filter returns nothing (`test_nearest_ancestor_wins_not_same_element`),
+> gives two different real elements their own different real answers
+> (`test_different_ancestors_give_different_real_answers`), and refuses to
+> guess when one consuming declaration paints two elements under different
+> ancestors that disagree (`test_disagreeing_consumers_collapse_to_none_not_a_guess`)
+> rather than picking one arbitrarily.
+>
+> **Not landed, and this is the larger remaining piece.**
+> `build_var_table`/`resolve_vars` are built around one flat `dict[str, str]`
+> table per theme, shared by every consuming declaration in the document —
+> invariant 19's whole shape. `resolve_by_ancestry` breaks that model on
+> purpose: its answer depends on *which* consumer is asking, so the single
+> flat table can no longer be the return type for the `scoped` (off-page)
+> population once ancestry-aware resolution is wired in. Wiring this in
+> means either passing a consumer context through every `resolve_vars` call
+> site (ground detection, `_scopes_present`, `_triplet_warning`, and the main
+> per-declaration loop in `_build` all currently call it with a bare table),
+> or restructuring how the `scoped` population is stored and looked up. Not
+> designed yet — deliberately, rather than rushed to fit one sitting.
+>
+> **Also not decided:** what happens when a candidate's own selector is
+> blanket (`*`) — see the caveat inside `resolve_by_ancestry`'s own
+> docstring. And what a consuming declaration that paints multiple real
+> elements with genuinely different ancestry-resolved values should do to
+> the palette — today one declaration contributes one set of colors; real
+> per-element resolution can produce more than one correct answer for the
+> same declaration, which the palette's occurrence-counting model does not
+> yet have a place for.
+>
+> **Verified so far:** all 124 tests pass (113 existing + 11 new, none of
+> the existing ones edited), `ruff` clean, 3.11–3.14 all green. The new code
+> is not yet reachable from any pipeline call, so it is a **provable no-op**
+> on real output rather than an assumed one: `to_document()` on
+> `parkersprouse.me.har --images` and on a frozen `ground.news.har`, diffed
+> against a `git stash`-old run with `generated` dropped, both
+> byte-identical. `palettekit.pyz` has **not** been rebuilt — deferred until
+> there's a behavior change worth shipping in it, since a rebuild right now
+> would just re-package a no-op.
+>
+> **What's next, in order:** design how the `scoped` population's return
+> type changes to carry a per-consumer answer; predict the blast radius on
+> all four frozen bundles per this task's own stated diff level, *before*
+> wiring anything in; decide the blanket-selector and multi-element
+> questions above; then wire it in and re-run the full verification
+> discipline this file uses everywhere else — declaration-level diff first,
+> palette-level second, corpus-wide, old against new.
+
+### T18 — Flag declarations whose selector matches nothing in the real document
+
+**Filed 2026-08-02, alongside T9's `html5lib` decision — depends on it.** Not
+started; needs T9's real tree before it can be attempted at all.
+
+**The gap, verified directly rather than assumed.** `extract._status_for`
+only distinguishes `live` from `saved`/`inert` two ways: `saved` fires when a
+custom property is never referenced by any `var()` call in the document (a
+text/reference-graph check over `var_refs` — invariant 10), and `inert` fires
+for a handful of known dead-declaration shapes (`is_inert_shadow`). Neither
+checks whether an *ordinary* declaration's selector matches any real element
+at all. `.old-promo-banner { color: #ff0000 }` — a leftover rule for a class
+nothing in the document carries anymore — is reported `live` today,
+indistinguishable from a color the page actually paints.
+
+**What T9 unlocks that this depends on.** Once a real DOM tree and general
+selector matching exist (built for T9's inheritance question), the same
+matching machinery answers a different, simpler question for free: does this
+selector match *any* element in the document at all — not which ancestor,
+just whether the count is zero. `dom.matches_page_element` already proves the
+matching half works; T9 is what makes it available past `<html>`/`<body>`.
+
+**What this does not fix.** Same limit as everywhere else in this file that
+touches the DOM: only the static markup a HAR/URL fetch captured is visible.
+A class added by JavaScript at runtime, or toggled by a runtime interaction,
+reads as unmatched here even though a browser paints it — the existing
+"No JavaScript is executed" limit in `CLAUDE.md`, not a new one this task
+introduces. Worth naming in whatever status label this adds, not just in
+this file.
+
+**Scope question, undecided:** whether a zero-match declaration becomes a new
+status value (a fourth alongside `live`/`saved`/`inert`) or a `saved`-like
+flag layered on the existing status. `saved` currently means specifically "a
+custom property nothing references"; overloading it for "a plain declaration
+nothing matches" would blur two different reasons under one word. Decide
+before implementing rather than after — the CSS/SCSS/TS/Tailwind emitters key
+off status name (invariant 10: only `live` ships by default), so whatever
+this is called changes what those files gain or lose.
+
+**Diff level:** per-declaration status, old vs new, on all four frozen corpus
+bundles (`fleshandbonedesign.com.har`, `ground.news.har`, `tailwindcss.com.har`,
+`ui.shadcn.com.har`) plus `parkersprouse.me.har`, now that it's committed and
+regenerable. Predict the count of newly-flagged declarations per site before
+writing code, per this project's own standing discipline.
+
+### T19 — Report actual matched elements in `examples`, not just selector text
+
+**Filed 2026-08-02, alongside T9's `html5lib` decision — depends on it.** Not
+started; needs T9's real tree.
+
+**The gap, verified directly.** `extract.py`'s per-entry JSON builder sets
+`examples` to `[{"selector": u.selector, "property": u.prop, "source":
+u.source} for u in top]` — a sample of *selector text*, never resolved
+against the document. Two rules matching different numbers of real elements
+report identically if they share a selector: `.card { background: … }` used
+by three sidebar cards and one header card looks the same as `.card` used
+once, anywhere on the page. The report and the JSON can say which selector a
+color came from; neither can say how many real elements it painted, or where.
+
+**What T9 unlocks that this depends on.** The same real tree and general
+matching T9 needs to test ancestor relationships already produces, as a side
+effect, the actual matched-element set for any selector — this task is
+mostly about deciding what to do with that set once it exists, not building
+new matching machinery of its own.
+
+**Shape of the change, sketched rather than designed:** extend each `examples`
+entry with a count of real matches and, for a bounded number of them, some
+identifying detail — tag name at minimum, a short ancestor-chain summary if
+it turns out cheap once T9's tree exists. This is an **additive** JSON key
+under T3's compatibility promise — `schemaVersion` does not need to move,
+since "additive keys do not bump" is already the stated rule.
+
+**What this does not fix:** the same static-markup-only limit as T18. A count
+of zero real matches here is exactly T18's signal, so **land T18 first, or
+land them together** — reporting "0 elements matched" without T18's status
+change alongside it surfaces the same information as a bare, unexplained
+number instead of a labelled status, which is a worse read for anyone
+looking at the report.
+
+**Diff level:** JSON key-set diff (T3's own convention) confirming only
+additive keys changed, plus a sample of `examples` entries old vs new on all
+four frozen bundles and `parkersprouse.me.har`, checked by hand rather than
+asserted in a test until the shape settles.
 
 ### T10 — Read `color-scheme` to confirm a `light-dark()` site is two-themed
 

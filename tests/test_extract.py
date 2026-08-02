@@ -5,6 +5,7 @@ import unittest
 from palettekit import emit, extract, sources
 from palettekit.color import contrast_ratio, find_colors, parse_color
 from palettekit.cssparse import parse_stylesheet, resolve_vars
+from palettekit.dom import elements_matching, full_tree
 from palettekit.extract import layer_order
 
 from .helpers import (
@@ -523,6 +524,85 @@ class TestChannelTriplets(unittest.TestCase):
         pal = extract.extract(sources.load_any(write_fixture(html)))
         self.assertEqual([w for w in pal.warnings
                           if "bare channel triplet" in w], [])
+
+
+class TestResolveByAncestry(unittest.TestCase):
+    """T9: resolving an off-page custom property by real inheritance.
+
+    Reproduces the exact shape `PLAN.md` T9's investigation found the
+    rejected same-element filter getting wrong: `.theme-neutral { --card:
+    ... }` several levels above `.bg-card { background: var(--card) }`. A
+    same-element filter tests whether `.theme-neutral` reaches `.bg-card`'s
+    own selector, which it never does — that shape is meant to be read
+    through inheritance, not by matching the same element.
+    """
+
+    CSS = """
+      .theme-neutral { --card: #f5f5f5; }
+      .theme-blue { --card: #1d4ed8; }
+      .bg-card { background: var(--card); }
+    """
+
+    def _candidates(self, css=None, prop="--card"):
+        sheet = parse_stylesheet(css or self.CSS, "t.css")
+        return [d for d in sheet.declarations if d.prop == prop]
+
+    def test_nearest_ancestor_wins_not_same_element(self):
+        html = ('<html><body><div class="theme-neutral">'
+                '<p><span class="bg-card">x</span></p></div></body></html>')
+        consumers = elements_matching(".bg-card", full_tree(html))
+        value = extract.resolve_by_ancestry(self._candidates(), consumers, {})
+        self.assertEqual(value, "#f5f5f5")
+
+    def test_different_ancestors_give_different_real_answers(self):
+        """A same-element filter finds neither; both real answers exist."""
+        html = ('<html><body>'
+                '<div class="theme-neutral"><span class="bg-card">a</span></div>'
+                '<div class="theme-blue"><span class="bg-card">b</span></div>'
+                '</body></html>')
+        neutral_el, blue_el = elements_matching(".bg-card", full_tree(html))
+        candidates = self._candidates()
+        self.assertEqual(
+            extract.resolve_by_ancestry(candidates, [neutral_el], {}),
+            "#f5f5f5")
+        self.assertEqual(
+            extract.resolve_by_ancestry(candidates, [blue_el], {}),
+            "#1d4ed8")
+
+    def test_disagreeing_consumers_collapse_to_none_not_a_guess(self):
+        """One declaration painting two differently-themed elements has no
+        single answer, and this function refuses to pick one arbitrarily.
+        """
+        html = ('<html><body>'
+                '<div class="theme-neutral"><span class="bg-card">a</span></div>'
+                '<div class="theme-blue"><span class="bg-card">b</span></div>'
+                '</body></html>')
+        both = elements_matching(".bg-card", full_tree(html))
+        self.assertIsNone(
+            extract.resolve_by_ancestry(self._candidates(), both, {}))
+
+    def test_no_matching_ancestor_is_none(self):
+        html = '<html><body><span class="bg-card">x</span></body></html>'
+        consumers = elements_matching(".bg-card", full_tree(html))
+        self.assertIsNone(
+            extract.resolve_by_ancestry(self._candidates(), consumers, {}))
+
+    def test_ties_at_the_same_ancestor_level_use_the_cascade(self):
+        """Two candidates matching the *same* ancestor still need a winner --
+        this does not stop being a cascade problem just because the pool is
+        scoped to one ancestor level instead of the whole page.
+        """
+        css = """
+          .theme-neutral { --card: #f5f5f5; }
+          .theme-neutral.override { --card: #123456 !important; }
+          .bg-card { background: var(--card); }
+        """
+        html = ('<html><body><div class="theme-neutral override">'
+                '<span class="bg-card">x</span></div></body></html>')
+        consumers = elements_matching(".bg-card", full_tree(html))
+        value = extract.resolve_by_ancestry(
+            self._candidates(css), consumers, {})
+        self.assertEqual(value, "#123456")
 
 
 if __name__ == "__main__":

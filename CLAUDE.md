@@ -1325,8 +1325,9 @@ publish an explanation for a discrepancy that itself amounts to a guess.
 ## Migration TODO
 
 **Moved. `PLAN.md`'s "Outstanding work" section is the authority** for
-everything still to do — fourteen tasks, T1–T14, each with its rationale, its
-prerequisites and the level its change should be *diffed* at.
+everything still to do — T1–T19 as of 2026-08-02, each with its rationale, its
+prerequisites and the level its change should be *diffed* at. Not updated
+here each time a task is added; that section is the count that matters.
 
 It lives there rather than here because keeping two lists of the same work in
 two files guarantees one of them goes stale, which is a failure this project

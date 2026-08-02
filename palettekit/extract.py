@@ -27,6 +27,7 @@ from .dom import (
     PageElement,
     matches_page_element,
     page_elements,
+    selector_matches,
     selector_specificity,
 )
 from .sources import Bundle
@@ -489,6 +490,79 @@ def build_var_table(sheets: list[Stylesheet], theme: str = "",
                 if current is None or key > current[0]:
                     rooted[d.prop] = (key, d.value)
     return {**scoped, **{k: v for k, (_key, v) in rooted.items()}}
+
+
+def resolve_by_ancestry(candidates: list, consumer_elements: list,
+                        layers: dict[str, int]) -> str | None:
+    """The value real inheritance gives, for one property, one consumer.
+
+    T9 (`PLAN.md`). `build_var_table`'s `scoped` population resolves an
+    off-page custom property by last-wins across the whole document, which
+    conflates two shapes that read identically in selector text: `.theme-a {
+    --card: red }` meant to be read by an *ancestor's* descendants through
+    inheritance, and `.shimmer-none { --shimmer-image: none }` meant to
+    override a property on the *same* element a sibling utility sits on.
+    Nothing in the selector distinguishes them — the answer lives in the real
+    document tree, specifically in whether the class a candidate targets is
+    an ancestor of, or identical to, the element consuming the `var()`. That
+    tree is `full_tree`'s (`dom.py`), not `page_elements`'s.
+
+    The walk starts at the consumer element itself (self counts as its own
+    nearest ancestor) and moves upward. At each level it asks which
+    candidates match *this specific element*, cascade-resolves among any
+    that do — a level can have more than one candidate, the same as
+    `build_var_table`'s rooted pool does for the page element — and stops at
+    the first level with an answer, because a value set closer to the
+    consumer always shadows one set further up; a real browser never looks
+    past the nearest ancestor that sets the property. `candidates` must
+    already be filtered to the right property name and theme by the caller,
+    the same precondition `build_var_table`'s own loop enforces on itself.
+
+    **A blanket selector (`*`) is not filtered out here the way
+    `dom._is_blanket` filters it for page-level candidates.** At the
+    consumer's own element — the first level this walk checks — a `*`
+    candidate always matches, which would make it win outright over every
+    real ancestor definition purely by walk order, the same mistake
+    invariant 16 exists to prevent for the page element. Not yet decided
+    whether the fix is the same one (test against a nondescript element) or
+    something specific to inheritance, since a blanket rule *is* meaningfully
+    different here — every element inherits from it, which is arguably
+    correct rather than a false positive. Flagged rather than silently
+    handled either way: no corpus site's `--card`-shaped case reaches this
+    yet (Tailwind's own blanket-selector custom properties are non-color
+    reset values, invariant 16's own finding), but a test should exist before
+    this is trusted on real color tokens.
+
+    **One consuming declaration can paint several real elements with
+    genuinely different answers** — a `.bg-card` under one `.theme-neutral`
+    wrapper and another under `.theme-blue`. This function does not pick one
+    arbitrarily: it returns the value only if every consumer element agrees,
+    and `None` if they disagree. A caller wanting the *per-element* answers
+    instead of one collapsed value needs different plumbing than this
+    function provides — see `PLAN.md` T9's own note on what remains before
+    this is wired into `build_var_table`/`resolve_vars`'s single-table model,
+    which assumes one resolved value per property per theme, not per element.
+    """
+    values: set[str] = set()
+    for consumer_el in consumer_elements:
+        winner = None
+        for el in (consumer_el, *consumer_el.ancestors):
+            best = None
+            for d in candidates:
+                spec = selector_matches(d.themed_selector or d.selector, el)
+                if spec is None:
+                    continue
+                key = _cascade_key(d, spec, layers)
+                if best is None or key > best[0]:
+                    best = (key, d.value)
+            if best is not None:
+                winner = best[1]
+                break
+        if winner is not None:
+            values.add(winner)
+    if len(values) == 1:
+        return values.pop()
+    return None
 
 
 def _scopes_present(sheets: list[Stylesheet], table: dict[str, str]) -> set[str]:

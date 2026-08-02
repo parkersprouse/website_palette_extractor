@@ -187,10 +187,10 @@ sources.py   →  cssparse.py  →  extract.py  →  emit.py
 | File | Lines | Holds |
 |---|---:|---|
 | `color.py` | 1182 | `Color`, parsing, sRGB↔OKLab/CIE Lab/XYZ both ways, `color-mix()`, `light-dark()`, `calc()`, contrast, hue names |
-| `cssparse.py` | 908 | `tinycss2` integration, `var()`, `selector_weight`, roles, theme scopes, `@layer` names |
+| `cssparse.py` | 915 | `tinycss2` integration, `var()`, `selector_weight`, roles, theme scopes, `@layer` names, `color-scheme` pass-through (T10) |
 | `dom.py` | 535 | `html.parser` → `ElementTree` shim, `cssselect2` matching of `<html>`/`<body>`, specificity, plus `full_tree`/`elements_matching`/`wrap_tree` (T9: real DOM below the page element), `selector_reach` (T18: does a selector match anything, real/none/untestable), and `element_signature` (T19: a short label for one real matched element) |
 | `sources.py` | 292 | `load_har` / `load_url` / `load_paths` → `Bundle` |
-| `extract.py` | 1550 | `extract()`, the cascade, per-theme `_build`, ground, merging, statuses, naming, `resolve_by_ancestry`/`resolve_by_ancestry_kind` (T9), `Entry.all_unmatched` (T18), per-usage `match_count`/`match_samples` (T19) |
+| `extract.py` | 1621 | `extract()`, the cascade, per-theme `_build`, ground, merging, statuses, naming, `resolve_by_ancestry`/`resolve_by_ancestry_kind` (T9), `Entry.all_unmatched` (T18), per-usage `match_count`/`match_samples` (T19), `_page_color_scheme`/`_scopes_present`'s confirmation gate (T10) |
 | `emit.py` | 959 | Emitters; `_HTML` is the report template |
 | `images.py` | 148 | Optional image quantisation, not part of the token set |
 | `__main__.py` | 255 | CLI; `main()` guards `PYTHON_FLOOR` before anything else |
@@ -799,18 +799,57 @@ because the obvious implementation produced plausible but wrong output.
     `#ffffff` / `#18191b`, both read from `html { background-color }` rather
     than inferred. Tests: `TestLightDark`.
 
-    **"Ships both themes by definition" overreaches slightly, and the caveat is
-    worth carrying.** `light-dark()` resolves against the *used* `color-scheme`,
-    whose initial value is `normal` — light. A page that writes `light-dark()`
-    and never declares `color-scheme: light dark` renders the light branch
-    whatever the OS says, and calling that page two-themed is wrong. **This
-    tool cannot currently tell the difference**: `color-scheme` is neither a
-    custom property nor in `PROPERTY_ROLE`, so `_record` drops it and it never
-    reaches a `Declaration`. Checked against the corpus rather than assumed —
-    MDN's CSS carries nine `color-scheme` declarations including
-    `color-scheme:light dark`, so its two themes are real, and it is also the
-    only corpus site using the function at all. Reading `color-scheme` is the
-    fix if a counter-example turns up; it has not.
+    **"Ships both themes by definition" overreached, and T10 (`PLAN.md`,
+    landed 2026-08-02) closed the gap.** `light-dark()` resolves against the
+    *used* `color-scheme`, whose initial value is `normal` — light. A page
+    that writes `light-dark()` and never declares `color-scheme: light dark`
+    renders the light branch whatever the OS says, and calling that page
+    two-themed is wrong.
+
+    **`cssparse._record` now special-cases `color-scheme` through its
+    filter** — not into `PROPERTY_ROLE` (it carries no color of its own, so
+    `Declaration.role` falls through to `"other"`, which the main color-scan
+    loop in `extract._build` and `_triplet_warning` already know to skip) but
+    far enough to reach `sheet.declarations`, where `extract._page_color_scheme`
+    resolves the winning value the same way `build_var_table` resolves a
+    custom property — invariant 19's own `_page_specificity`/`_cascade_key`,
+    applied to one ordinary property instead of the whole custom-property
+    population, and deliberately unscoped-only (a `color-scheme` written
+    *inside* a theme scope is a shape no corpus site has shown).
+    `extract._scopes_present` gates its `light-dark()` →
+    `{"light","dark"}` registration on `{"light","dark"} <= scheme_keywords`;
+    unconfirmed, the colors still enter the palette, reading whichever single
+    branch `extract._build`'s `default_appearance` selects — `"dark"` if the
+    page confirms `dark` alone, `"light"` otherwise (absent, `normal`, or
+    anything else — the same default as before T10, just no longer
+    hardcoded).
+
+    Checked against the corpus rather than assumed — MDN's CSS carries nine
+    `color-scheme` declarations including `color-scheme:light dark`, so its
+    two themes are real and the gate leaves it untouched (verified directly
+    against a live fetch: still `#ffffff` / `#18191b`, both themes present).
+    `mdn.har`, added the same day, is a frozen local capture of that same
+    check — gitignored like the rest of this corpus, and reproduces the
+    fetch exactly, so this no longer needs network access to reverify.
+    **The counter-example this invariant said would be the fix's trigger
+    turned up**:
+    `pawelgrzybek.com`'s light/dark example
+    (`pawelgrzybek.com__light_dark_example.har`, gitignored like every `.har`
+    but `parkersprouse.me.har` — see T10's own write-up for why this stays a
+    local, uncommitted corpus file rather than a second `.gitignore`
+    exception) writes `light-dark()` twenty-four times and confirms both
+    branches with `html { color-scheme:light dark }` — a positive control,
+    not the negative case this invariant's gate exists for. That negative
+    case (`light-dark()` present, `color-scheme` never confirming both) has
+    no corpus site yet and is tested synthetically
+    (`tests/test_color.py`'s `TestLightDarkNeedsColorScheme`) — each case
+    required to fail against the pre-T10 implementation before being
+    trusted, per this file's own "a test that passes before and after tests
+    nothing" rule. The gate's own end-to-end effect was also verified
+    directly on the real corpus file, not just inferred from the synthetic
+    tests: stripping `color-scheme:light dark;` from a copy of the HAR
+    collapses it from two themes to one; restoring the declaration restores
+    both.
 
 24. **`resolve_vars` substitutes tokens, not spliced text, so no separator has
     to be guessed by hand.** CSS substitutes *tokens*; a text splice has to
@@ -1323,6 +1362,41 @@ Tailwind config should even look like first.
   so a property defined in site CSS but consumed only by the framework flips
   `live` → `saved`. Accurate for the input; surprising if unexpected.
 
+- **`@supports` conditions are not evaluated.** `_walk` (`cssparse.py`) reads
+  a conditional at-rule's *block* the same as any other — same as `@media`
+  minus the theme-scope detection — and never looks at whether its condition
+  would actually hold in a browser. A rule inside `@supports not (...)` is
+  read as though the negation is always true, which is backwards whenever
+  the feature it tests *is* supported.
+
+  Found while verifying T10 (`PLAN.md`) against
+  `pawelgrzybek.com__light_dark_example.har`: the dark theme's reported
+  ground is `#ffffff`, wrong — the page paints `hsl(210 15% 15%)` (roughly
+  `#21262c`), which does turn up ranked in the dark palette, just not chosen
+  as ground. The stylesheet writes
+
+  ```css
+  :root { --color-background: light-dark(hsl(255 0% 100%), hsl(210 15% 15%)); … }
+  @supports not (color: light-dark(white,black)) {
+    :root { --color-background: hsl(255 0% 100%); … }
+  }
+  ```
+
+  — a fallback for browsers that can't parse `light-dark()` at all, meant to
+  never apply in one that can. Read at face value, it's just a second
+  unscoped `:root` declaration for the same property, later in document
+  order, with tied specificity — so `build_var_table`'s cascade (invariant
+  21) picks it over the real one, for **both** themes, since neither
+  declaration is theme-scoped. Reproduced identically on pre-T10 code, so
+  this predates that task and is not a regression it introduced; T10's own
+  gate (whether a `light-dark()` site is confirmed two-themed) is unaffected
+  — this is a wrong *value* inside an already-correctly-detected theme, a
+  different question. Not fixed here: evaluating `@supports` is parsing and
+  running a boolean feature query, a materially larger problem than anything
+  T10's diff level covers. No other corpus site's ground is known to depend
+  on an `@supports` fallback; this is the first one found, because it's the
+  first corpus file that has one at all.
+
 ## Reference fixture
 
 `palettes/fleshandbonedesign.com/` is the output for
@@ -1394,6 +1468,14 @@ Current grounds, after phase 4 (**14 themes, 4 inferred**):
 | tailwindcss.com | `#f0b100` / `#030712` | light |
 | ground.news.har | `#eeefe9` / `#262626` | — |
 | fleshandbonedesign.com.har | `#151515` | — |
+
+`mdn.har` (added 2026-08-02) is a frozen local capture of the
+`developer.mozilla.org` row above and reproduces it exactly — offline
+verification for a site that used to need a live fetch.
+`pawelgrzybek.com__light_dark_example.har`, added the same day, isn't part of
+this six-site breadth spread; it's T10's own corpus file (invariant 23), the
+first site that both writes `light-dark()` and confirms it with
+`color-scheme`.
 
 MDN's second theme is phase 4's, and it is the only ground any phase moved
 since phase 1. The site declares it entirely through `light-dark()`
@@ -1528,6 +1610,17 @@ is rather than work to do:
       fixture at all is no longer true for that one. It's still true for the
       reference fixture (`fleshandbonedesign.com.har`, still gitignored with
       no exception) and the four breadth-check bundles (`PLAN.md` T14).
+
+      **Two more local, gitignored HARs joined the corpus 2026-08-02**:
+      `mdn.har` (developer.mozilla.org, matching the breadth check's own live
+      `#ffffff` / `#18191b` two-theme result — verified directly, so it now
+      reproduces offline what used to need a live fetch) and
+      `pawelgrzybek.com__light_dark_example.har` (the site that finally
+      exercises `light-dark()` confirmed by `color-scheme`, T10's corpus
+      file). Neither is a `.gitignore` exception — same untracked treatment
+      as the four breadth-check bundles, for the same reason: small
+      committed fixtures per T14 is the fix that doesn't mean committing an
+      11 MB HAR, not another one-off exception.
 - [x] **`LICENSE.md`** and the `[project.license]` / classifier entries in
       `pyproject.toml` — the owner chose the Hippocratic License 3.0 on
       2026-07-26.

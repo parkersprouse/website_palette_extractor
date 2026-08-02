@@ -705,7 +705,51 @@ def resolve_by_ancestry_kind(candidates: list, consumer_elements: list,
     return "disagree", None
 
 
-def _scopes_present(sheets: list[Stylesheet], table: dict[str, str]) -> set[str]:
+def _page_color_scheme(sheets: list[Stylesheet], page: list[PageElement] | None,
+                       layers: dict[str, int], table: dict[str, str]) -> str:
+    """The cascade-resolved `color-scheme` value reaching the page element, or "".
+
+    T10 (`PLAN.md`). `light-dark()` resolves against the *used* `color-scheme`,
+    not against whatever the OS prefers, and a page that never declares one
+    renders the light branch regardless — see invariant 23's own overreach
+    caveat. This reuses the exact page-reach-then-cascade machinery
+    `build_var_table` uses for custom properties (invariant 19's
+    `_page_specificity`/`_cascade_key`), applied to one ordinary property
+    instead of the whole custom-property population.
+
+    Deliberately unscoped-only (`d.theme == ""`): a `color-scheme` written
+    *inside* a theme scope would mean the browser's own light/dark switch and
+    this tool's theme model disagree about what "dark" means on the same
+    page, a shape no corpus site has shown. Left for a counter-example the
+    same way the rest of T10 was.
+    """
+    best = None
+    for sheet in sheets:
+        for d in sheet.declarations:
+            if d.prop != "color-scheme" or d.theme:
+                continue
+            spec = _page_specificity(d.selector, d.selector, page)
+            if spec is None:
+                continue
+            key = _cascade_key(d, spec, layers)
+            if best is None or key > best[0]:
+                best = (key, d.value)
+    return resolve_vars(best[1], table) if best else ""
+
+
+def _scheme_keywords(value: str) -> set[str]:
+    """`light`/`dark` tokens in a resolved `color-scheme` value, order-free.
+
+    `normal | [ light | dark | <custom-ident> ]+ && only?` per spec — plain
+    whitespace-separated keywords once `var()` is resolved, so a split is
+    enough; `only` and any custom idents are simply not in the set this
+    function looks for.
+    """
+    return set(value.strip().lower().split()) & {"light", "dark"}
+
+
+def _scopes_present(sheets: list[Stylesheet], table: dict[str, str],
+                    scheme_keywords: set[str]) -> set[str]:
     """Theme scopes that actually carry color.
 
     A `prefers-color-scheme: dark` block that only flips an image filter is not
@@ -714,18 +758,26 @@ def _scopes_present(sheets: list[Stylesheet], table: dict[str, str]) -> set[str]
 
     **`light-dark()` is the third theme mechanism** (phase 4), and unlike the
     other two it is not a scope over declarations — it is a scope over one
-    value, written inline. A site using it ships both themes by definition, so
-    a single `light-dark()` carrying color declares both, and the declaration
+    value, written inline. A site using it and confirming both branches with
+    `color-scheme: light dark` (or `dark light`) ships both themes, so a
+    single `light-dark()` carrying color declares both, and the declaration
     itself stays unscoped so that it is read once per theme with a different
     branch each time. developer.mozilla.org is the case: it writes
     `html { background-color: var(--color-background-page) }` where the property
-    holds `light-dark(#fff,#18191b)`, and without this it reads as one theme
-    with both branches piled into it.
+    holds `light-dark(#fff,#18191b)`, `html` also carries `color-scheme:light
+    dark`, and without this it reads as one theme with both branches piled
+    into it.
 
-    Strictly the function resolves against the used `color-scheme`, so a page
-    declaring neither `color-scheme: light dark` nor `dark` renders the light
-    branch always and is not two-themed. `color-scheme` is not a property this
-    tool records, so that case is not distinguished — see invariant 23.
+    **`scheme_keywords` is the gate T10 (`PLAN.md`) added.** `light-dark()`
+    resolves against the *used* `color-scheme`, whose initial value is
+    `normal` — light. A page that writes `light-dark()` and never confirms
+    both keywords renders the light branch always (or the dark one alone, if
+    it confirms only `dark` — see `extract()`'s `default_appearance`), and is
+    not two-themed; registering both scopes anyway would build a second
+    palette for a theme the page never shows. `pawelgrzybek.com`'s
+    light/dark example is the corpus site that finally exercises the
+    positive case — it declares `color-scheme:light dark` on `html`, so its
+    two themes are confirmed, not just assumed the way MDN's always were.
     """
     found: set[str] = set()
     for sheet in sheets:
@@ -742,8 +794,9 @@ def _scopes_present(sheets: list[Stylesheet], table: dict[str, str]) -> set[str]
             low = resolved.lower()
             if d.theme and d.theme not in found and _colors_of(resolved, d.theme):
                 found.add(d.theme)
-            if "light-dark(" in low and (_colors_of(resolved, "light")
-                                         or _colors_of(resolved, "dark")):
+            if ("light-dark(" in low and {"light", "dark"} <= scheme_keywords
+                    and (_colors_of(resolved, "light")
+                         or _colors_of(resolved, "dark"))):
                 found |= {"light", "dark"}
     return found
 
@@ -878,16 +931,23 @@ def extract(bundle: Bundle, *, merge_threshold: float = 0.02,
     # places that rank declarations.
     layers = layer_order(sheets)
 
-    scopes = (_scopes_present(
-        sheets, build_var_table(sheets, page=page, layers=layers))
-        if themes else set())
+    # T10: which branch an unscoped build reads a `light-dark()` through, and
+    # (via `_scopes_present`) whether a `light-dark()` site is confirmed
+    # two-themed at all. Computed once, before `themes` is checked, because
+    # `default_appearance` feeds every `_build` call below regardless —
+    # `--no-themes` still has to pick a branch for a site that writes
+    # `light-dark(): dark` and confirms only `color-scheme: dark`.
+    table = build_var_table(sheets, page=page, layers=layers)
+    scheme_kw = _scheme_keywords(_page_color_scheme(sheets, page, layers, table))
+    scopes = _scopes_present(sheets, table, scheme_kw) if themes else set()
+    default_appearance = "dark" if scheme_kw == {"dark"} else "light"
 
     palettes = [
         _build(sheets, bundle.page_url, all_var_refs, theme_id, scope,
                merge_threshold=merge_threshold,
                third_party_weight=third_party_weight,
                min_score=min_score, flat=flat, page=page, layers=layers,
-               tree=tree)
+               tree=tree, default_appearance=default_appearance)
         for theme_id, scope in _theme_plan(scopes)
     ]
 
@@ -941,7 +1001,8 @@ def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
            third_party_weight: float, min_score: float,
            flat: bool, page: list[PageElement] | None = None,
            layers: dict[str, int] | None = None,
-           tree: object | None = None) -> Palette:
+           tree: object | None = None,
+           default_appearance: str = "light") -> Palette:
     """One theme's palette: everything scoped to it, plus everything unscoped."""
     layers = layers if layers is not None else layer_order(sheets)
     rooted, off_page = _var_populations(sheets, scope, page, layers)
@@ -992,12 +1053,13 @@ def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
                 if wrapped_root is not None else None)
         return reach_cache[selector]
 
-    # Which branch a `light-dark()` resolves to. An unscoped build gets light,
-    # which is what a browser does when the document says nothing about
-    # `color-scheme`. That case is only reachable with `--no-themes`: a site
-    # that writes `light-dark()` at all registers both scopes in
-    # `_scopes_present`, so a themed run always has a real answer here.
-    appearance = scope or "light"
+    # Which branch a `light-dark()` resolves to. A themed build (`scope` set)
+    # reads its own branch, same as always. An unscoped build — `--no-themes`,
+    # or a themed run whose `light-dark()` usage was never confirmed
+    # two-themed (T10, `PLAN.md`) — reads `default_appearance`, which
+    # `extract()` computes from the page's own `color-scheme` and defaults to
+    # light: what a browser does when the document says nothing about it.
+    appearance = scope or default_appearance
 
     # A theme's own rules shadow the unscoped ones they were written to
     # override, matched on (selector as it reads inside the theme, property).
@@ -1023,6 +1085,15 @@ def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
                 continue  # belongs to the other theme
             if not d.theme and (d.selector, d.prop) in shadowed:
                 continue  # this theme overrides it
+            if d.role == "other":
+                # `color-scheme` (T10) is the one declaration this codebase
+                # records that can never hold a color — it is read directly by
+                # `_page_color_scheme`, not through this loop. Excluded here
+                # rather than left to fall out of `_colors_of` returning
+                # nothing, so it does not inflate `declarationsScanned`, which
+                # the report and `stats` publish as "declarations scanned for
+                # color".
+                continue
             n_decls += 1
             decl_table = table
             # Only worth asking when this declaration actually references an

@@ -341,10 +341,18 @@ class TestLightDark(unittest.TestCase):
     developer.mozilla.org is the case that motivates it: its `<html>` rule
     resolves to `light-dark(#fff,#18191b)`, and reading both branches into one
     palette made a site with two obvious themes look like it had one.
+
+    `color-scheme: light dark` (T10, `PLAN.md`) is in `PAGE` deliberately —
+    without it a `light-dark()` site is not confirmed two-themed at all (see
+    `TestLightDarkNeedsColorScheme` below), and this fixture exists to test
+    that a *confirmed* one still is, not to test the confirmation itself.
     """
 
     PAGE = """<!DOCTYPE html><html><head><style>
-      :root { --page: light-dark(#ffffff, #18191b); --ink: light-dark(#111111, #eeeeee); }
+      :root {
+        color-scheme: light dark;
+        --page: light-dark(#ffffff, #18191b); --ink: light-dark(#111111, #eeeeee);
+      }
       html { background-color: var(--page); }
       body { color: var(--ink); }
     </style></head><body></body></html>"""
@@ -386,6 +394,62 @@ class TestLightDark(unittest.TestCase):
         self.assertNotIn("#eeeeee", light)
         self.assertIn("#eeeeee", dark)
         self.assertNotIn("#111111", dark)
+
+
+class TestLightDarkNeedsColorScheme(unittest.TestCase):
+    """T10 (`PLAN.md`): `light-dark()` alone is not proof of two themes.
+
+    Invariant 23's own overreach caveat: the function resolves against the
+    *used* `color-scheme`, whose initial value is `normal` — light. A page
+    that writes `light-dark()` and never declares `color-scheme: light dark`
+    (or `dark light`) renders the light branch always, whatever the OS says,
+    and calling that page two-themed invents a palette it never shows.
+
+    No corpus site exercised the negative case until now — MDN and
+    `pawelgrzybek.com`'s light/dark example both confirm both keywords, so
+    both stay positive controls (`TestLightDark`, and the corpus check in
+    `PLAN.md`/`CLAUDE.md`). These are synthetic because the gate itself needs
+    a fixture that omits the confirmation on purpose.
+    """
+
+    def _page(self, color_scheme: str = "") -> str:
+        decl = f"color-scheme: {color_scheme};" if color_scheme else ""
+        return f"""<!DOCTYPE html><html><head><style>
+          :root {{ {decl} --page: light-dark(#ffffff, #18191b); }}
+          html {{ background-color: var(--page); }}
+        </style></head><body></body></html>"""
+
+    def test_no_color_scheme_declared_stays_one_theme_reading_light(self):
+        pal = extract.extract(sources.load_any(write_fixture(self._page())))
+        self.assertIsNone(pal.alternate)
+        self.assertEqual(pal.ground.hex, "#ffffff")
+
+    def test_color_scheme_normal_stays_one_theme_reading_light(self):
+        """`normal` is the initial value — spelled out, not just absent."""
+        pal = extract.extract(
+            sources.load_any(write_fixture(self._page("normal"))))
+        self.assertIsNone(pal.alternate)
+        self.assertEqual(pal.ground.hex, "#ffffff")
+
+    def test_color_scheme_dark_alone_stays_one_theme_reading_dark(self):
+        """Confirmed dark-only, not light — the other half of the caveat."""
+        pal = extract.extract(
+            sources.load_any(write_fixture(self._page("dark"))))
+        self.assertIsNone(pal.alternate)
+        self.assertEqual(pal.ground.hex, "#18191b")
+
+    def test_color_scheme_light_dark_confirms_two_themes(self):
+        """The positive case, isolated from `TestLightDark`'s richer fixture."""
+        pal = extract.extract(
+            sources.load_any(write_fixture(self._page("light dark"))))
+        self.assertIsNotNone(pal.alternate)
+        self.assertEqual((pal.ground.hex, pal.alternate.ground.hex),
+                         ("#ffffff", "#18191b"))
+
+    def test_color_scheme_dark_light_order_does_not_matter(self):
+        pal = extract.extract(
+            sources.load_any(write_fixture(self._page("dark light"))))
+        self.assertIsNotNone(pal.alternate)
 
 
 if __name__ == "__main__":

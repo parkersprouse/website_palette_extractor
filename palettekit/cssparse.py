@@ -613,7 +613,14 @@ def _record(sheet: Stylesheet, node, value: str, selector: str, source: str,
             at_rules: tuple[str, ...], theme: str, theme_media: bool,
             layer: str) -> None:
     prop = node.lower_name
-    if not (prop.startswith("--") or prop in PROPERTY_ROLE):
+    # `color-scheme` carries no color of its own — it is kept only so T10
+    # (`PLAN.md`) can read it back with the same cascade machinery every other
+    # page-reaching declaration gets, to confirm whether a `light-dark()` site
+    # really renders both branches. `Declaration.role` falls through to
+    # "other" for it, which `_triplet_warning` and the main color-scan loop
+    # in `extract._build` already know to skip.
+    if not (prop.startswith("--") or prop in PROPERTY_ROLE
+            or prop == "color-scheme"):
         return
     value = _norm(value)
     if not value:

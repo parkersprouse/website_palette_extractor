@@ -768,8 +768,16 @@ Accuracy gaps left by phases 1–4:
       for why that distinction mattered here). See T9's own entry below for
       the full history; T18 and T19 (below) have since landed on top of
       this tree
-- [ ] **T10** — read `color-scheme` to confirm a `light-dark()` site is really
-      two-themed — **waiting on a counter-example; do not do this yet**
+- [x] **T10** — read `color-scheme` to confirm a `light-dark()` site is really
+      two-themed — **the counter-example turned up (`pawelgrzybek.com`'s
+      light/dark example), landed 2026-08-02.** `_page_color_scheme` reuses
+      `build_var_table`'s own page-reach-then-cascade machinery for one
+      ordinary property; `_scopes_present` now gates its `light-dark()` →
+      `{"light","dark"}` registration on `color-scheme` confirming both
+      keywords, and `extract._build` reads an unscoped build's branch from
+      `default_appearance` (light, unless the page confirms `dark` alone)
+      instead of a hardcoded `"light"`. 158 tests, `ruff` clean, 3.11–3.14
+      green. See T10's own entry below
 - [x] **T18** — flag declarations whose selector matches nothing in the real
       document — **filed 2026-08-02, landed 2026-08-02.** New status
       `unmatched`, gated on unanimity: every usage's selector must be a
@@ -815,6 +823,16 @@ Accuracy gaps left by phases 1–4:
       Tailwind v4's own registrations). Starts with measuring whether any
       registered `initial-value` is color-bearing before touching the
       parser. Not started. See T22's own entry below
+- [ ] **T23** — evaluate `@supports` conditions instead of reading every
+      conditional block as though it always applies — **filed 2026-08-02,
+      found while verifying T10 against `pawelgrzybek.com`'s light/dark
+      example.** Confirmed to move a real ground wrong (`#ffffff` reported,
+      `#21262c`-ish actually painted) via an `@supports not (...)` fallback
+      block that only a non-supporting browser should ever read. See T10's
+      own entry and `CLAUDE.md`'s Known limits for the full trace. Not
+      started — parsing and evaluating a boolean feature query is a larger
+      problem than anything a single-property fix covers, and no other
+      corpus site is known to depend on one yet
 
 Repo and process:
 
@@ -2359,20 +2377,123 @@ has anything for this to read.
 
 ### T10 — Read `color-scheme` to confirm a `light-dark()` site is two-themed
 
+> **Outcome — landed 2026-08-02.** The counter-example this task was waiting
+> on turned up: `pawelgrzybek.com`'s light/dark example, captured as
+> `pawelgrzybek.com__light_dark_example.har` (gitignored, same as every other
+> `.har` but `parkersprouse.me.har` — not a second `.gitignore` exception,
+> that stays an owner call per T14). It writes `light-dark()` twenty-four
+> times and confirms both branches with `html { color-scheme:light dark }`,
+> so it is the positive control this task needed, not the negative one — see
+> below for how the gate was actually verified.
+
 Invariant 23 says a site writing `light-dark()` ships both themes "by
 definition", and flags its own overreach: `light-dark()` resolves against the
 **used** `color-scheme`, whose initial value is `normal` — light. A page that
 writes `light-dark()` and never declares `color-scheme: light dark` renders the
 light branch whatever the OS says, and calling it two-themed is wrong.
 
-The tool cannot currently tell: `color-scheme` is neither a custom property nor
-in `PROPERTY_ROLE`, so `_record` drops it and it never reaches a `Declaration`.
+~~The tool cannot currently tell: `color-scheme` is neither a custom property
+nor in `PROPERTY_ROLE`, so `_record` drops it and it never reaches a
+`Declaration`.~~ **No longer true.** `cssparse._record` now special-cases
+`color-scheme` through its filter — not into `PROPERTY_ROLE` (it carries no
+color, so `Declaration.role` falls through to `"other"`, which the main
+color-scan loop in `extract._build` and `_triplet_warning` already knew to
+skip) but far enough to reach `sheet.declarations`, where the same cascade
+machinery every page-reaching declaration gets can rank it.
 
-**No corpus site needs this.** Checked rather than assumed — MDN carries nine
-`color-scheme` declarations including `color-scheme:light dark`, so its two
-themes are real, and it is the only corpus site using the function. So this is
-**waiting on a counter-example**, and is the one task here that should probably
-not be done until one turns up.
+**Two published stats diverge here, and only one should.** `stats.sources[].
+declarations` (`len(sheet.declarations)`) is a raw count of everything
+`_record` kept, and now honestly includes `color-scheme` — moved on the
+corpus (`tailwindcss.com.har`, +9 in both themes and the top-level mirror;
+its reset layer writes `color-scheme` a handful of times, unscoped). `stats.
+declarationsScanned` (`extract._build`'s own `n_decls`) is meant to answer
+"how many declarations were examined for color", so `_build`'s main loop
+skips `d.role == "other"` before incrementing it — verified: `tailwindcss.
+com.har`'s `declarationsScanned` is unchanged, and the full corpus diff
+below (all five frozen bundles) shows exactly that one field moving,
+nowhere else.
+
+`extract._page_color_scheme` resolves the winning `color-scheme` value the
+same way `build_var_table` resolves a custom property (invariant 19's
+`_page_specificity` + `_cascade_key`), for one ordinary property instead of
+the whole custom-property population, and deliberately unscoped-only — a
+`color-scheme` written *inside* a theme scope is a shape no corpus site has
+shown and is left for a future counter-example, the same way the rest of
+this task was. `extract._scheme_keywords` reads the resolved value's
+whitespace-separated keywords (`only`/custom idents ignored, order-free).
+
+`extract._scopes_present` gates its `light-dark()` → `{"light","dark"}`
+registration on `{"light","dark"} <= scheme_keywords`. When it isn't
+confirmed, `light-dark()` colors still enter the palette — through
+`extract._build`'s `appearance = scope or default_appearance` — reading
+whichever single branch the page's own `color-scheme` actually selects:
+`"dark"` if it resolves to `dark` alone, `"light"` for `normal`, absence, or
+anything else. `default_appearance` is computed once in `extract()`,
+unconditionally (even under `--no-themes`, which never calls
+`_scopes_present` at all but still has to pick a branch), and threaded into
+every `_build` call.
+
+**Verified the gate is actually exercised, not just passing by accident,**
+by stripping `color-scheme:light dark;` from a copy of the pawelgrzybek HAR
+and re-running: two themes collapse to one. Restored, it's two again. The
+positive corpus file alone couldn't have shown that — it only proves the
+gate doesn't *break* a real two-themed site, which is a different claim.
+
+**MDN is the site this gate could have broken, and it was checked directly
+rather than inferred from its declaration count.** A live fetch of
+`https://developer.mozilla.org` after the gate landed still comes back
+`two themes: base (light, ground #ffffff), dark (dark, ground #18191b)` —
+the exact grounds the breadth-check table already recorded, unmoved.
+`mdn.har`, added the same day, is a frozen local capture of that same fetch
+and reproduces it exactly, so this no longer needs network access to
+reverify — see the corpus note above T10's diff level and `CLAUDE.md`'s
+`.gitignore` write-up.
+
+**Diffed at the JSON level (`generated` dropped) against all five frozen
+bundles**, old implementation against new: four are byte-identical
+(`fleshandbonedesign.com.har`, `ground.news.har`, `parkersprouse.me.har`,
+`ui.shadcn.com.har` — none carries a `color-scheme` declaration at all).
+`tailwindcss.com.har` moves in exactly the one field the stats note above
+predicts (`sources[].declarations`, +9, both themes and the top-level
+mirror) and nowhere else — no ground, no token, no `declarationsScanned`.
+Module, console script and zipapp were also checked against each other on
+the pawelgrzybek bundle and are identical.
+
+**The negative branch this task exists for has no corpus site**, so its
+tests (`tests/test_color.py`, `TestLightDarkNeedsColorScheme`) are synthetic
+— a minimal `light-dark()` page with `color-scheme` absent, `normal`, `dark`
+alone, `light dark`, and `dark light` (order shouldn't matter). Each was
+run against the pre-T10 implementation (`git stash` on `cssparse.py`/
+`extract.py` only, tests kept) and required to fail there before being
+trusted, per this file's own "a test that passes before and after tests
+nothing" rule — the three negative cases did (old code always registered
+both scopes for any `light-dark()` regardless of `color-scheme`), and the
+two positive cases (already two-themed) passed both before and after, as
+they should.
+
+`TestLightDark`'s own fixture (`tests/test_color.py`) now declares
+`color-scheme: light dark` too — without T10 it didn't need to, but leaving
+it out post-T10 would have made that fixture accidentally exercise the
+*unconfirmed* path while asserting the *confirmed* one's outcome, which is
+exactly the kind of test that passes for the wrong reason.
+
+**A real bug surfaced while verifying the positive corpus file, and it is
+not this task's to fix.** The dark theme's reported ground on
+`pawelgrzybek.com__light_dark_example.har` is `#ffffff` — wrong; the page
+paints `hsl(210 15% 15%)`, roughly `#21262c`, which does show up ranked in
+the dark palette just not chosen as ground. Reproduced identically on
+stashed pre-T10 code, so it predates this task. Cause, traced by hand: the
+stylesheet's `@supports not (color: light-dark(white,black)) { :root {
+--color-background: hsl(255 0% 100%); … } }` fallback block — meant only for
+browsers that can't parse `light-dark()` — sits *after* the real `:root`
+block in document order. This tool does not evaluate `@supports` conditions
+(no corpus site needed it to before now), so the fallback's plain light-only
+value reaches `build_var_table` as just another unscoped `:root`
+declaration and wins last-wins over the `light-dark()` one, for **both**
+themes, because neither is theme-scoped and specificity ties. Filed as a new
+known limit in `CLAUDE.md` rather than fixed here — `@supports` evaluation
+is a different, larger problem (parsing and evaluating a boolean feature
+query) than anything this task's diff level covers.
 
 **Diff level:** theme count and ids per site.
 
@@ -2575,6 +2696,15 @@ committed fixtures are what make that offline and reviewable. `parkersprouse.me`
 doesn't substitute for this: it's one more real site, not the small
 per-archetype set this task asks for, and it's a single theme like the
 reference fixture already is.
+
+**Two more local, gitignored HARs joined 2026-08-02, T10's own corpus:**
+`mdn.har` (a frozen capture of the `developer.mozilla.org` breadth-check row,
+reproducing its live `#ffffff` / `#18191b` two-theme result exactly — see
+T10's own entry) and `pawelgrzybek.com__light_dark_example.har` (the site
+that finally exercises `light-dark()` confirmed by `color-scheme`). Neither
+gets a `.gitignore` exception, same untracked treatment as the rest of this
+corpus and for the same reason — this task is still what fixes that, not
+another one-off exception.
 
 ### T15 — Audit hand-rolled scanning against the T5 corollary — landed 2026-07-27
 

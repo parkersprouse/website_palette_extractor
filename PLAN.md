@@ -1379,7 +1379,7 @@ produce byte-identical `to_document` JSON before and after, diffed with
 `test_import_without_layer_registers_nothing`), 110 → 113 tests, `ruff`
 clean, 3.11–3.14 all pass.
 
-### T9 — Model scoped custom properties
+### T9 — Model scoped custom properties — landed 2026-08-02
 
 > **Investigated 2026-07-27, not implemented — blocked on an owner decision.**
 > The scope this task assumed turns out not to exist at the fidelity the tool
@@ -1904,6 +1904,21 @@ bundles (`fleshandbonedesign.com.har`, `ground.news.har`, `tailwindcss.com.har`,
 regenerable. Predict the count of newly-flagged declarations per site before
 writing code, per this project's own standing discipline.
 
+**Machinery this task should reuse rather than re-derive, landed alongside
+T9's wiring:** `dom.wrap_tree(tree)` + `dom.elements_matching_wrapped` split
+wrapping the tree from querying it, specifically because `elements_matching`
+re-wrapping per call was T9's own dominant cost (55s on tailwindcss.com's
+~500 distinct selectors, per its blast-radius measurement). T18 will call
+this once per declaration in the document — every declaration, not just the
+off-page-referencing subset T9 checks — so it needs the same hoisted-wrapper
+pattern `_build` already uses (`wrap_tree` once per theme, a
+selector-keyed memo dict) from the start, not as a fix applied after the
+fact. Whether T18 shares `_build`'s existing `wrap_tree` call and cache or
+builds its own is an implementation detail to settle when this is picked
+up, not decided here — but re-wrapping per declaration on a
+`tailwindcss.com`-sized document, unmemoized, is the exact mistake T9's own
+measurement already found and fixed once.
+
 ### T19 — Report actual matched elements in `examples`, not just selector text
 
 **Filed 2026-08-02, alongside T9's `html5lib` decision — depends on it.** Not
@@ -1945,6 +1960,16 @@ looking at the report.
 additive keys changed, plus a sample of `examples` entries old vs new on all
 four frozen bundles and `parkersprouse.me.har`, checked by hand rather than
 asserted in a test until the shape settles.
+
+**Machinery this task should reuse, landed alongside T9's wiring:** the same
+`dom.wrap_tree`/`elements_matching_wrapped` split T18's own entry above
+points at — `_build` already wraps the tree once per theme and memoizes
+`elements_matching_wrapped` by selector text for the off-page-referencing
+subset it checks; this task's own "match every declaration's selector, not
+just that subset" need is the same lookup at wider scope, not a different
+one. If T18 and T19 land together (this task's own recommendation two
+paragraphs up), they can likely share one wrapped root and one memo cache
+per theme rather than each building their own.
 
 ### T10 — Read `color-scheme` to confirm a `light-dark()` site is two-themed
 

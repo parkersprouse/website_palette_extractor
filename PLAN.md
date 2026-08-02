@@ -705,14 +705,16 @@ Accuracy gaps left by phases 1–4:
 - [x] **T8** — `@import url(…) layer(x)` should register a layer.
       **Landed 2026-07-27** — reserves the position only, per the plan's own
       "consider doing only that." See T8's own write-up below
-- [ ] **T9** — model scoped custom properties (`@property`, inheritance) —
+- [x] **T9** — model scoped custom properties (`@property`, inheritance) —
       investigated 2026-07-27, blocked on an owner decision. **Decided
-      2026-08-02: build the real-DOM direction with `html5lib`.** In
-      progress in a worktree, not yet merged: the tree and the
-      nearest-ancestor lookup are landed and tested (124 tests, `ruff`
-      clean, 3.11–3.14 green, provably a no-op on real output so far); wiring
-      it into `build_var_table`/`resolve_vars`'s single-table model is not.
-      See T9's own entry below for what's next
+      2026-08-02: build the real-DOM direction with `html5lib`. Landed
+      2026-08-02.** `resolve_by_ancestry_kind` is wired into `_build` as an
+      override on last-wins (real value or confirmed absence override;
+      disagreement or no real consumer in the captured markup preserve).
+      132 tests, `ruff` clean, 3.11–3.14 green, corpus-verified (full
+      per-entry diff, not just hex sets — see this task's own entry below
+      for why that distinction mattered here). See T9's own entry below for
+      the full history and for what T18/T19 still need
 - [ ] **T10** — read `color-scheme` to confirm a `light-dark()` site is really
       two-themed — **waiting on a counter-example; do not do this yet**
 - [ ] **T18** — flag declarations whose selector matches nothing in the real
@@ -1379,7 +1381,7 @@ produce byte-identical `to_document` JSON before and after, diffed with
 `test_import_without_layer_registers_nothing`), 110 → 113 tests, `ruff`
 clean, 3.11–3.14 all pass.
 
-### T9 — Model scoped custom properties — landed 2026-08-02
+### T9 — Model scoped custom properties — **DONE**, landed 2026-08-02
 
 > **Investigated 2026-07-27, not implemented — blocked on an owner decision.**
 > The scope this task assumed turns out not to exist at the fidelity the tool
@@ -1508,8 +1510,12 @@ counts above are exactly that prediction, one design-generation early.
 
 > **Progress, 2026-08-02 — the tree and the lookup primitive are landed and
 > tested; wiring them into the actual pipeline is not, deliberately.**
-> Started in a worktree (`worktree-t9-scoped-custom-properties`), not yet
-> merged to `main`.
+> Started in a worktree (`worktree-t9-scoped-custom-properties`), ~~not yet
+> merged to `main`~~ **merged the same day** (`f8dd55c`) — stale as of this
+> task's later progress notes below, which cover the wiring itself and its
+> own merge. Left here rather than deleted: it's an accurate snapshot of
+> what existed at the moment it was written, not a claim about the task's
+> current state.
 >
 > **Landed, in `dom.py`:** `full_tree(html)` — `html5lib.parse(...,
 > treebuilder="etree", namespaceHTMLElements=False)`, verified directly to
@@ -1535,7 +1541,8 @@ counts above are exactly that prediction, one design-generation early.
 > ancestors that disagree (`test_disagreeing_consumers_collapse_to_none_not_a_guess`)
 > rather than picking one arbitrarily.
 >
-> **Not landed, and this is the larger remaining piece.**
+> **Not landed, and this is the larger remaining piece** — as of this point
+> in the day; resolved later the same day, see "Wired in" below.
 > `build_var_table`/`resolve_vars` are built around one flat `dict[str, str]`
 > table per theme, shared by every consuming declaration in the document —
 > invariant 19's whole shape. `resolve_by_ancestry` breaks that model on

@@ -1575,6 +1575,102 @@ counts above are exactly that prediction, one design-generation early.
 > discipline this file uses everywhere else — declaration-level diff first,
 > palette-level second, corpus-wide, old against new.
 
+> **Blast radius measured, 2026-08-02, same day — and the measurement is why
+> wiring stops here rather than proceeding to a return-type redesign.** Per
+> this task's own stated diff level: for every off-page custom property, per
+> theme, on all four frozen bundles, last-wins (today) against
+> `resolve_by_ancestry` (candidate), with which outcome produced the
+> difference. Throwaway script, not committed.
+>
+> **First draft of this measurement had two defects, both caught before the
+> numbers below were trusted, not after.** The consumer predicate was a bare
+> substring test (`"var(--tw-shadow" in d.value`), which on Tailwind bundles
+> matches `var(--tw-shadow-color)` and `var(--tw-shadow-alpha)` as if they
+> consumed `--tw-shadow` itself — inflating disagreement and deflating "no
+> basis" on exactly the two columns the conclusion rests on. Fixed with a
+> boundary requirement (the name must be followed by `)`, `,`, or whitespace).
+> And the `fleshandbonedesign.com` row was run with no excludes, silently
+> pulling in third-party sheets and reporting two themes for a bundle
+> `CLAUDE.md` documents as one — fixed by passing the same
+> `exclude=["static-css", "cargo.site"]` the reference fixture itself is
+> generated with. Numbers below are post-fix; the corrected predicate alone
+> dropped tailwindcss.com's distinct consumer selectors from 1,895 to 479.
+>
+> | bundle | same | → real value | → confirmed absent | → real disagreement | → no basis (empty match) |
+> |---|---:|---:|---:|---:|---:|
+> | ground.news | 5 | 8 | 31 | 0 | 32 |
+> | tailwindcss.com | 10 | 13 | 22 | 17 | 143 |
+> | ui.shadcn.com | 5 | 8 | 18 | 9 | 120 |
+> | fleshandbonedesign.com (excludes matched to the fixture) | 0 | 0 | 0 | 0 | 1 |
+>
+> **"No basis" dominates every bundle, and it is not a tuning gap: it is the
+> consuming element not existing anywhere in the captured tree at all** —
+> `elements_matching` on the consumer's own selector returns `[]` before
+> ancestry is even asked. Confirmed by inspecting the actual captured HTML,
+> not assumed from the count, and it is two distinct causes:
+>
+> - **`ground.news.har`'s captured body is truncated at exactly 1,048,576
+>   bytes** — 2^20, a hard capture cap rather than a natural document end; it
+>   cuts off mid-attribute (`class="…focus-visib`). Whole sections of the real
+>   page are simply absent from `full_tree`, which has nothing to do with
+>   JavaScript.
+> - **`tailwindcss.com.har` and `ui.shadcn.com.har` are complete, uncapped
+>   captures** (900,542 / 769,076 bytes, both ending cleanly at `</html>`) and
+>   still mostly miss the consuming elements, because both are Next.js apps
+>   whose real content is client-hydrated from JSON embedded in `<script>`
+>   tags rather than written as literal markup — `full_tree` sees only the
+>   server-rendered shell. This is `CLAUDE.md`'s existing "no JavaScript is
+>   executed" limit, but it lands far harder on this question than on ground
+>   detection: a `<body class="…">` is reliably present in a shell render,
+>   while the deep utility-class elements T9's ancestry walk needs mostly are
+>   not. Checked directly against this task's own motivating case:
+>   `ui.shadcn.com`'s `.shimmer` element lives on `/docs/utils/shimmer`, a page
+>   this HAR never fetched — the string `shimmer` appears in the captured
+>   document only inside a nav link's JSON, never as a class. **T9 cannot
+>   close its own motivating trap from this bundle** — not because ancestry
+>   resolution is wrong, but because the element it would resolve for was
+>   never captured in the first place.
+>
+> **This settles the design question the prior note left open, rather than
+> leaving it for the return-type redesign to discover the hard way**:
+> ancestry resolution has to be an *override on top of* last-wins, never a
+> replacement, exactly the shape this task's own investigation already
+> rejected the same-element filter for — "a strictly worse answer than
+> today's arbitrary-but-present last-wins value." Left unguarded, "no basis"
+> alone would turn 32–143 currently-present values `None` per bundle. Of the
+> four outcomes, only two should ever override last-wins: a real different
+> value (8–13 per bundle), or confirmed absence — every real consumer
+> visited, no ancestor sets it anywhere (18–31 per bundle) — because
+> last-wins there is answering about the wrong element and *should* lose.
+> "Real disagreement" (0–17 per bundle) and "no basis" (1–143 per bundle)
+> both have to fall through to today's behaviour unchanged: a single
+> value-per-theme table has no way to express "two real elements are
+> correctly different colors," and collapsing that to `None` is not an
+> improvement over an arbitrary-but-present guess.
+>
+> **Perf, measured rather than assumed — but this measures `cssselect2`
+> wrapper cost, not `html5lib` parse cost, and phase 2's deferred question
+> about the latter is still open.** `elements_matching` re-wraps the whole
+> tree with `cssselect2.ElementWrapper.from_html_root` on *every call*, even
+> with per-selector memoization sitting outside it: tailwindcss.com (479
+> distinct consumer selectors, post-fix) took 55s; ui.shadcn.com (199
+> selectors) 6.3s; ground.news (105 selectors, truncated tree) 1.75s. That
+> scales with selector count, not document size — ground.news parsed and ran
+> full_tree end-to-end in the 1.75s total, so `html5lib`'s own parse cost is
+> nowhere near the bottleneck here and this measurement does not speak to it
+> either way. Wiring this into the real pipeline needs the wrapper hoisted
+> once per document and reused across every selector, not rebuilt per lookup
+> — a small signature change to `elements_matching` itself (accept a
+> pre-wrapped root), on top of the landed and tested function.
+>
+> **Revised "what's next"**: the return type needs a fourth state, not the
+> flat replacement the prior note assumed — override (real value or
+> confirmed absent) versus preserve (disagreement or no basis) — and
+> `elements_matching` needs the wrapper-reuse fix above regardless of how
+> that design lands. Neither is done. This is a complete session's worth of
+> progress on its own terms: a measurement that changed the plan rather than
+> confirming it.
+
 ### T18 — Flag declarations whose selector matches nothing in the real document
 
 **Filed 2026-08-02, alongside T9's `html5lib` decision — depends on it.** Not
@@ -1596,6 +1692,22 @@ matching machinery answers a different, simpler question for free: does this
 selector match *any* element in the document at all — not which ancestor,
 just whether the count is zero. `dom.matches_page_element` already proves the
 matching half works; T9 is what makes it available past `<html>`/`<body>`.
+
+**This task's own premise needs re-checking before it is picked up, not
+assumed to fall out of T9's tree for free.** T9's 2026-08-02 blast-radius
+measurement (above) counted exactly this signal — a consumer selector
+matching zero elements in `full_tree` — for off-page custom properties, and
+found it dominated by two causes that are not "dead CSS" at all: a HAR
+capture truncated mid-document (`ground.news.har`, cut off at exactly
+2^20 bytes), and a modern site's real content arriving as client-hydrated
+JSON rather than static markup (`tailwindcss.com.har`, `ui.shadcn.com.har` —
+both Next.js). On those bundles, "matches nothing in `full_tree`" was true
+for 120–143 properties each, and essentially none of that was a stale rule —
+it was markup the tool never saw. Filed as-is, T18 would flag most of a
+modern site's real, live CSS as dead. Whatever T18 builds needs to
+distinguish "confirmed absent from a complete capture" from "no basis to
+say" the same way T9's own resolution does, or it inherits false positives
+at the same scale this measurement found.
 
 **What this does not fix.** Same limit as everywhere else in this file that
 touches the DOM: only the static markup a HAR/URL fetch captured is visible.

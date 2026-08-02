@@ -25,10 +25,13 @@ from .cssparse import (
 )
 from .dom import (
     PageElement,
+    elements_matching_wrapped,
+    full_tree,
     matches_page_element,
     page_elements,
     selector_matches,
     selector_specificity,
+    wrap_tree,
 )
 from .sources import Bundle
 
@@ -442,6 +445,57 @@ def _page_specificity(selector: str, scope_selector: str,
     return best
 
 
+def _var_populations(sheets: list[Stylesheet], theme: str,
+                     page: list[PageElement] | None,
+                     layers: dict[str, int]
+                     ) -> tuple[dict[str, tuple[tuple, str]], dict[str, list]]:
+    """Split custom-property definitions into page-reaching and off-page.
+
+    Factored out of `build_var_table` so `resolve_by_ancestry` (T9) can get
+    at the off-page population's *candidate declarations*, which
+    `build_var_table` itself collapses to last-wins and discards. Behaviour
+    for `build_var_table`'s own callers is unchanged — this is the same
+    split, same iteration order, same last-wins-by-overwrite for the off-page
+    side (`off_page[prop]` is a list in *declaration order*, so `[-1].value`
+    reproduces what used to be a live dict overwrite).
+
+    See `build_var_table`'s own docstring for why the split exists at all
+    (invariant 19) and why the page-reaching side alone is cascade-resolved.
+    """
+    rooted: dict[str, tuple[tuple, str]] = {}
+    off_page: dict[str, list] = {}
+    for pass_theme in ("", theme) if theme else ("",):
+        for sheet in sheets:
+            for d in sheet.declarations:
+                if not d.is_custom_property or d.theme != pass_theme:
+                    continue
+                spec = _page_specificity(d.selector,
+                                         d.themed_selector or d.selector, page)
+                if spec is None:
+                    off_page.setdefault(d.prop, []).append(d)
+                    continue
+                key = _cascade_key(d, spec, layers)
+                current = rooted.get(d.prop)
+                if current is None or key > current[0]:
+                    rooted[d.prop] = (key, d.value)
+    # A name can appear in both passes — off-page in the unscoped pass, then
+    # page-reaching once the theme's own rule is considered. `rooted` wins the
+    # merge either way (`build_var_table` below), but T9's ancestry walk must
+    # not treat a property as off-page-only when some definition of it *does*
+    # reach the page — that candidate set is a genuinely different question
+    # (the cascade already answered it) and ancestry has no business
+    # overriding a page-reaching answer.
+    for name in rooted:
+        off_page.pop(name, None)
+    return rooted, off_page
+
+
+def _merge_var_populations(rooted: dict[str, tuple[tuple, str]],
+                           off_page: dict[str, list]) -> dict[str, str]:
+    return {**{name: decls[-1].value for name, decls in off_page.items()},
+            **{k: v for k, (_key, v) in rooted.items()}}
+
+
 def build_var_table(sheets: list[Stylesheet], theme: str = "",
                     page: list[PageElement] | None = None,
                     layers: dict[str, int] | None = None) -> dict[str, str]:
@@ -466,30 +520,18 @@ def build_var_table(sheets: list[Stylesheet], theme: str = "",
     Off-page definitions stay on last-wins, deliberately. They are a fallback —
     a property consumed only by `.btn` is still worth resolving — and ranking
     declarations that match different elements by specificity would be
-    comparing things the cascade never compares.
+    comparing things the cascade never compares. (T9's ancestry walk, where
+    wired in, overrides this last-wins fallback for one specific consuming
+    declaration at a time — see `resolve_by_ancestry_kind` — never the table
+    itself, which stays this shape for every other caller.)
 
     Theme scoping filters both populations: declarations scoped to any *other*
     theme are not visible here at all, and the passes run unscoped-first so
     that the off-page fallback still prefers this theme's own definitions.
     """
     layers = layers or {}
-    rooted: dict[str, tuple[tuple, str]] = {}
-    scoped: dict[str, str] = {}
-    for pass_theme in ("", theme) if theme else ("",):
-        for sheet in sheets:
-            for d in sheet.declarations:
-                if not d.is_custom_property or d.theme != pass_theme:
-                    continue
-                spec = _page_specificity(d.selector,
-                                         d.themed_selector or d.selector, page)
-                if spec is None:
-                    scoped[d.prop] = d.value
-                    continue
-                key = _cascade_key(d, spec, layers)
-                current = rooted.get(d.prop)
-                if current is None or key > current[0]:
-                    rooted[d.prop] = (key, d.value)
-    return {**scoped, **{k: v for k, (_key, v) in rooted.items()}}
+    rooted, off_page = _var_populations(sheets, theme, page, layers)
+    return _merge_var_populations(rooted, off_page)
 
 
 def resolve_by_ancestry(candidates: list, consumer_elements: list,
@@ -543,7 +585,24 @@ def resolve_by_ancestry(candidates: list, consumer_elements: list,
     this is wired into `build_var_table`/`resolve_vars`'s single-table model,
     which assumes one resolved value per property per theme, not per element.
     """
-    values: set[str] = set()
+    values = {v for v in _ancestry_winners(candidates, consumer_elements, layers)
+             if v is not None}
+    if len(values) == 1:
+        return values.pop()
+    return None
+
+
+def _ancestry_winners(candidates: list, consumer_elements: list,
+                      layers: dict[str, int]) -> list[str | None]:
+    """One winner per consumer element — `None` where no ancestor matches.
+
+    The walk itself, shared by `resolve_by_ancestry` (which collapses this to
+    a single agreed value or refuses) and `resolve_by_ancestry_kind` (T9's
+    pipeline wiring, which needs to tell "no candidate anywhere" apart from
+    "consumers disagree" — both collapse to the same `None` above, but only
+    one of them is safe to treat as a confirmed answer).
+    """
+    winners: list[str | None] = []
     for consumer_el in consumer_elements:
         winner = None
         for el in (consumer_el, *consumer_el.ancestors):
@@ -558,11 +617,49 @@ def resolve_by_ancestry(candidates: list, consumer_elements: list,
             if best is not None:
                 winner = best[1]
                 break
-        if winner is not None:
-            values.add(winner)
+        winners.append(winner)
+    return winners
+
+
+def resolve_by_ancestry_kind(candidates: list, consumer_elements: list,
+                             layers: dict[str, int]
+                             ) -> tuple[str, str | None]:
+    """`resolve_by_ancestry`, but keeping the two outcomes it collapses to `None`
+    apart — `("value", v)`, `("absent", None)`, or `("disagree", None)`.
+
+    T9's pipeline wiring (`_build`) needs this distinction and
+    `resolve_by_ancestry` does not expose it, deliberately: that function's
+    existing contract and tests are untouched by this one's addition.
+
+    **Only "value" and "absent" are safe to use as an override over
+    last-wins.** "Absent" means every real consumer element was visited and
+    none has an ancestor (or itself) setting the property at all — a
+    confirmed answer, and last-wins is answering about the wrong element in
+    that case, so it should lose. "Disagree" means two real elements
+    genuinely resolve to two different values; today's single
+    value-per-theme table has no way to hold both, so the honest move is to
+    leave last-wins alone rather than pick one arbitrarily — the same
+    "refuse rather than guess" contract `resolve_by_ancestry` already keeps.
+
+    **A consumer element with no ancestor match is not itself treated as
+    disagreement** when at least one other consumer element resolves to a
+    real value — it is read as "no evidence from this element", not "this
+    element votes for absence". `resolve_by_ancestry`'s own collapse already
+    has this shape (`values` only ever collects non-`None` winners), so this
+    keeps the two functions answering the same question the same way rather
+    than only agreeing by coincidence on the cases both happen to test.
+    Deliberate, not incidental: a value defined on one real ancestor is
+    still real evidence even if a second consumer element this same
+    declaration also paints happens to sit outside any matching ancestor.
+    Pinned by `test_one_consumer_with_no_ancestor_match_does_not_read_as_disagreement`.
+    """
+    winners = _ancestry_winners(candidates, consumer_elements, layers)
+    values = {v for v in winners if v is not None}
     if len(values) == 1:
-        return values.pop()
-    return None
+        return "value", values.pop()
+    if not values:
+        return "absent", None
+    return "disagree", None
 
 
 def _scopes_present(sheets: list[Stylesheet], table: dict[str, str]) -> set[str]:
@@ -720,8 +817,16 @@ def extract(bundle: Bundle, *, merge_threshold: float = 0.02,
     # bare .css input, say — in which case both fall back to selectors that
     # merely read like page rules.
     page = None
+    tree = None
     for asset in bundle.by_kind("html"):
         page = page_elements(asset.text)
+        # `full_tree` (T9) answers a different question than `page_elements`
+        # — real ancestry below <html>/<body>, for `resolve_by_ancestry_kind`
+        # — so it has to come from the *same* asset `page` did, not just the
+        # first HTML asset seen. `None` when `page` is too (no readable
+        # HTML), in which case `_build` falls back to last-wins for every
+        # off-page property, same as before this existed.
+        tree = full_tree(asset.text)
         if page:
             break
 
@@ -738,7 +843,8 @@ def extract(bundle: Bundle, *, merge_threshold: float = 0.02,
         _build(sheets, bundle.page_url, all_var_refs, theme_id, scope,
                merge_threshold=merge_threshold,
                third_party_weight=third_party_weight,
-               min_score=min_score, flat=flat, page=page, layers=layers)
+               min_score=min_score, flat=flat, page=page, layers=layers,
+               tree=tree)
         for theme_id, scope in _theme_plan(scopes)
     ]
 
@@ -791,11 +897,31 @@ def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
            theme_id: str, scope: str, *, merge_threshold: float,
            third_party_weight: float, min_score: float,
            flat: bool, page: list[PageElement] | None = None,
-           layers: dict[str, int] | None = None) -> Palette:
+           layers: dict[str, int] | None = None,
+           tree: object | None = None) -> Palette:
     """One theme's palette: everything scoped to it, plus everything unscoped."""
     layers = layers if layers is not None else layer_order(sheets)
-    table = build_var_table(sheets, scope, page=page, layers=layers)
+    rooted, off_page = _var_populations(sheets, scope, page, layers)
+    table = _merge_var_populations(rooted, off_page)
     pal = Palette(page_url=page_url, theme_id=theme_id, theme_scope=scope)
+
+    # T9: an off-page custom property resolves by real inheritance for the
+    # specific declaration consuming it, where the document's real tree gives
+    # a confident answer — see `resolve_by_ancestry_kind`. `wrapped_root` is
+    # built once per theme rather than once per lookup: `elements_matching`
+    # re-wraps the whole tree on every call, and PLAN.md's T9 blast-radius
+    # measurement (2026-08-02) found that cost dominant (55s on
+    # tailwindcss.com's ~500 distinct consumer selectors) next to parsing,
+    # which is why this is hoisted here instead of called per-declaration.
+    wrapped_root = wrap_tree(tree) if tree is not None else None
+    consumer_cache: dict[str, list] = {}
+
+    def consumers_of(selector: str) -> list:
+        if selector not in consumer_cache:
+            consumer_cache[selector] = (
+                elements_matching_wrapped(selector, wrapped_root)
+                if wrapped_root is not None else [])
+        return consumer_cache[selector]
 
     # Which branch a `light-dark()` resolves to. An unscoped build gets light,
     # which is what a browser does when the document says nothing about
@@ -829,7 +955,36 @@ def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
             if not d.theme and (d.selector, d.prop) in shadowed:
                 continue  # this theme overrides it
             n_decls += 1
-            value = resolve_vars(d.value, table)
+            decl_table = table
+            # Only worth asking when this declaration actually references an
+            # off-page-only property — the overwhelming majority reference
+            # nothing, or reference a page-reaching one the cascade already
+            # resolved, and `var_refs` tokenizes the value to check, which
+            # isn't free to do on every declaration in the document.
+            if off_page and "var(" in d.value:
+                referenced = var_refs(d.value) & off_page.keys()
+                if referenced:
+                    consumer_elements = consumers_of(d.themed_selector or d.selector)
+                    if consumer_elements:
+                        overrides: dict[str, str] = {}
+                        absent: set[str] = set()
+                        for name in referenced:
+                            kind, val = resolve_by_ancestry_kind(
+                                off_page[name], consumer_elements, layers)
+                            if kind == "value":
+                                overrides[name] = val
+                            elif kind == "absent":
+                                absent.add(name)
+                            # "disagree" leaves last-wins alone.
+                        if overrides or absent:
+                            decl_table = {k: v for k, v in table.items()
+                                         if k not in absent}
+                            decl_table.update(overrides)
+                    # No real consumer element found in the captured markup
+                    # at all ("no basis", PLAN.md T9 2026-08-02) — last-wins
+                    # is the only answer there is, so `decl_table` stays
+                    # `table` unchanged rather than being treated as absent.
+            value = resolve_vars(d.value, decl_table)
             colors = _colors_of(value, appearance)
             if not colors:
                 continue

@@ -605,5 +605,155 @@ class TestResolveByAncestry(unittest.TestCase):
         self.assertEqual(value, "#123456")
 
 
+class TestResolveByAncestryKind(unittest.TestCase):
+    """T9's pipeline wiring needs `resolve_by_ancestry`'s two `None` shapes
+    told apart -- "confirmed absent" is safe to override last-wins with,
+    "consumers disagree" is not. `resolve_by_ancestry_kind` is the version
+    that keeps them apart; `resolve_by_ancestry` itself is untouched.
+    """
+
+    CSS = TestResolveByAncestry.CSS
+    _candidates = TestResolveByAncestry._candidates
+
+    def test_a_real_value_is_kind_value(self):
+        html = ('<html><body><div class="theme-neutral">'
+                '<span class="bg-card">x</span></div></body></html>')
+        consumers = elements_matching(".bg-card", full_tree(html))
+        self.assertEqual(
+            extract.resolve_by_ancestry_kind(self._candidates(), consumers, {}),
+            ("value", "#f5f5f5"))
+
+    def test_no_matching_ancestor_is_kind_absent(self):
+        html = '<html><body><span class="bg-card">x</span></body></html>'
+        consumers = elements_matching(".bg-card", full_tree(html))
+        self.assertEqual(
+            extract.resolve_by_ancestry_kind(self._candidates(), consumers, {}),
+            ("absent", None))
+
+    def test_disagreeing_consumers_are_kind_disagree(self):
+        html = ('<html><body>'
+                '<div class="theme-neutral"><span class="bg-card">a</span></div>'
+                '<div class="theme-blue"><span class="bg-card">b</span></div>'
+                '</body></html>')
+        both = elements_matching(".bg-card", full_tree(html))
+        self.assertEqual(
+            extract.resolve_by_ancestry_kind(self._candidates(), both, {}),
+            ("disagree", None))
+
+    def test_one_consumer_with_no_ancestor_match_does_not_read_as_disagreement(self):
+        """One `.bg-card` under `.theme-neutral`, one with no themed ancestor
+        at all. `resolve_by_ancestry` already treats an unresolved consumer
+        as "no evidence", not "votes for absence" -- `values` only ever
+        collects real winners. `_kind` has to agree, deliberately, or the two
+        functions would silently answer the same question two different
+        ways.
+        """
+        html = ('<html><body>'
+                '<div class="theme-neutral"><span class="bg-card">a</span></div>'
+                '<span class="bg-card">b</span>'
+                '</body></html>')
+        consumers = elements_matching(".bg-card", full_tree(html))
+        self.assertEqual(len(consumers), 2)
+        self.assertEqual(
+            extract.resolve_by_ancestry_kind(self._candidates(), consumers, {}),
+            ("value", "#f5f5f5"))
+
+
+class TestAncestryWiredIntoBuild(unittest.TestCase):
+    """T9 end-to-end: `extract()` actually applies `resolve_by_ancestry_kind`,
+    not just the standalone functions it's built from.
+    """
+
+    def test_real_ancestor_value_overrides_last_wins(self):
+        """`.theme-blue` is declared *after* `.theme-neutral` in the CSS, so
+        last-wins alone reports blue everywhere `--card` is consumed. The
+        real element in this document sits under `.theme-neutral`, so the
+        honest answer is the neutral grey — last-wins gets this backwards
+        without the ancestry override.
+
+        `#1d4ed8` is expected to still appear in the palette — it is
+        `.theme-blue`'s own token *definition*, a color-bearing declaration
+        in its own right (invariant 10) regardless of what any consumer
+        resolves to. What this test checks is which color `.bg-card`'s own
+        `background-color` usage attributes to: the assertion is on
+        `usedIn`/`examples`, not on set membership.
+        """
+        html = """<!DOCTYPE html><html><head><style>
+  body { background-color: #ffffff; }
+  .theme-neutral { --card: #f5f5f5; }
+  .theme-blue { --card: #1d4ed8; }
+  .bg-card { background-color: var(--card); }
+</style></head>
+<body><div class="theme-neutral"><span class="bg-card">x</span></div></body>
+</html>
+"""
+        doc = emit.to_document(extract.extract(sources.load_any(
+            write_fixture(html))))
+        by_hex = {c["hex"]: c for c in doc["colors"]}
+        self.assertIn("background-color", by_hex["#f5f5f5"]["usedIn"])
+        self.assertNotIn("background-color",
+                         by_hex.get("#1d4ed8", {"usedIn": []})["usedIn"])
+
+    def test_confirmed_absent_falls_back_to_the_written_fallback(self):
+        """ui.shadcn.com's `--shimmer-image` shape (PLAN.md T9): a property
+        guarded to `none` by one utility class, consumed with a real
+        fallback, by an element that does not carry that utility. Last-wins
+        alone reports `none` (the only definition in the document) with no
+        color at all; ancestry confirms no real ancestor sets it for this
+        element, so the declaration's own fallback is what actually paints.
+        """
+        html = """<!DOCTYPE html><html><head><style>
+  .shimmer-none { --shimmer-image: none; }
+  .shimmer { background-image: var(--shimmer-image, linear-gradient(#123456, #123456)); }
+</style></head>
+<body><span class="shimmer">x</span></body></html>
+"""
+        doc = emit.to_document(extract.extract(sources.load_any(
+            write_fixture(html))))
+        colors = {c["hex"] for c in doc["colors"]}
+        self.assertIn("#123456", colors)
+
+    def test_confirmed_absent_with_no_fallback_yields_no_color_and_no_garbage(self):
+        """Same shape, no written fallback. Confirmed-absent removes the
+        property from this declaration's table entirely (the same route
+        `initial` already takes, invariant 26) rather than substituting
+        last-wins' `none` — the declaration should paint nothing, not a
+        malformed value.
+        """
+        html = """<!DOCTYPE html><html><head><style>
+  body { background-color: #ffffff; }
+  .shimmer-none { --shimmer-image: none; }
+  .shimmer { background-image: var(--shimmer-image); }
+</style></head>
+<body><span class="shimmer">x</span></body></html>
+"""
+        doc = emit.to_document(extract.extract(sources.load_any(
+            write_fixture(html))))
+        # No color came from the shimmer declaration specifically (the page
+        # background is expected and unrelated), and nothing about this
+        # produced a spurious bare-triplet warning either.
+        used_props = {p for c in doc["colors"] for p in c["usedIn"]}
+        self.assertNotIn("background-image", used_props)
+        self.assertEqual(doc["warnings"], [])
+
+    def test_no_basis_preserves_last_wins_rather_than_dropping_it(self):
+        """The dominant real-world case (PLAN.md T9, 2026-08-02): the
+        consuming selector matches no real element in the captured markup at
+        all. Ancestry has nothing to say, so today's last-wins answer must
+        survive unchanged rather than being treated as unconfirmed and
+        dropped.
+        """
+        html = """<!DOCTYPE html><html><head><style>
+  .theme-neutral { --card: #f5f5f5; }
+  .bg-card { background-color: var(--card); }
+</style></head>
+<body></body></html>
+"""
+        doc = emit.to_document(extract.extract(sources.load_any(
+            write_fixture(html))))
+        colors = {c["hex"] for c in doc["colors"]}
+        self.assertIn("#f5f5f5", colors)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

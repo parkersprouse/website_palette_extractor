@@ -211,6 +211,46 @@ def full_tree(html: str) -> ET.Element | None:
         return None
 
 
+def wrap_tree(root: ET.Element) -> cssselect2.ElementWrapper:
+    """Wrap a `full_tree` root once, for callers that query it repeatedly.
+
+    `ElementWrapper.from_html_root` walks and annotates the whole tree (parent
+    pointers, id index) up front, so it is real work — cheap for the one-shot
+    callers `elements_matching` serves directly, but wasteful when T9's
+    ancestry walk (`extract.resolve_by_ancestry`) needs the same tree queried
+    once per distinct consumer selector, which is hundreds of times on a
+    real site. Measured directly (`PLAN.md` T9, 2026-08-02): re-wrapping per
+    call was the dominant cost, not `html5lib`'s own parse — tailwindcss.com's
+    479 distinct consumer selectors took 55s of wrapping against a parse cost
+    too small to separate out. Callers that will look up more than one
+    selector against the same tree should wrap once and pass the result to
+    `elements_matching_wrapped` instead of calling `elements_matching`
+    (which still wraps internally, for the common one-shot case) per lookup.
+    """
+    return cssselect2.ElementWrapper.from_html_root(root)
+
+
+def elements_matching_wrapped(
+    selector: str, wrapped_root: cssselect2.ElementWrapper
+) -> list[cssselect2.ElementWrapper]:
+    """`elements_matching`'s query, against an already-`wrap_tree`'d root.
+
+    Split out so a caller querying many selectors against one document (T9's
+    ancestry walk) pays the wrapping cost once rather than once per selector.
+    See `wrap_tree`'s own docstring for the measurement that made this worth
+    splitting out.
+    """
+    try:
+        compiled = cssselect2.compile_selector_list(selector)
+    except Exception:
+        return []
+    usable = [sel for sel in compiled
+             if sel.pseudo_element is None and not sel.never_matches]
+    if not usable:
+        return []
+    return list(wrapped_root.query_all(*usable))
+
+
 def elements_matching(selector: str,
                       root: ET.Element) -> list[cssselect2.ElementWrapper]:
     """Every real element in this tree that this selector matches.
@@ -228,17 +268,12 @@ def elements_matching(selector: str,
     raising, the same contract every other matcher in this module keeps —
     `strip_theme_scope` can hand callers something invalid, and real CSS
     carries pseudo-classes no library knows.
+
+    Wraps the tree fresh on every call — fine for a one-shot lookup, wasteful
+    for a caller checking many selectors against the same document. See
+    `wrap_tree`/`elements_matching_wrapped` for that case.
     """
-    try:
-        compiled = cssselect2.compile_selector_list(selector)
-    except Exception:
-        return []
-    usable = [sel for sel in compiled
-             if sel.pseudo_element is None and not sel.never_matches]
-    if not usable:
-        return []
-    wrapper_root = cssselect2.ElementWrapper.from_html_root(root)
-    return list(wrapper_root.query_all(*usable))
+    return elements_matching_wrapped(selector, wrap_tree(root))
 
 
 def selector_matches(selector: str,

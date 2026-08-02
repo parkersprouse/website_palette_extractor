@@ -1671,10 +1671,130 @@ counts above are exactly that prediction, one design-generation early.
 > progress on its own terms: a measurement that changed the plan rather than
 > confirming it.
 
+> **Wired in, 2026-08-02, same day — landed rather than left designed.** The
+> owner's priority (accuracy first, whichever path gets there) settled the
+> question the measurement above raised without resolving: worth doing
+> despite a modest corpus payoff. Implemented per the revised design:
+>
+> - **`_var_populations`** (`extract.py`) factors `build_var_table`'s own
+>   split into page-reaching (`rooted`) and off-page (`off_page`, now a
+>   `dict[name, list[Declaration]]` instead of collapsed last-wins) —
+>   `build_var_table` itself is a thin wrapper over it
+>   (`_merge_var_populations`), verified **byte-identical** output, old vs
+>   new, on all five bundles (`ground.news`, `tailwindcss.com`,
+>   `ui.shadcn.com`, `fleshandbonedesign.com` with the fixture's own
+>   excludes, `parkersprouse.me`) — every key, every value, not just a hash
+>   (a first pass compared `hash(frozenset(...))` and disagreed on all five;
+>   that was Python's per-process string-hash randomization, not a real
+>   difference — caught by comparing actual sorted items instead of trusting
+>   the hash).
+> - **`resolve_by_ancestry_kind`** (`extract.py`), alongside the untouched
+>   `resolve_by_ancestry`, sharing the walk via a new `_ancestry_winners`
+>   helper: returns `("value", v)` / `("absent", None)` / `("disagree",
+>   None)` — the three-way split the measurement showed was necessary, kept
+>   out of the existing function so its own contract and five tests stay
+>   exactly as landed. One deliberate, explicit decision the measurement
+>   surfaced but didn't force: a consumer element with no ancestor match is
+>   *not* read as voting for disagreement when another consumer element
+>   resolves to a real value — `resolve_by_ancestry`'s own collapse already
+>   has this shape, so `_kind` matches it rather than silently disagreeing
+>   with the function it's meant to be a detailed version of. Pinned by
+>   `test_one_consumer_with_no_ancestor_match_does_not_read_as_disagreement`.
+> - **`dom.wrap_tree`/`elements_matching_wrapped`**: `elements_matching`
+>   re-wrapped the whole tree on every call (the measurement's own perf
+>   finding); split so `_build` wraps once per theme and reuses it across
+>   every distinct consumer selector, memoized. `elements_matching` itself
+>   is an unchanged one-line wrapper over the split — no existing call site
+>   or test needed to change.
+> - **`_build`'s per-declaration loop**: only when a declaration's value
+>   references an off-page-only name (`var_refs(d.value) & off_page.keys()`
+>   — tokenized, not a regex, the same discipline invariant 9 and the T5/T15
+>   corollary already establish) does it look up that declaration's own real
+>   consumer elements and ask `resolve_by_ancestry_kind`. `"value"` overrides
+>   the per-declaration table entry; `"absent"` deletes it from a
+>   per-declaration copy of the table (routing into `_resolve_var`'s
+>   existing `stored is None` branch — the same path `initial`, invariant
+>   26, already takes: the declaration's own written fallback applies, or
+>   nothing does); `"disagree"` and an empty consumer-element list ("no
+>   basis") leave the shared table untouched. Every other call site
+>   (`_scopes_present`, `_triplet_warning`) still calls plain
+>   `build_var_table` and is structurally untouched by this — `_triplet_warning`
+>   in particular cannot be tripped by the "absent" deletion, since it never
+>   sees `_build`'s per-declaration table at all.
+>
+> **Four new unit tests** (`TestResolveByAncestryKind`) pin the three-way
+> split and the mixed-outcome decision. **Four new integration tests**
+> (`TestAncestryWiredIntoBuild`) run `extract()` end-to-end: a real-ancestor
+> override, a confirmed-absent case falling back to the declaration's own
+> written fallback, the same case with no fallback yielding zero colors and
+> no spurious warning, and a no-basis case proving last-wins survives
+> unchanged. Each of the two behaviour-changing tests was confirmed to
+> **fail against the pre-wiring implementation** (`git stash push --
+> palettekit/dom.py palettekit/extract.py`, tests kept); the two
+> regression/preservation tests pass unchanged before and after, which is
+> the point of them. 132 tests total (124 + 8), `ruff` clean.
+>
+> **Corpus diff, at the level this task's own discipline calls for —
+> per-declaration hex, old vs new, on all five bundles**: grounds are
+> **byte-identical** on every bundle and match `CLAUDE.md`'s own documented
+> anchors exactly, including the reference fixture
+> (`fleshandbonedesign.com`: `#151515`, 20 tokens, 0 warnings). Four of five
+> bundles have **zero hex-set change** at all — `ground.news`,
+> `ui.shadcn.com`, `fleshandbonedesign.com`, `parkersprouse.me` — despite the
+> earlier measurement predicting 8 "real value" moves apiece for the first
+> two; a color moving to a different, more accurate resolution does not
+> guarantee the final hex differs; if it lands on a hue already present via
+> another route, or the change never reaches an off-page-referencing
+> declaration, the palette's hex set is untouched even though the fix is
+> real. Only **`tailwindcss.com`'s dark theme** changed: 2 hexes replaced by
+> 3 (`#201836`/`#28152b` → `#21274d`/`#33244d`/`#411e3b`), plus one new hex
+> in the base theme (`#e4a340`) with nothing removed. Traced to a concrete,
+> explicable shape rather than accepted on faith: Tailwind emits declarations
+> like `.shadow-pink-400\/50 { --tw-shadow-color: color-mix(in oklab,
+> color-mix(in oklab, var(--color-pink-400) 50%, transparent)
+> var(--tw-shadow-alpha), transparent) }`, where `--tw-shadow-alpha` is
+> itself off-page (defined per-utility, not on the page element) — so the
+> *definition* of `--tw-shadow-color` for one shadow utility was, before
+> this, resolving its own opacity from **whichever `--tw-shadow-alpha` last
+> won across the entire document**, not its own. Ancestry resolution finds
+> the self-scoped definition (self counts as its own nearest ancestor,
+> exactly as `resolve_by_ancestry`'s own docstring says) and each shadow
+> utility now gets its own opacity instead of borrowing one from an
+> unrelated utility declared later in the same stylesheet. A real fix, the
+> same shape as invariant 26's `initial` correction and T5's `calc()`
+> percentage evaluation: previously-arbitrary values on real corpus CSS,
+> found and corrected, not invented colors.
+>
+> **Perf, measured on the same corpus rather than assumed acceptable**:
+> `tailwindcss.com` (the one bundle with hundreds of distinct off-page
+> consumer selectors) went from 1.6s to 35s for a full `extract()` run;
+> `ui.shadcn.com` 1.2s → 5.1s; `ground.news` 0.5s → 1.5s;
+> `fleshandbonedesign.com`/`parkersprouse.me` unchanged (no off-page
+> contention at all). The wrapper-hoisting fix above already cut this from
+> the measurement script's 224s/55s per-bundle wrap-per-selector cost; what
+> remains is `cssselect2.query_all` itself scanning the tree once per
+> distinct consumer selector, which is inherent to matching correctly
+> rather than a bug. Not optimized further this session — the owner's
+> stated priority is accuracy, and correctness was verified before cost was
+> — but worth a line here if `tailwindcss.com`-shaped sites (hundreds of
+> distinct utility selectors, most off-page) turn out to dominate real
+> usage: query batching or an index keyed by class name are the likely
+> next moves, not attempted here.
+>
+> `palettekit.pyz` **rebuilt** at the end of this session (`python3
+> build.py`), per the standing process rule — this changed real pipeline
+> behavior, not just documentation.
+
 ### T18 — Flag declarations whose selector matches nothing in the real document
 
 **Filed 2026-08-02, alongside T9's `html5lib` decision — depends on it.** Not
-started; needs T9's real tree before it can be attempted at all.
+started; needs T9's real tree before it can be attempted at all. T9 itself
+landed the same day (see its own entry above) — the tree, `wrap_tree`, and
+the override/preserve split (`resolve_by_ancestry_kind`) all exist and are
+wired into the pipeline now. That answers *how* to tell a confirmed answer
+from a shrug, which is the design question this task shares with T9 — but it
+does not start this task's own remaining question, the new status-value
+decision two paragraphs below, which nothing in T9's wiring resolves.
 
 **The gap, verified directly rather than assumed.** `extract._status_for`
 only distinguishes `live` from `saved`/`inert` two ways: `saved` fires when a
@@ -1735,7 +1855,10 @@ writing code, per this project's own standing discipline.
 ### T19 — Report actual matched elements in `examples`, not just selector text
 
 **Filed 2026-08-02, alongside T9's `html5lib` decision — depends on it.** Not
-started; needs T9's real tree.
+started; needs T9's real tree — which now exists and is wired in (T9's own
+entry above), so the tree itself is no longer the blocker. T18's own status
+decision still is, per this task's "land T18 first, or land them together"
+note below, unchanged by T9 landing.
 
 **The gap, verified directly.** `extract.py`'s per-entry JSON builder sets
 `examples` to `[{"selector": u.selector, "property": u.prop, "source":

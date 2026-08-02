@@ -62,7 +62,7 @@ reached only through `images.py`, behind `--images`.
 
 ```bash
 python3 -m palettekit <target> -o out    # target: .har | URL | .html/.css path
-python3 -m unittest discover             # 113 tests, all must pass (needs the deps)
+python3 -m unittest discover             # 132 tests, all must pass (needs the deps)
 python3 -m palettekit x.har --no-themes  # collapse a two-theme site into one
 ruff check .                             # must stay clean; config in pyproject
 python3 -m palettekit x.har --list-sources   # diagnose framework noise first
@@ -188,9 +188,9 @@ sources.py   →  cssparse.py  →  extract.py  →  emit.py
 |---|---:|---|
 | `color.py` | 1182 | `Color`, parsing, sRGB↔OKLab/CIE Lab/XYZ both ways, `color-mix()`, `light-dark()`, `calc()`, contrast, hue names |
 | `cssparse.py` | 926 | `tinycss2` integration, `var()`, `selector_weight`, roles, theme scopes, `@layer` names |
-| `dom.py` | 300 | `html.parser` → `ElementTree` shim, `cssselect2` matching of `<html>`/`<body>`, specificity |
+| `dom.py` | 441 | `html.parser` → `ElementTree` shim, `cssselect2` matching of `<html>`/`<body>`, specificity, plus `full_tree`/`elements_matching`/`wrap_tree` (T9: real DOM below the page element) |
 | `sources.py` | 292 | `load_har` / `load_url` / `load_paths` → `Bundle` |
-| `extract.py` | 1209 | `extract()`, the cascade, per-theme `_build`, ground, merging, statuses, naming |
+| `extract.py` | 1438 | `extract()`, the cascade, per-theme `_build`, ground, merging, statuses, naming, `resolve_by_ancestry`/`resolve_by_ancestry_kind` (T9) |
 | `emit.py` | 952 | Emitters; `_HTML` is the report template |
 | `images.py` | 148 | Optional image quantisation, not part of the token set |
 | `__main__.py` | 255 | CLI; `main()` guards `PYTHON_FLOOR` before anything else |

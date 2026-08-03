@@ -1738,8 +1738,12 @@ change moves any of those, understand why before accepting it.
 > decisions rather than one: `palettes` would have to come out of `.gitignore`
 > (or the fixture move elsewhere), and `fleshandbonedesign.com.har` is
 > `.gitignore`d too, so **a fresh clone cannot regenerate it at all**. That is
-> the same gap the "fixture corpus of small HTML files" entry in the Migration
-> TODO addresses, and it makes that entry more urgent than its checkbox looks.
+> the same gap `PLAN.md`'s T14 ("fixture corpus of small HTML files") named —
+> and T14 closed 2026-08-03 without closing this specific gap, an owner
+> decision that the one committed fixture `example/` already provides
+> (`parkersprouse.me.har`, described above) is enough to stop tracking as
+> open work. The gap itself, and the "still worth doing" above, are
+> unchanged by that closure.
 
 ## Breadth check
 
@@ -1917,7 +1921,10 @@ is rather than work to do:
       `generated` dropped): the claim that a fresh clone can regenerate *no*
       fixture at all is no longer true for that one. It's still true for the
       reference fixture (`fleshandbonedesign.com.har`, still gitignored with
-      no exception) and the four breadth-check bundles (`PLAN.md` T14).
+      no exception) and the four breadth-check bundles — `PLAN.md` T14 named
+      this gap but **closed 2026-08-03 without closing it**, an owner
+      decision that the one regenerable fixture above is satisfying enough
+      to stop tracking as open work. The gap itself is unchanged.
 
       **Two more local, gitignored HARs joined the corpus 2026-08-02**:
       `mdn.har` (developer.mozilla.org, matching the breadth check's own live
@@ -1926,9 +1933,8 @@ is rather than work to do:
       `pawelgrzybek.com__light_dark_example.har` (the site that finally
       exercises `light-dark()` confirmed by `color-scheme`, T10's corpus
       file). Neither is a `.gitignore` exception — same untracked treatment
-      as the four breadth-check bundles, for the same reason: small
-      committed fixtures per T14 is the fix that doesn't mean committing an
-      11 MB HAR, not another one-off exception.
+      as the four breadth-check bundles, and per T14's own closure that
+      stays the state rather than a fix still pending.
 - [x] **`LICENSE.md`** and the `[project.license]` / classifier entries in
       `pyproject.toml` — the owner chose the Hippocratic License 3.0 on
       2026-07-26.

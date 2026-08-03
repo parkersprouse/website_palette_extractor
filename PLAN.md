@@ -7,8 +7,9 @@ Status: **all four phases landed 2026-07-26.** Written 2026-07-26.
 decisions the owner has since settled~~ **nineteen as of 2026-08-02** (T15–T19
 were added after this line was written; not updated each time a task was
 filed, since the count itself isn't load-bearing anywhere — the section
-below is), five of them decisions the owner has settled outright (T1, T2, T3,
-T9's direction, T11's won't-do) — and it is the authority for what is left.
+below is), six of them decisions the owner has settled outright (T1, T2, T3,
+T9's direction, T11's won't-do, T14's closed-as-satisfied) — and it is the
+authority for what is left.
 `CLAUDE.md`'s Migration TODO points there rather than duplicating it.
 
 ## Why
@@ -874,12 +875,19 @@ Repo and process:
       **landed 2026-07-26** as `build.py`
 - [x] **T13** — move `test_palettekit.py` into `tests/`, split by module —
       **landed 2026-07-27**. See T13's own write-up below
-- [ ] **T14** — fixture corpus of small committed HTML files per site
-      archetype — still open, but **partially discharged 2026-08-01**: the
-      `parkersprouse.me.har` + `example/` commit means a fresh clone can now
-      regenerate *that* output (verified byte-identical, `generated`
-      dropped). The reference fixture and the four breadth-check bundles are
-      still gitignored. See T14's own entry below
+- [x] **T14** — fixture corpus of small committed HTML files per site
+      archetype — **closed 2026-08-03, owner decision: satisfied by what's
+      currently delivered.** The original ambitious scope (a small corpus
+      spanning framework-heavy, page-builder, dark, light and CSS-variable
+      -driven archetypes, plus committing the reference fixture and the four
+      breadth-check bundles) was never built, and this closes without
+      building it. What stands in its place: the `parkersprouse.me.har` +
+      `example/` commit (2026-07-27) gives a fresh clone one real,
+      regenerable, byte-identical-verified fixture — no longer the "commit
+      nothing" state that made T14 urgent when filed. The reference fixture
+      and the four breadth-check bundles remain gitignored and
+      un-regenerable from a fresh clone; that gap is accepted rather than
+      closed. See T14's own entry below for the full accounting
 - [x] **T15** — audit hand-rolled scanning/parsing across the whole codebase
       against the T5 corollary (defer to a library already in the dependency
       set for anything it does correctly; hand-roll only what it can't do).
@@ -968,14 +976,16 @@ the only open item that moved colors and token names on a real site today, and
 it landed 2026-07-26. T6 is the one that gets worse on its own, because native
 CSS nesting is making the shape it mishandles more common every year. ~~T14 is
 the one that unblocks *checking* any of the others, since a fresh clone can
-currently regenerate no fixture at all.~~ **Partly true as of 2026-08-01**:
-the `parkersprouse.me.har` + `example/` commit gave a fresh clone its first
-regenerable fixture, and with T11 decided against, "unblocks checking the
-others" no longer points at a CI job — it just means the example is now a
-real, verifiable anchor rather than an unverifiable promise. T14's remaining
-job — a small corpus spanning framework-heavy, page-builder, dark, light and
-CSS-variable-driven archetypes — is still undone. Everything else is genuine
-but static.
+currently regenerate no fixture at all.~~ **Partly true as of 2026-08-01, and
+closed rather than finished as of 2026-08-03**: the `parkersprouse.me.har` +
+`example/` commit gave a fresh clone its first regenerable fixture, and with
+T11 decided against, "unblocks checking the others" no longer pointed at a CI
+job — it just meant the example was a real, verifiable anchor rather than an
+unverifiable promise. The owner closed T14 there rather than building the
+rest of its original scope (a small corpus spanning framework-heavy,
+page-builder, dark, light and CSS-variable-driven archetypes, plus committing
+the reference fixture and the breadth-check bundles) — see T14's own entry.
+Everything else in this list is genuine but static.
 
 Each task carries the level its change should be **diffed** at. That is this
 project's most expensive lesson — phase 1 passed the whole suite and the
@@ -3338,11 +3348,41 @@ touched).
 
 ### T14 — Fixture corpus of small HTML files per site archetype
 
+> **Outcome — closed 2026-08-03, owner decision: satisfied by what's
+> currently delivered, not by finishing the scope below.** Nothing new was
+> built for this closure; it accepts the state this entry already
+> describes as of 2026-08-02 as good enough to stop tracking as open work.
+>
+> What that state is, plainly: one committed, regenerable, byte-identical
+> -verified fixture (`parkersprouse.me.har` + `example/`, landed
+> 2026-07-27) — a real anchor in place of the "a fresh clone can regenerate
+> nothing" gap that made this task urgent when filed. Two more corpus HARs
+> (`mdn.har`, `pawelgrzybek.com__light_dark_example.har`) exist locally and
+> are exercised by name throughout `CLAUDE.md` (T10, T23), but neither is
+> committed — same gitignored, non-regenerable-from-a-fresh-clone status as
+> the reference fixture and the four breadth-check bundles.
+>
+> **What this closure does not claim**: the small per-archetype corpus
+> (framework-heavy, page-builder, dark, light, CSS-variable-driven) this
+> task's title names was never built, and the parser-regression weakness
+> this entry's own second paragraph describes — the reference fixture is
+> single-theme, hand-written CSS, and the pre-`tinycss2` parser reproduces
+> every one of its anchors exactly, so it cannot by itself catch a parser
+> regression — is still real and still uncovered by anything a fresh clone
+> can run offline. The breadth check (`CLAUDE.md`'s own section) remains
+> the thing that actually catches that class of bug, and it still needs
+> either network access or one of the gitignored local HARs.
+>
+> File a fresh task rather than reopening this one if that gap becomes the
+> thing blocking a specific piece of work, rather than a standing "should
+> do this eventually" line with nothing left waiting on it.
+
 Framework-heavy, page-builder, dark, light, CSS-variable-driven.
 
-**Still urgent, but no longer true that it's the item that unblocks checking
-every other one — T11 (the CI job that would have used a regenerable fixture)
-is decided against, so there is no other task left waiting on this.**
+~~Still urgent~~ **— closed rather than urgent, per the Outcome above.** No
+longer true that it's the item that unblocks checking every other one — T11
+(the CI job that would have used a regenerable fixture) is decided against,
+so there was no other task left waiting on this by the time it closed.
 `.gitignore` carries both `*.har` and `palettes`, so ~~a fresh clone can
 regenerate nothing~~ **as of 2026-08-01, that's no longer quite right**:
 not the reference fixture, not the breadth check, ~~not the `example/`
@@ -3373,8 +3413,8 @@ reproducing its live `#ffffff` / `#18191b` two-theme result exactly — see
 T10's own entry) and `pawelgrzybek.com__light_dark_example.har` (the site
 that finally exercises `light-dark()` confirmed by `color-scheme`). Neither
 gets a `.gitignore` exception, same untracked treatment as the rest of this
-corpus and for the same reason — this task is still what fixes that, not
-another one-off exception.
+corpus — and, per the Outcome above, that stays the state rather than a gap
+this task will still come back and fix.
 
 ### T15 — Audit hand-rolled scanning against the T5 corollary — landed 2026-07-27
 

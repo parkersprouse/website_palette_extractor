@@ -823,16 +823,13 @@ Accuracy gaps left by phases 1–4:
       Tailwind v4's own registrations). Starts with measuring whether any
       registered `initial-value` is color-bearing before touching the
       parser. Not started. See T22's own entry below
-- [ ] **T23** — evaluate `@supports` conditions instead of reading every
+- [x] **T23** — evaluate `@supports` conditions instead of reading every
       conditional block as though it always applies — **filed 2026-08-02,
-      found while verifying T10 against `pawelgrzybek.com`'s light/dark
-      example.** Confirmed to move a real ground wrong (`#ffffff` reported,
-      `#21262c`-ish actually painted) via an `@supports not (...)` fallback
-      block that only a non-supporting browser should ever read. See T10's
-      own entry and `CLAUDE.md`'s Known limits for the full trace. Not
-      started — parsing and evaluating a boolean feature query is a larger
-      problem than anything a single-property fix covers, and no other
-      corpus site is known to depend on one yet
+      landed 2026-08-02.** Fixed the `pawelgrzybek.com` dark ground exactly
+      as predicted (`#ffffff` → `#21262c`) and, unpredicted, also corrected
+      `mdn.har`'s `light-dark()` polyfill fallback. See T23's own entry
+      below for the design (a leaf never returns confirmed-`False`, only
+      `True`/unknown) and both corpus results
 
 Repo and process:
 
@@ -2374,6 +2371,122 @@ are, worth doing for completeness rather than for a corpus payoff.
 that carry `@property` at all. `fleshandbonedesign.com.har` and
 `parkersprouse.me.har` should be byte-identical by construction — neither
 has anything for this to read.
+
+### T23 — Evaluate `@supports` conditions instead of reading every block as though it always applies
+
+> **Outcome — landed 2026-08-02.** Both effects predicted at filing time were
+> confirmed, plus one that wasn't: `mdn.har` also moves, for a reason that
+> only turned up once a real `@supports (color: light-dark(...))` guard was
+> evaluated for real.
+
+Filed while verifying T10 against `pawelgrzybek.com`'s light/dark example:
+`_walk` read every `@supports` block's contents unconditionally, `not (...)`
+included, so a fallback block written for browsers that can't parse
+`light-dark()` was being read by this tool too — and its plain light-only
+value then won last-wins over the real `light-dark()` declaration for *both*
+themes, because neither is theme-scoped and specificity ties (invariant 21).
+
+**Full feature-query evaluation was explicitly out of scope, and still is.**
+`@supports`'s grammar covers arbitrary `property: value` pairs, most of
+which this tool has no grounds to judge — `background`'s a shorthand,
+`filter` takes functions `color.py`'s parser was never meant to read, and
+guessing "unsupported" from a failed parse would confidently flag real,
+universally-supported CSS as absent. That is a worse failure than the one
+being fixed: today's behaviour (read every block) never drops a real
+declaration for `@supports` reasons; a careless fix could start doing that
+silently, on any site.
+
+**The shape that stays inside those limits: evaluate the boolean grammar for
+real, and make a leaf declaration return `True` or `None`, never a confirmed
+`False`.** `False` can only ever come from negating an already-confirmed
+`True` — which is exactly `@supports not (color: light-dark(white,black))`'s
+shape, and nothing else this project has evidence for.
+
+- **The `not`/`and`/`or`/parens structure is real, hand-rolled boolean logic
+  over three-valued (Kleene) results** (`_eval_supports_condition`,
+  `_combine_supports`) — `None` (unknown) propagates through `and`/`or`
+  exactly the way an unknown operand should: `False and unknown = False`
+  regardless of the unknown side, `True or unknown = True`, and otherwise the
+  result is `None`. This is real, verified logic, not a heuristic — the
+  corollary's "hand-roll only what the library can't do" applies here
+  because no library evaluates CSS conditionals at all.
+- **`tinycss2` already groups a top-level `(...)` into one `ParenthesesBlock`
+  token with nesting handled**, so — same as invariants 24/25's `resolve_vars`/
+  `var()`-fallback rewrites — this needed no hand-rolled paren-depth counter.
+  Walking `node.prelude`'s tokens directly and recursing into a block's
+  `.content` is the whole traversal.
+- **The one leaf that returns a confirmed answer**
+  (`_supports_declaration`) is deliberately narrow: a custom property
+  (`--x: ...`) is always `True` (CSS spec: any non-empty token stream is a
+  syntactically valid custom-property value), and a property in
+  `_PURE_COLOR_PROPERTIES` — the subset of `PROPERTY_ROLE` whose grammar is
+  *exactly* `<color>` and nothing else (`color`, `background-color`,
+  `border-color`, `fill`, …; explicitly **not** `background`, `border`,
+  `box-shadow`, `filter`, `backdrop-filter` — shorthands and function-taking
+  properties `parse_color` was never built to read) — is `True` when
+  `color.parse_color` parses its value. Everything else, including a pure
+  -color property whose value *fails* to parse (a real CSS color function
+  this tool simply hasn't implemented, e.g. `color(display-p3 ...)`), is
+  `None` — unknown, not unsupported. This is the same reasoning as invariant
+  22's `calc()` evaluator: refuse to guess past the grammar this tool
+  actually models, rather than special-case the one corpus shape.
+- **A confirmed-`False` `@supports` block is skipped outright** — no
+  `_record`, no `var_refs` collection — mirroring the statement-at-rule
+  branch (invariant 18) rather than merely filtering declarations after
+  walking them, because a real non-supporting-condition fallback block is
+  inert to the browser this tool models, references and all. Anything `True`
+  or `None` walks exactly as before this task existed.
+
+**Verified against the actual corpus, not just synthetically.** All seven
+frozen bundles were regenerated before/after (`generated` dropped):
+`fleshandbonedesign.com.har`, `ground.news.har`, `parkersprouse.me.har`,
+`tailwindcss.com.har` and `ui.shadcn.com.har` are byte-identical — none
+carries an `@supports` condition on a pure-color property. Two move:
+
+- **`pawelgrzybek.com__light_dark_example.har`** — the site this task was
+  filed against. Dark theme's ground moves `#ffffff` → `#21262c`, exactly
+  the value CLAUDE.md's known-limit entry predicted, and the "both themes
+  have a light background" mislabelling warning disappears because the dark
+  theme is now actually dark.
+- **`mdn.har`** — not predicted at filing time, found only once real
+  evaluation was in place. MDN's global stylesheet is compiled through a
+  `light-dark()` PostCSS polyfill (`csstools`) that emits *two* blocks per
+  token: `@supports (color:light-dark(red,red)) { /* the real declarations
+  */ }` and `@supports not (color:light-dark(tan,tan)) { /* --csstools
+  -light-dark-toggle-* fallback machinery, on a `:root *` blanket selector
+  */ }`. Before this task both were read; now only the real one is.
+  `declarationsScanned` drops 817 → 769 (exactly the 48 polyfill
+  declarations across the stylesheet), and reordering follows from that:
+  the blanket-selector polyfill was inflating `--color-*` custom-property
+  occurrence counts, which is why the palette's own hex set, status counts
+  (39 live / 9 unmatched / 3 saved, both before and after), ground and theme
+  count are all **unchanged** — only occurrence-derived ranking and
+  `examples` provenance moved, which `selector_weight`'s own "treat ordering
+  as a hint" caveat already covers.
+
+**Performance:** `tailwindcss.com.har`, the slowest bundle in the corpus,
+timed identically before and after (46.4s / 46.6s, real-time — noise-level,
+no `@supports` on this bundle to even exercise the new code path).
+
+166 tests (11 new, `TestSupports` in `test_cssparse.py`), `ruff` clean,
+3.11–3.14 green. The new tests were confirmed meaningful, not vacuous,
+against pre-task code: the integration test asserting a confirmed-false
+block's declarations never reach `sheet.declarations`/`sheet.var_refs` fails
+on stashed `cssparse.py` (both the real and fallback `--bg` values are
+recorded there), the same "test that passes before and after tests nothing"
+discipline every other invariant in this file follows.
+
+**What is still not covered, by design, same as before this task**:
+any `@supports` condition on a non-pure-color property, or on a pure-color
+property whose value uses a CSS color function this tool doesn't implement,
+stays `None` and the block is read — identical to this tool's behaviour
+before T23 existed. `selector(...)`/`font-tech(...)` feature functions are
+likewise `None`. This is a narrowing of the general problem to the one shape
+with corpus evidence, not a general `@supports` evaluator, and the
+"materially larger problem" framing at filing time still describes the
+general case accurately.
+
+**Diff level:** JSON (`generated` dropped) across all seven frozen bundles.
 
 ### T10 — Read `color-scheme` to confirm a `light-dark()` site is two-themed
 

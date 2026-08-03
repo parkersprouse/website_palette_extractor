@@ -187,7 +187,7 @@ sources.py   →  cssparse.py  →  extract.py  →  emit.py
 | File | Lines | Holds |
 |---|---:|---|
 | `color.py` | 1182 | `Color`, parsing, sRGB↔OKLab/CIE Lab/XYZ both ways, `color-mix()`, `light-dark()`, `calc()`, contrast, hue names |
-| `cssparse.py` | 915 | `tinycss2` integration, `var()`, `selector_weight`, roles, theme scopes, `@layer` names, `color-scheme` pass-through (T10) |
+| `cssparse.py` | 1040 | `tinycss2` integration, `var()`, `selector_weight`, roles, theme scopes, `@layer` names, `color-scheme` pass-through (T10), `@supports` evaluation (T23) |
 | `dom.py` | 535 | `html.parser` → `ElementTree` shim, `cssselect2` matching of `<html>`/`<body>`, specificity, plus `full_tree`/`elements_matching`/`wrap_tree` (T9: real DOM below the page element), `selector_reach` (T18: does a selector match anything, real/none/untestable), and `element_signature` (T19: a short label for one real matched element) |
 | `sources.py` | 292 | `load_har` / `load_url` / `load_paths` → `Bundle` |
 | `extract.py` | 1621 | `extract()`, the cascade, per-theme `_build`, ground, merging, statuses, naming, `resolve_by_ancestry`/`resolve_by_ancestry_kind` (T9), `Entry.all_unmatched` (T18), per-usage `match_count`/`match_samples` (T19), `_page_color_scheme`/`_scopes_present`'s confirmation gate (T10) |
@@ -1112,6 +1112,79 @@ because the obvious implementation produced plausible but wrong output.
     bare `.css` input with no captured HTML at all staying `live` rather than
     manufacturing a determinate answer from zero evidence).
 
+28. **A `@supports` leaf never confirms unsupported — only supported, or
+    unknown** (`cssparse.supports_condition`, T23). `@media` and `@supports`
+    used to be read identically: every block applies, `not (...)` included.
+    That is backwards exactly when a `@supports not (...)` block is a
+    fallback for browsers lacking a feature this tool already treats as real
+    (invariants 22–23 exist because `color-mix()`/`light-dark()` are genuine
+    evergreen-browser behaviour) — the fallback then wins last-wins over the
+    real value on document order alone, with nothing in its selector saying
+    it's conditional.
+
+    `pawelgrzybek.com`'s light/dark example is the case that found this:
+    `@supports not (color: light-dark(white,black)) { :root { --color
+    -background: hsl(255 0% 100%); … } }` is a polyfill fallback, read at
+    face value as just another unscoped `:root` declaration, later in
+    document order, tied on specificity — so it silently overrode the real
+    `light-dark()` value for **both** themes and reported the dark ground as
+    `#ffffff`.
+
+    **A full feature-query evaluator is not what this is, on purpose.**
+    `@supports` covers arbitrary `property: value` pairs, and most
+    properties' grammar is far richer than a single `<color>` —
+    `background`'s a shorthand, `filter` takes functions `color.parse_color`
+    was never built to read. Judging "unsupported" from a failed parse there
+    would confidently flag real, universally-supported CSS as absent, which
+    is a worse failure than the one being fixed: today's behaviour never
+    drops a real declaration for `@supports` reasons, and a careless fix
+    could start doing that silently, on any site.
+
+    So a leaf declaration (`cssparse._supports_declaration`) returns `True`
+    when it's a custom property (any non-empty value is syntactically valid
+    on one) or a property in `_PURE_COLOR_PROPERTIES` — the subset of
+    `PROPERTY_ROLE` whose grammar is *exactly* `<color>`, deliberately
+    excluding shorthands and function-taking properties — whose value
+    `parse_color` parses. **Everything else is `None`, never `False`** —
+    including a pure-color property whose value fails to parse, because that
+    could just as easily be a real CSS color function this tool hasn't
+    implemented (`color(display-p3 …)`) as a genuinely unsupported one, and
+    this tool has no way to tell those apart. `None` means "cannot tell,"
+    and the caller treats it as supported — today's behaviour, unchanged.
+    `False` can therefore only ever arise from negating an already-confirmed
+    `True`, which is exactly `not (color: light-dark(...))`'s shape and
+    nothing this project has evidence for beyond it.
+
+    The `not`/`and`/`or`/parens grammar itself is evaluated for real, with
+    three-valued (Kleene) logic so an unknown operand doesn't silently
+    become `False`: `False and anything = False`, `True or anything = True`,
+    otherwise `None`. `tinycss2` already groups a top-level `(...)` into one
+    `ParenthesesBlock` with nesting resolved, so — same as invariants 24/25
+    — no hand-rolled paren-depth counter was needed, only the walk over an
+    already-structured token tree. A confirmed-`False` block is skipped
+    outright, mirroring the statement-at-rule branch (invariant 18) rather
+    than merely filtering its declarations afterward: no `_record`, no
+    `var_refs` collection, because a block that doesn't apply in the browser
+    this tool models doesn't reference anything in it either.
+
+    Verified against all seven frozen bundles, not just synthetically: five
+    are byte-identical (none carries a `@supports` condition on a pure-color
+    property). `pawelgrzybek.com__light_dark_example.har` moves exactly as
+    predicted — dark ground `#ffffff` → `#21262c`, and the "both themes have
+    a light background" mislabelling warning disappears because the dark
+    theme is now actually dark. `mdn.har` moves too, unpredicted at filing
+    time: its stylesheet is compiled through a `light-dark()` PostCSS
+    polyfill (`csstools`) emitting paired blocks — `@supports
+    (color:light-dark(red,red))` with the real declarations, `@supports not
+    (color:light-dark(tan,tan))` with `--csstools-light-dark-toggle-*`
+    fallback machinery on a `:root *` blanket selector. Only the real block
+    is read now; `declarationsScanned` drops by exactly the polyfill's 48
+    declarations, and hex set, status counts, ground and theme count are all
+    unchanged — the blanket-selector polyfill was only inflating occurrence
+    counts, so what moved is ranking and `examples` provenance, which
+    `selector_weight`'s own "treat ordering as a hint" caveat already covers.
+    Tests: `TestSupports` (`tests/test_cssparse.py`).
+
 ## Status vocabulary
 
 | Status | Means | Detected by |
@@ -1362,18 +1435,22 @@ Tailwind config should even look like first.
   so a property defined in site CSS but consumed only by the framework flips
   `live` → `saved`. Accurate for the input; surprising if unexpected.
 
-- **`@supports` conditions are not evaluated.** `_walk` (`cssparse.py`) reads
-  a conditional at-rule's *block* the same as any other — same as `@media`
-  minus the theme-scope detection — and never looks at whether its condition
-  would actually hold in a browser. A rule inside `@supports not (...)` is
-  read as though the negation is always true, which is backwards whenever
-  the feature it tests *is* supported.
+- **`@supports` conditions are evaluated only for the one shape this project
+  has evidence for — a full feature-query engine they are not** (T23,
+  invariant 28, landed 2026-08-02). ~~`@supports` conditions are not
+  evaluated~~ was true until T23 and would still describe most of the
+  grammar afterward: a leaf declaration only ever confirms *supported*
+  (a custom property, or a pure-`<color>` property whose value
+  `color.parse_color` parses) or admits it doesn't know: `False` can only
+  come from negating an already-confirmed `True`. Any `@supports` condition
+  on a non-color property, or on a color property using a real CSS color
+  function this tool hasn't implemented, still reads its block unconditionally
+  — identical to every `@supports` block's behaviour before T23.
 
   Found while verifying T10 (`PLAN.md`) against
   `pawelgrzybek.com__light_dark_example.har`: the dark theme's reported
-  ground is `#ffffff`, wrong — the page paints `hsl(210 15% 15%)` (roughly
-  `#21262c`), which does turn up ranked in the dark palette, just not chosen
-  as ground. The stylesheet writes
+  ground was `#ffffff`, wrong — the page paints `hsl(210 15% 15%)` (roughly
+  `#21262c`). The stylesheet writes
 
   ```css
   :root { --color-background: light-dark(hsl(255 0% 100%), hsl(210 15% 15%)); … }
@@ -1383,19 +1460,23 @@ Tailwind config should even look like first.
   ```
 
   — a fallback for browsers that can't parse `light-dark()` at all, meant to
-  never apply in one that can. Read at face value, it's just a second
+  never apply in one that can. Read at face value it was just a second
   unscoped `:root` declaration for the same property, later in document
-  order, with tied specificity — so `build_var_table`'s cascade (invariant
-  21) picks it over the real one, for **both** themes, since neither
-  declaration is theme-scoped. Reproduced identically on pre-T10 code, so
-  this predates that task and is not a regression it introduced; T10's own
-  gate (whether a `light-dark()` site is confirmed two-themed) is unaffected
-  — this is a wrong *value* inside an already-correctly-detected theme, a
-  different question. Not fixed here: evaluating `@supports` is parsing and
-  running a boolean feature query, a materially larger problem than anything
-  T10's diff level covers. No other corpus site's ground is known to depend
-  on an `@supports` fallback; this is the first one found, because it's the
-  first corpus file that has one at all.
+  order, tied on specificity — so `build_var_table`'s cascade (invariant 21)
+  picked it over the real one, for **both** themes, since neither
+  declaration is theme-scoped. T10's own gate (whether a `light-dark()` site
+  is confirmed two-themed) was never affected by this — it's a wrong *value*
+  inside an already-correctly-detected theme, a different question.
+
+  T23 fixes exactly this shape and confirms it on the corpus: dark ground
+  now `#21262c`, and `mdn.har`'s own `light-dark()` PostCSS polyfill — a
+  second, previously-unknown real-world instance of the same pattern — is
+  now read correctly too. See invariant 28 for the design and both results.
+  A general `@supports` boolean-feature-query engine remains out of scope —
+  most properties' grammar is far richer than `<color>`, and guessing
+  "unsupported" past what this tool can actually parse would manufacture a
+  worse failure (dropping real, universally-supported CSS) than the one this
+  task fixed.
 
 ## Reference fixture
 

@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 
 import tinycss2
 
-from .color import Color, find_colors
+from .color import Color, find_colors, parse_color
 
 # Properties whose values carry color, mapped to the role the color plays.
 PROPERTY_ROLE = {
@@ -502,6 +502,123 @@ def _anonymous_layer(sheet: Stylesheet, parent: str) -> str:
     return _qualify(parent, f"\x00{sheet.sheet_order}-{n}")
 
 
+# ------------------------------------------------------------ @supports (T23)
+#
+# `@supports` used to be read the same as `@media`: every block applies,
+# `not (...)` included. That is backwards exactly when a site's `@supports
+# not (...)` block is a fallback for browsers that lack a feature this tool
+# already treats as real (invariants 22-23 exist because `color-mix()` and
+# `light-dark()` are genuine evergreen-browser behaviour, not merely things
+# this parser understands) — the fallback then outranks the real value on
+# document order and nothing about its selector says it's conditional.
+#
+# The grammar (CSS Conditional Rules 3) is `not <in-parens> | <in-parens>
+# [and <in-parens>]* | <in-parens> [or <in-parens>]*`, and `<in-parens>` is
+# `( <condition> ) | ( <declaration> ) | <general-enclosed>`. `tinycss2`
+# already groups a top-level `(...)` into one `ParenthesesBlock` token with
+# nesting handled, so this only has to walk that structure and decide one
+# thing at the leaf: is a `property: value` declaration one this project
+# already knows a modern browser accepts.
+#
+# **A leaf never returns `False`.** A property's grammar is usually far
+# richer than a single `<color>` (`background`'s a shorthand, `filter` takes
+# functions `parse_color` was never meant to read), so judging "unsupported"
+# from a failed color parse would confidently flag real, always-supported
+# CSS as absent — a regression worse than the bug this fixes. A leaf either
+# confirms support (`True`) or admits it doesn't know (`None`, which the
+# caller treats as "supported", i.e. today's behaviour, unchanged). `False`
+# can only ever come from negating a confirmed `True` — which is exactly the
+# shape of `@supports not (color: light-dark(white,black))`.
+_PURE_COLOR_PROPERTIES = frozenset({
+    "background-color", "color", "-webkit-text-fill-color",
+    "text-decoration-color", "-webkit-text-stroke-color", "border-color",
+    "border-top-color", "border-right-color", "border-bottom-color",
+    "border-left-color", "outline-color", "column-rule-color",
+    "caret-color", "accent-color", "fill", "stroke", "stop-color",
+    "flood-color", "lighting-color", "text-emphasis-color",
+})
+
+
+def _supports_skip_ws(tokens: list, i: int) -> int:
+    while i < len(tokens) and tokens[i].type in ("whitespace", "comment"):
+        i += 1
+    return i
+
+
+def _supports_declaration(prop: str, value_tokens: list) -> bool | None:
+    if prop.startswith("--"):
+        # A custom property's value is opaque to `@supports` — any non-empty
+        # token stream is a syntactically valid declaration.
+        return True
+    value = tinycss2.serialize(value_tokens).strip()
+    if not value:
+        return None
+    if prop in _PURE_COLOR_PROPERTIES and parse_color(value) is not None:
+        return True
+    return None
+
+
+def _combine_supports(op: str, a: bool | None, b: bool | None) -> bool | None:
+    if op == "and":
+        if a is False or b is False:
+            return False
+        return None if (a is None or b is None) else True
+    if a is True or b is True:
+        return True
+    return None if (a is None or b is None) else False
+
+
+def _eval_supports_paren_contents(tokens: list) -> bool | None:
+    """The inside of one `( ... )`: a nested condition, or a declaration."""
+    i = _supports_skip_ws(tokens, 0)
+    if i < len(tokens) and tokens[i].type == "ident":
+        j = _supports_skip_ws(tokens, i + 1)
+        if j < len(tokens) and tokens[j].type == "literal" and tokens[j].value == ":":
+            return _supports_declaration(tokens[i].lower_value, tokens[j + 1:])
+    value, _ = _eval_supports_condition(tokens, 0)
+    return value
+
+
+def _eval_supports_in_parens(tokens: list, i: int) -> tuple[bool | None, int]:
+    i = _supports_skip_ws(tokens, i)
+    if i >= len(tokens):
+        return None, i
+    tok = tokens[i]
+    if tok.type == "() block":
+        return _eval_supports_paren_contents(tok.content), i + 1
+    # A bare feature function (`selector(...)`) or anything else this grammar
+    # doesn't model — `<general-enclosed>` by another name. Unknown, not
+    # unsupported.
+    return None, i + 1
+
+
+def _eval_supports_condition(tokens: list, i: int) -> tuple[bool | None, int]:
+    i = _supports_skip_ws(tokens, i)
+    if (i < len(tokens) and tokens[i].type == "ident"
+            and tokens[i].lower_value == "not"):
+        value, i = _eval_supports_in_parens(tokens, i + 1)
+        return (None if value is None else not value), i
+    value, i = _eval_supports_in_parens(tokens, i)
+    while True:
+        j = _supports_skip_ws(tokens, i)
+        is_op = (j < len(tokens) and tokens[j].type == "ident"
+                 and tokens[j].lower_value in ("and", "or"))
+        if is_op:
+            op = tokens[j].lower_value
+            rhs, i = _eval_supports_in_parens(tokens, j + 1)
+            value = _combine_supports(op, value, rhs)
+        else:
+            return value, i
+
+
+def supports_condition(prelude: list) -> bool | None:
+    """Evaluate an `@supports` prelude. `None` means "cannot tell" — treated
+    as supported, i.e. the block is read, matching every `@supports` block's
+    behaviour before this existed."""
+    value, _ = _eval_supports_condition(prelude, 0)
+    return value
+
+
 def _walk(sheet: Stylesheet, nodes: list, source: str,
           at_rules: tuple[str, ...], selector: str, theme: str,
           theme_media: bool, layer: str) -> None:
@@ -586,6 +703,14 @@ def _walk(sheet: Stylesheet, nodes: list, source: str,
                             if name:
                                 _register_layer(sheet, _qualify(layer, name))
                             break
+                continue
+            if keyword == "supports" and supports_condition(node.prelude) is False:
+                # A confirmed-unsupported `@supports` block (T23) never
+                # applies in the browser this tool models — not even for its
+                # `var()` references, which is why this skips the block
+                # outright rather than merely not `_record`ing its
+                # declarations. A block this project can't confidently judge
+                # is read exactly as before this existed.
                 continue
             inner = layer
             if keyword == "layer":

@@ -1,6 +1,8 @@
 """tinycss2 integration: parsing, var() resolution, theme scoping."""
 import unittest
 
+import tinycss2
+
 from palettekit.color import find_colors
 from palettekit.cssparse import (
     is_inert_shadow,
@@ -9,6 +11,7 @@ from palettekit.cssparse import (
     selector_weight,
     split_selector_list,
     strip_theme_scope,
+    supports_condition,
     theme_scope,
     var_refs,
 )
@@ -396,6 +399,86 @@ class TestThemeScopes(unittest.TestCase):
         self.assertEqual(strip_theme_scope(sel), r".dark\:bg-dark-primary")
         # The name alone, with no :is() to scope it, is not a theme at all.
         self.assertEqual(theme_scope(r".dark\:bg-dark-primary", ()), "")
+
+
+def _prelude(css: str):
+    return tinycss2.parse_component_value_list(css)
+
+
+class TestSupports(unittest.TestCase):
+    """T23: `@supports` used to be read as though every block always applies.
+
+    That's backwards for a `not (...)` fallback guarding a feature this tool
+    already treats as real browser behaviour (invariants 22-23) — exactly
+    pawelgrzybek.com's `@supports not (color: light-dark(white,black))`,
+    which otherwise outranks the real `light-dark()` declaration on document
+    order alone. See PLAN.md T23 and CLAUDE.md's `@supports` known limit.
+    """
+
+    def test_a_recognised_color_function_is_confirmed_supported(self):
+        self.assertTrue(
+            supports_condition(_prelude("(color: light-dark(white,black))")))
+        self.assertFalse(
+            supports_condition(_prelude(
+                "not (color: light-dark(white,black))")))
+
+    def test_a_property_this_tool_cannot_judge_stays_unknown(self):
+        """`display` isn't a pure-`<color>` property; guessing invites a
+        false negative on something genuinely supported everywhere."""
+        self.assertIsNone(supports_condition(_prelude("(display: grid)")))
+        self.assertIsNone(supports_condition(_prelude("not (display: grid)")))
+
+    def test_a_custom_property_is_always_supported(self):
+        self.assertTrue(supports_condition(_prelude("(--x: anything(1))")))
+
+    def test_and_or_use_three_valued_logic(self):
+        # `not X or Y` isn't valid `@supports` grammar on its own — mixing
+        # `not`/`and`/`or` at the same level needs explicit disambiguating
+        # parens (CSS Conditional Rules 3), same as `(not X) or Y` below.
+        false_and_unknown = _prelude(
+            "not (color: light-dark(white,black)) and (display: grid)")
+        self.assertFalse(supports_condition(false_and_unknown))
+        false_or_unknown = _prelude(
+            "(not (color: light-dark(white,black))) or (display: grid)")
+        self.assertIsNone(supports_condition(false_or_unknown))
+        true_or_unknown = _prelude(
+            "(color: light-dark(white,black)) or (display: grid)")
+        self.assertTrue(supports_condition(true_or_unknown))
+
+    def test_nested_parens_are_handled_via_tinycss2s_own_grouping(self):
+        self.assertFalse(supports_condition(_prelude(
+            "not ((color: light-dark(white,black)))")))
+
+    def test_an_unsupported_fallback_block_never_applies(self):
+        """The pawelgrzybek.com shape: a `@supports not (...)` fallback for
+        browsers that can't parse `light-dark()`, sitting after the real
+        declaration in document order. Read at face value it wins last-wins
+        over the real one; skipped, it never reaches `sheet.declarations` or
+        `sheet.var_refs` at all — not merely unrecorded as a color.
+        """
+        css = (
+            ":root { --bg: light-dark(white, black); }"
+            "@supports not (color: light-dark(white,black)) {"
+            "  :root { --bg: white; --only-in-fallback: var(--never-used); }"
+            "}"
+        )
+        sheet = parse_stylesheet(css, "t")
+        got = [(d.selector, d.prop, d.value) for d in sheet.declarations]
+        self.assertEqual(got, [(":root", "--bg", "light-dark(white, black)")])
+        self.assertNotIn("--never-used", sheet.var_refs)
+
+    def test_a_confirmed_supported_block_still_applies(self):
+        css = ("@supports (color: light-dark(white,black)) {"
+               " :root { --a: red } }")
+        sheet = parse_stylesheet(css, "t")
+        got = [(d.selector, d.prop) for d in sheet.declarations]
+        self.assertEqual(got, [(":root", "--a")])
+
+    def test_an_undecidable_condition_still_applies_as_before(self):
+        css = "@supports (display: grid) { :root { --a: red } }"
+        sheet = parse_stylesheet(css, "t")
+        got = [(d.selector, d.prop) for d in sheet.declarations]
+        self.assertEqual(got, [(":root", "--a")])
 
 
 if __name__ == "__main__":

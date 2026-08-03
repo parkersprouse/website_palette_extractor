@@ -659,6 +659,51 @@ class TestResolveByAncestryKind(unittest.TestCase):
             ("value", "#f5f5f5"))
 
 
+class TestNonInheritingAncestry(unittest.TestCase):
+    """T22 (`PLAN.md`): `non_inheriting=True` stops the walk at the consumer's
+    own element, for a property `@property` registers `inherits: false`.
+
+    Found on `ui.shadcn.com.har`: `--tw-ring-color`/`--tw-ring-shadow` (both
+    registered non-inheriting) were resolving from an unrelated ancestor
+    12-14 levels up — a real bug, not a hypothetical one, this reproduces at
+    unit scale.
+    """
+
+    CSS = TestResolveByAncestry.CSS
+    _candidates = TestResolveByAncestry._candidates
+
+    def test_non_inheriting_does_not_see_past_self(self):
+        html = ('<html><body><div class="theme-neutral">'
+                '<p><span class="bg-card">x</span></p></div></body></html>')
+        consumers = elements_matching(".bg-card", full_tree(html))
+        self.assertEqual(
+            extract.resolve_by_ancestry(self._candidates(), consumers, {}),
+            "#f5f5f5")
+        self.assertIsNone(
+            extract.resolve_by_ancestry(self._candidates(), consumers, {},
+                                        non_inheriting=True))
+
+    def test_non_inheriting_still_sees_self(self):
+        """A value set on the consuming element itself is not "past self" —
+        `inherits: false` only rules out an *ancestor's* definition, not the
+        element's own."""
+        html = '<html><body><span class="theme-neutral bg-card">x</span></body></html>'
+        consumers = elements_matching(".bg-card", full_tree(html))
+        self.assertEqual(
+            extract.resolve_by_ancestry(self._candidates(), consumers, {},
+                                        non_inheriting=True),
+            "#f5f5f5")
+
+    def test_non_inheriting_kind_is_absent_not_value(self):
+        html = ('<html><body><div class="theme-neutral">'
+                '<span class="bg-card">x</span></div></body></html>')
+        consumers = elements_matching(".bg-card", full_tree(html))
+        self.assertEqual(
+            extract.resolve_by_ancestry_kind(self._candidates(), consumers, {},
+                                             non_inheriting=True),
+            ("absent", None))
+
+
 class TestAncestryWiredIntoBuild(unittest.TestCase):
     """T9 end-to-end: `extract()` actually applies `resolve_by_ancestry_kind`,
     not just the standalone functions it's built from.
@@ -799,6 +844,55 @@ class TestAncestryWiredIntoBuild(unittest.TestCase):
         # the consuming usage silently, leaving only `"--x"` behind.
         by_hex = {c["hex"]: c for c in doc["colors"]}
         self.assertIn("color", by_hex["#1d4ed8"]["usedIn"])
+
+    def test_a_non_inheriting_property_does_not_borrow_from_an_ancestor(self):
+        """T22 (`PLAN.md`), the `ui.shadcn.com.har` shape: a real
+        `@property … inherits: false` registration must stop the ancestry
+        override from treating an unrelated ancestor's value as the
+        consumer's own. `.consumer` sits inside `.unrelated-ring`, which
+        would win under plain inheritance -- but `--tw-ring-color` doesn't
+        inherit, so the honest answer is "absent", and `.consumer`'s own
+        written fallback is what actually paints.
+        """
+        html = """<!DOCTYPE html><html><head><style>
+  @property --tw-ring-color { syntax: "*"; inherits: false; }
+  body { background-color: #ffffff; }
+  .unrelated-ring { --tw-ring-color: #ff0000; }
+  .consumer { box-shadow: 0 0 0 1px var(--tw-ring-color, #123456); }
+</style></head>
+<body><div class="unrelated-ring"><div><span class="consumer">x</span>
+</div></div></body></html>
+"""
+        doc = emit.to_document(extract.extract(sources.load_any(
+            write_fixture(html))))
+        by_hex = {c["hex"]: c for c in doc["colors"]}
+        self.assertIn("box-shadow", by_hex["#123456"]["usedIn"])
+        self.assertNotIn("box-shadow",
+                         by_hex.get("#ff0000", {"usedIn": []})["usedIn"])
+
+    def test_a_registered_initial_value_is_not_treated_as_absent(self):
+        """T22 (`PLAN.md`), invariant 26's own extension: `initial` on a
+        property `@property` registers with a real `initial-value` is not
+        the guaranteed-invalid keyword invariant 26 exists for -- it
+        resolves to that registered value, not to the declaration's own
+        fallback and not to nothing. Tailwind guards every reset property
+        this way (`--tw-gradient-via-stops: initial`); this is the minimal
+        shape of it with a color-bearing registration.
+        """
+        html = """<!DOCTYPE html><html><head><style>
+  @property --ring { syntax: "*"; inherits: false; initial-value: #ff0000; }
+  body { background-color: #ffffff; }
+  * { --ring: initial; }
+  .consumer { box-shadow: 0 0 0 1px var(--ring, #123456); }
+</style></head>
+<body><span class="consumer">x</span></body></html>
+"""
+        doc = emit.to_document(extract.extract(sources.load_any(
+            write_fixture(html))))
+        by_hex = {c["hex"]: c for c in doc["colors"]}
+        self.assertIn("box-shadow", by_hex["#ff0000"]["usedIn"])
+        self.assertNotIn("box-shadow",
+                         by_hex.get("#123456", {"usedIn": []})["usedIn"])
 
 
 class TestUnmatchedStatus(unittest.TestCase):

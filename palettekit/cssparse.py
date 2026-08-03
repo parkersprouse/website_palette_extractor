@@ -386,6 +386,10 @@ class Stylesheet:
     # `extract.layer_order` — layer names are global, and a sheet that mentions
     # `utilities` is talking about the same layer another sheet declared.
     layers: list[str] = field(default_factory=list)
+    # `@property` registrations found in this sheet: name -> (inherits,
+    # initial_value), both `None` when the descriptor was absent. Global to
+    # the document like `layers` — merged by `extract.property_registrations`.
+    properties: dict[str, tuple[str | None, str | None]] = field(default_factory=dict)
 
 
 _COMMENT = re.compile(r"/\*.*?\*/", re.S)
@@ -703,6 +707,29 @@ def _walk(sheet: Stylesheet, nodes: list, source: str,
                             if name:
                                 _register_layer(sheet, _qualify(layer, name))
                             break
+                continue
+            if keyword == "property":
+                # `@property --x { syntax: "*"; inherits: false;
+                # initial-value: … }` registers metadata about a custom
+                # property, not a paintable declaration (T22, `PLAN.md`) — so
+                # it is recorded onto `sheet.properties` and the block is not
+                # descended into as ordinary content, mirroring the statement
+                # at-rule branch above's "declares something, not paint"
+                # reasoning for a block-shaped at-rule instead of a
+                # semicolon-terminated one.
+                name = prelude
+                inherits = None
+                initial_value = None
+                for decl in _contents(node):
+                    if decl.type != "declaration":
+                        continue
+                    dval = _norm(tinycss2.serialize(decl.value))
+                    if decl.lower_name == "inherits":
+                        inherits = dval.strip().lower()
+                    elif decl.lower_name == "initial-value":
+                        initial_value = dval
+                if name:
+                    sheet.properties[name] = (inherits, initial_value)
                 continue
             if keyword == "supports" and supports_condition(node.prelude) is False:
                 # A confirmed-unsupported `@supports` block (T23) never

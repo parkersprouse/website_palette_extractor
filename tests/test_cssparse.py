@@ -481,5 +481,40 @@ class TestSupports(unittest.TestCase):
         self.assertEqual(got, [(":root", "--a")])
 
 
+class TestPropertyRegistration(unittest.TestCase):
+    """`@property` registrations (T22, `PLAN.md`): read for `inherits`/
+    `initial-value`, kept off `sheet.declarations` and `sheet.var_refs`."""
+
+    def test_a_property_rule_is_recorded_on_the_sheet(self):
+        css = '@property --tw-ring-color { syntax: "*"; inherits: false; }'
+        sheet = parse_stylesheet(css, "t")
+        self.assertEqual(sheet.properties["--tw-ring-color"], ("false", None))
+
+    def test_initial_value_is_captured(self):
+        css = ('@property --tw-ring-offset-color '
+               '{ syntax: "*"; inherits: false; initial-value: #fff; }')
+        sheet = parse_stylesheet(css, "t")
+        self.assertEqual(sheet.properties["--tw-ring-offset-color"],
+                         ("false", "#fff"))
+
+    def test_a_property_rule_contributes_no_declaration_or_var_ref(self):
+        """The Tailwind shape this was found against: `@property` metadata
+        must not be mistaken for a paintable declaration the way an ordinary
+        block-shaped at-rule with no enclosing selector reads its contents
+        for `var()` references only (T22 is a deliberate `continue`, not a
+        reliance on that fallback)."""
+        css = ('@property --tw-gradient-from '
+               '{ syntax: "*"; inherits: false; initial-value: #0000; }')
+        sheet = parse_stylesheet(css, "t")
+        self.assertEqual(sheet.declarations, [])
+        self.assertEqual(sheet.var_refs, set())
+
+    def test_a_later_registration_overrides_an_earlier_one(self):
+        css = ('@property --x { inherits: true; }'
+               '@property --x { inherits: false; initial-value: red; }')
+        sheet = parse_stylesheet(css, "t")
+        self.assertEqual(sheet.properties["--x"], ("false", "red"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

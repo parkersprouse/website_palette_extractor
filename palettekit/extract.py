@@ -366,6 +366,24 @@ def layer_order(sheets: list[Stylesheet]) -> dict[str, int]:
     return {name: i for i, name in enumerate(sorted(seen, key=path))}
 
 
+def property_registrations(
+    sheets: list[Stylesheet],
+) -> dict[str, tuple[str | None, str | None]]:
+    """Map every `@property`-registered custom property to (inherits, initial).
+
+    T22 (`PLAN.md`). Global to the document like `layer_order`'s names — a
+    sheet re-registering the same property simply overrides an earlier one,
+    with no cascade of its own (the spec gives `@property` no precedence
+    rules beyond "later wins"), so a plain dict merge in document order is
+    exact rather than an approximation the way it would be for anything
+    cascade-ranked.
+    """
+    regs: dict[str, tuple[str | None, str | None]] = {}
+    for sheet in sorted(sheets, key=lambda s: s.sheet_order):
+        regs.update(sheet.properties)
+    return regs
+
+
 def _layer_rank(layer: str, layers: dict[str, int], important: bool) -> int:
     """Where a declaration's layer puts it, as one sortable number.
 
@@ -534,15 +552,54 @@ def _var_populations(sheets: list[Stylesheet], theme: str,
     return rooted, off_page
 
 
-def _merge_var_populations(rooted: dict[str, tuple[tuple, str]],
-                           off_page: dict[str, list]) -> dict[str, str]:
-    return {**{name: decls[-1].value for name, decls in off_page.items()},
+def _substitute_registered_initials(
+    table: dict[str, str],
+    properties: dict[str, tuple[str | None, str | None]],
+) -> dict[str, str]:
+    """Replace a stored literal `initial` with its `@property` initial-value.
+
+    T22 (`PLAN.md`), invariant 26's own extension. `initial` on an
+    *unregistered* custom property is the guaranteed-invalid value
+    `cssparse._resolve_var` already treats as absent — correct, because an
+    unregistered property has no defined value to reset to. But
+    `@property --x { inherits: false; initial-value: #fff }` gives `initial`
+    on `--x` a concrete, spec-defined value: it is not guaranteed-invalid at
+    all, so `var(--x, fallback)` must substitute `#fff`, not the fallback and
+    not nothing. Rewriting the table here — once, before it ever reaches
+    `resolve_vars` — means `_resolve_var`'s existing "stored is literally
+    initial" branch never has to learn about registrations: by the time it
+    runs, the table simply no longer says `initial` for a property that has
+    a real one.
+    """
+    if not properties:
+        return table
+    out = table
+    for name, value in table.items():
+        if value.strip().lower() != "initial":
+            continue
+        reg = properties.get(name)
+        if reg and reg[1] is not None and reg[1].strip():
+            if out is table:
+                out = dict(table)
+            out[name] = reg[1]
+    return out
+
+
+def _merge_var_populations(
+    rooted: dict[str, tuple[tuple, str]],
+    off_page: dict[str, list],
+    properties: dict[str, tuple[str | None, str | None]] | None = None,
+) -> dict[str, str]:
+    table = {**{name: decls[-1].value for name, decls in off_page.items()},
             **{k: v for k, (_key, v) in rooted.items()}}
+    return _substitute_registered_initials(table, properties or {})
 
 
 def build_var_table(sheets: list[Stylesheet], theme: str = "",
                     page: list[PageElement] | None = None,
-                    layers: dict[str, int] | None = None) -> dict[str, str]:
+                    layers: dict[str, int] | None = None,
+                    properties: dict[str, tuple[str | None, str | None]] | None = None,
+                    ) -> dict[str, str]:
     """Map custom property name to its value, as seen from within one theme.
 
     Two populations, and the split between them is the cascade's first step
@@ -575,11 +632,12 @@ def build_var_table(sheets: list[Stylesheet], theme: str = "",
     """
     layers = layers or {}
     rooted, off_page = _var_populations(sheets, theme, page, layers)
-    return _merge_var_populations(rooted, off_page)
+    return _merge_var_populations(rooted, off_page, properties)
 
 
 def resolve_by_ancestry(candidates: list, consumer_elements: list,
-                        layers: dict[str, int]) -> str | None:
+                        layers: dict[str, int],
+                        non_inheriting: bool = False) -> str | None:
     """The value real inheritance gives, for one property, one consumer.
 
     T9 (`PLAN.md`). `build_var_table`'s `scoped` population resolves an
@@ -629,7 +687,9 @@ def resolve_by_ancestry(candidates: list, consumer_elements: list,
     this is wired into `build_var_table`/`resolve_vars`'s single-table model,
     which assumes one resolved value per property per theme, not per element.
     """
-    values = {v for v in _ancestry_winners(candidates, consumer_elements, layers)
+    values = {v for v in
+             _ancestry_winners(candidates, consumer_elements, layers,
+                               non_inheriting)
              if v is not None}
     if len(values) == 1:
         return values.pop()
@@ -637,7 +697,8 @@ def resolve_by_ancestry(candidates: list, consumer_elements: list,
 
 
 def _ancestry_winners(candidates: list, consumer_elements: list,
-                      layers: dict[str, int]) -> list[str | None]:
+                      layers: dict[str, int],
+                      non_inheriting: bool = False) -> list[str | None]:
     """One winner per consumer element — `None` where no ancestor matches.
 
     The walk itself, shared by `resolve_by_ancestry` (which collapses this to
@@ -645,11 +706,31 @@ def _ancestry_winners(candidates: list, consumer_elements: list,
     pipeline wiring, which needs to tell "no candidate anywhere" apart from
     "consumers disagree" — both collapse to the same `None` above, but only
     one of them is safe to treat as a confirmed answer).
+
+    **`non_inheriting` stops the walk at the consumer element itself** (T22,
+    `PLAN.md`) — set when `@property` registers the property `inherits:
+    false`. Real CSS inheritance never hands such a property down from an
+    ancestor at all, so looking past self is answering a question the
+    property's own registration says doesn't apply, and it is not merely
+    theoretical: on `ui.shadcn.com.har`, `--tw-ring-color`/`--tw-ring-shadow`
+    (both `inherits: false`) were resolving from an unrelated ancestor
+    12-14 levels up — some other element's `.ring-*` utility leaking onto a
+    descendant that carries no ring styling of its own — because the
+    document-wide reset that would otherwise supply a same-element answer
+    sits behind a selector list `cssselect2` cannot fully compile
+    (`*,:before,:after,::backdrop` — `::backdrop` is an unsupported
+    pseudo-element, and a single bad branch fails the whole list, a
+    separate, undiagnosed gap; see `PLAN.md` T22's write-up). Restricting
+    non-inheriting properties to self-only is the spec-correct fix
+    regardless of that detail: it also happens to be what keeps a
+    borrowed-from-nowhere ancestor value from ever being considered.
     """
     winners: list[str | None] = []
     for consumer_el in consumer_elements:
         winner = None
-        for el in (consumer_el, *consumer_el.ancestors):
+        levels = ((consumer_el,) if non_inheriting
+                 else (consumer_el, *consumer_el.ancestors))
+        for el in levels:
             best = None
             for d in candidates:
                 spec = selector_matches(d.themed_selector or d.selector, el)
@@ -666,7 +747,8 @@ def _ancestry_winners(candidates: list, consumer_elements: list,
 
 
 def resolve_by_ancestry_kind(candidates: list, consumer_elements: list,
-                             layers: dict[str, int]
+                             layers: dict[str, int],
+                             non_inheriting: bool = False,
                              ) -> tuple[str, str | None]:
     """`resolve_by_ancestry`, but keeping the two outcomes it collapses to `None`
     apart — `("value", v)`, `("absent", None)`, or `("disagree", None)`.
@@ -697,7 +779,8 @@ def resolve_by_ancestry_kind(candidates: list, consumer_elements: list,
     declaration also paints happens to sit outside any matching ancestor.
     Pinned by `test_one_consumer_with_no_ancestor_match_does_not_read_as_disagreement`.
     """
-    winners = _ancestry_winners(candidates, consumer_elements, layers)
+    winners = _ancestry_winners(candidates, consumer_elements, layers,
+                                non_inheriting)
     values = {v for v in winners if v is not None}
     if len(values) == 1:
         return "value", values.pop()
@@ -932,13 +1015,22 @@ def extract(bundle: Bundle, *, merge_threshold: float = 0.02,
     # places that rank declarations.
     layers = layer_order(sheets)
 
+    # T22 (`PLAN.md`): every `@property` registration in the document, so
+    # `initial` on a registered property can resolve to its real
+    # initial-value instead of being treated as absent (invariant 26's own
+    # extension), and so T9's ancestry walk can stop at a non-inheriting
+    # property's own element instead of borrowing a value from an unrelated
+    # ancestor. Resolved once, like `layers`, and handed to every `_build`
+    # call below.
+    properties = property_registrations(sheets)
+
     # T10: which branch an unscoped build reads a `light-dark()` through, and
     # (via `_scopes_present`) whether a `light-dark()` site is confirmed
     # two-themed at all. Computed once, before `themes` is checked, because
     # `default_appearance` feeds every `_build` call below regardless —
     # `--no-themes` still has to pick a branch for a site that writes
     # `light-dark(): dark` and confirms only `color-scheme: dark`.
-    table = build_var_table(sheets, page=page, layers=layers)
+    table = build_var_table(sheets, page=page, layers=layers, properties=properties)
     scheme_kw = _scheme_keywords(_page_color_scheme(sheets, page, layers, table))
     scopes = _scopes_present(sheets, table, scheme_kw) if themes else set()
     default_appearance = "dark" if scheme_kw == {"dark"} else "light"
@@ -948,7 +1040,8 @@ def extract(bundle: Bundle, *, merge_threshold: float = 0.02,
                merge_threshold=merge_threshold,
                third_party_weight=third_party_weight,
                min_score=min_score, flat=flat, page=page, layers=layers,
-               tree=tree, default_appearance=default_appearance)
+               tree=tree, default_appearance=default_appearance,
+               properties=properties)
         for theme_id, scope in _theme_plan(scopes)
     ]
 
@@ -965,7 +1058,8 @@ def extract(bundle: Bundle, *, merge_threshold: float = 0.02,
     pal = palettes[0]
     pal.warnings.extend(bundle.warnings)
     triplets = _triplet_warning(
-        sheets, build_var_table(sheets, page=page, layers=layers))
+        sheets, build_var_table(sheets, page=page, layers=layers,
+                                properties=properties))
     if triplets:
         pal.warnings.append(triplets)
 
@@ -1003,11 +1097,15 @@ def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
            flat: bool, page: list[PageElement] | None = None,
            layers: dict[str, int] | None = None,
            tree: object | None = None,
-           default_appearance: str = "light") -> Palette:
+           default_appearance: str = "light",
+           properties: dict[str, tuple[str | None, str | None]] | None = None,
+           ) -> Palette:
     """One theme's palette: everything scoped to it, plus everything unscoped."""
     layers = layers if layers is not None else layer_order(sheets)
+    properties = (properties if properties is not None
+                 else property_registrations(sheets))
     rooted, off_page = _var_populations(sheets, scope, page, layers)
-    table = _merge_var_populations(rooted, off_page)
+    table = _merge_var_populations(rooted, off_page, properties)
     pal = Palette(page_url=page_url, theme_id=theme_id, theme_scope=scope)
 
     # T9: an off-page custom property resolves by real inheritance for the
@@ -1127,9 +1225,22 @@ def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
                         overrides: dict[str, str] = {}
                         absent: set[str] = set()
                         for name in referenced:
+                            reg = properties.get(name)
                             kind, val = resolve_by_ancestry_kind(
-                                off_page[name], consumer_elements, layers)
+                                off_page[name], consumer_elements, layers,
+                                non_inheriting=bool(reg and reg[0] == "false"))
                             if kind == "value":
+                                # T22: an ancestry-confirmed literal `initial`
+                                # is only "absent" if the property has no
+                                # `@property` registration to give it a real
+                                # value — same substitution
+                                # `_substitute_registered_initials` applies
+                                # to the base table, needed again here
+                                # because this override is written fresh per
+                                # declaration rather than flowing through it.
+                                if (val.strip().lower() == "initial" and reg
+                                        and reg[1] is not None and reg[1].strip()):
+                                    val = reg[1]
                                 overrides[name] = val
                             elif kind == "absent":
                                 absent.add(name)

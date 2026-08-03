@@ -2357,6 +2357,104 @@ reset stylesheet is the most likely site to actually exercise this.
 
 ### T22 — Read `@property` registrations (`syntax`/`inherits`/`initial-value`)
 
+> **Outcome — landed 2026-08-03.** The "likely correct-but-inert" prediction
+> below was wrong, and wrong in the informative direction: the `inherits`
+> half — flagged in the filing as "hasn't been checked" — turned up a live,
+> corpus-confirmed bug, not merely a completeness gap. On `ui.shadcn.com.har`,
+> `--tw-ring-color`/`--tw-ring-shadow` (both registered `inherits: false`)
+> were resolving through T9's ancestry walk from an unrelated ancestor
+> **12–14 levels up the real DOM tree** — some other element's `.ring-*`
+> utility leaking onto a descendant that carries no ring styling of its own.
+> Measured directly by instrumenting `_ancestry_winners` before writing any
+> fix: across all seven frozen bundles, every winning candidate resolved at
+> ancestor level 0 (self) *except* these two properties on this one bundle.
+> Root cause underneath it: the document-wide reset that would otherwise
+> supply a same-element "initial" answer sits behind
+> `*,:before,:after,::backdrop { --tw-ring-color: initial; … }`, and
+> `::backdrop` is a pseudo-element `cssselect2` doesn't support —
+> `compile_selector_list` raises on the *whole* comma-separated list when any
+> one branch is unparseable, so the `*` branch (which would otherwise have
+> matched at level 0 and stopped the walk immediately) is invisible to
+> `selector_matches` too. That compile-failure detail is a separate,
+> undiagnosed gap (see the new note below) — not fixed here, and not needed
+> to be: restricting `inherits: false` properties to self-only lookup is the
+> spec-correct fix on its own terms, and it happens to also be exactly what
+> keeps this borrowed-from-nowhere ancestor value from ever being considered,
+> regardless of why the level-0 default failed to answer first.
+>
+> **Implemented both halves the filing sketched.** `cssparse._walk` now
+> registers `@property` blocks onto `Stylesheet.properties` (name →
+> `(inherits, initial_value)`), kept off `sheet.declarations`/`var_refs`
+> entirely (T22 is a deliberate `continue`, the same shape as the statement
+> at-rule branch, invariant 18) rather than relying on the incidental "no
+> selector, so `_record` drops it" behavior that made `@property` blocks
+> inert before this existed. `extract.property_registrations` merges them
+> across sheets in document order (last-registration-wins, matching the
+> spec — `@property` carries no cascade of its own). Two consumers:
+>
+> - **Invariant 26's extension.** `extract._substitute_registered_initials`
+>   rewrites a table entry that is literally `initial` to the property's
+>   registered `initial-value`, once, before the table ever reaches
+>   `resolve_vars` — `cssparse._resolve_var` needed no changes, since by the
+>   time it runs the table simply no longer says `initial` for a property
+>   that has a real one. The same substitution is applied a second time to
+>   a T9 ancestry override's own `("value", "initial")` result, since that
+>   path writes a fresh `initial` into `decl_table` independently of the
+>   base table. Per-spec, this is not "use the registered value as a
+>   fallback" — `initial` on a *registered* property is not
+>   guaranteed-invalid at all, so `var(--x, fallback)` must ignore the
+>   fallback and substitute the registered value directly, matching what
+>   `_resolve_var` already does for any other concretely-stored value.
+> - **T9's ancestry walk gains `non_inheriting`** (`resolve_by_ancestry`/
+>   `resolve_by_ancestry_kind`/`_ancestry_winners`, default `False` so every
+>   existing call and test is untouched). `_build`'s own call site sets it
+>   from `properties.get(name)[0] == "false"`. When true, the walk checks
+>   only the consumer element itself, never `.ancestors` — a value set on
+>   the very same element still counts (self is not "past self"), only a
+>   *real ancestor's* definition is excluded, matching what `inherits:
+>   false` actually means.
+>
+> **Verified against the actual corpus, not just synthetically**, same
+> convention as T18/T19/T21/T23: JSON (`generated` dropped) diffed old vs
+> new across all seven frozen bundles. Five bundles carry no `@property` at
+> all and were untouched by construction; `tailwindcss.com.har`,
+> `ground.news.har`, `mdn.har`, `parkersprouse.me.har` and
+> `pawelgrzybek.com__light_dark_example.har` are **byte-identical**. Only
+> `ui.shadcn.com.har` moves, and narrowly: exactly one occurrence removed
+> from each theme's merged neutral-grey bucket (light `#e5e5e5`: 157→156;
+> dark `#3c3c3c`: 128→127) — the stray ring-color/ring-shadow value that used
+> to leak in from the wrong ancestor. No hex added or removed, no ground
+> moved, no token count changed, no status changed; only the two occurrence
+> counts and their downstream `score` (invariant 2's own "treat ordering as
+> a hint" territory). Exactly the shape a fix for a rare, specific
+> mis-attribution should produce — a small, precise subtraction, not a
+> palette reshuffle.
+>
+> 9 new tests (4 `TestPropertyRegistration` in `test_cssparse.py`; 3
+> `TestNonInheritingAncestry` plus 2 new cases in
+> `TestAncestryWiredIntoBuild`, `test_extract.py`), all five of the ones
+> exercising the new behavior confirmed to fail against pre-task code before
+> being trusted (`git stash push palettekit/`) — three with a bare
+> `TypeError` from the not-yet-existing `non_inheriting` parameter, and the
+> two end-to-end ones with a genuine `KeyError` (the expected color simply
+> isn't in the palette yet), not merely a wrong assertion. 181 tests total,
+> `ruff` clean, 3.11–3.14 green.
+>
+> **A new, related gap surfaced and was deliberately not fixed here**:
+> `cssselect2.compile_selector_list` fails the *entire* selector list when
+> any one comma-separated branch is unparseable (`::backdrop` above), rather
+> than compiling the parseable branches and skipping the bad one. This is
+> not specific to `@property` or to T9 — `selector_matches`,
+> `_compile_usable`, and `_compile_reachable` (`dom.py`) all pass a whole
+> selector list to `compile_selector_list` in one call, so any one of them
+> can silently lose every branch of a list over a single unsupported
+> pseudo-element or pseudo-class anywhere in it. Fixing it would mean
+> compiling each `split_selector_list` part independently and unioning the
+> survivors — plausible, but a change to three matching call sites at once
+> deserves its own blast-radius measurement rather than riding in on this
+> task's diff. Unfiled as its own T-number pending that measurement; noted
+> here so it isn't rediscovered from scratch.
+
 **Filed 2026-08-02**, found the same way as T21 — explaining what "not
 modelled" means for `@property` (already named in CLAUDE.md's Known Limits)
 turned into checking whether any corpus site actually uses it, which nobody

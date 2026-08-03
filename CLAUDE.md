@@ -187,10 +187,10 @@ sources.py   →  cssparse.py  →  extract.py  →  emit.py
 | File | Lines | Holds |
 |---|---:|---|
 | `color.py` | 1182 | `Color`, parsing, sRGB↔OKLab/CIE Lab/XYZ both ways, `color-mix()`, `light-dark()`, `calc()`, contrast, hue names |
-| `cssparse.py` | 1040 | `tinycss2` integration, `var()`, `selector_weight`, roles, theme scopes, `@layer` names, `color-scheme` pass-through (T10), `@supports` evaluation (T23) |
+| `cssparse.py` | 1067 | `tinycss2` integration, `var()`, `selector_weight`, roles, theme scopes, `@layer` names, `color-scheme` pass-through (T10), `@supports` evaluation (T23), `@property` registrations (T22) |
 | `dom.py` | 535 | `html.parser` → `ElementTree` shim, `cssselect2` matching of `<html>`/`<body>`, specificity, plus `full_tree`/`elements_matching`/`wrap_tree` (T9: real DOM below the page element), `selector_reach` (T18: does a selector match anything, real/none/untestable), and `element_signature` (T19: a short label for one real matched element) |
 | `sources.py` | 292 | `load_har` / `load_url` / `load_paths` → `Bundle` |
-| `extract.py` | 1621 | `extract()`, the cascade, per-theme `_build`, ground, merging, statuses, naming, `resolve_by_ancestry`/`resolve_by_ancestry_kind` (T9), `Entry.all_unmatched` (T18), per-usage `match_count`/`match_samples` (T19), `_page_color_scheme`/`_scopes_present`'s confirmation gate (T10) |
+| `extract.py` | 1750 | `extract()`, the cascade, per-theme `_build`, ground, merging, statuses, naming, `resolve_by_ancestry`/`resolve_by_ancestry_kind` (T9, non-inheriting-aware since T22), `Entry.all_unmatched` (T18), per-usage `match_count`/`match_samples` (T19), `_page_color_scheme`/`_scopes_present`'s confirmation gate (T10), `property_registrations` (T22) |
 | `emit.py` | 959 | Emitters; `_HTML` is the report template |
 | `images.py` | 148 | Optional image quantisation, not part of the token set |
 | `__main__.py` | 255 | CLI; `main()` guards `PYTHON_FLOOR` before anything else |
@@ -958,10 +958,20 @@ because the obvious implementation produced plausible but wrong output.
     never matched — is still written up under "Known limits".
 
 26. **A custom property whose stored value is the literal keyword `initial`
-    is treated as absent, not substituted as text** (`resolve_vars`). On a
-    custom property, `initial` **is** the guaranteed-invalid value — a
-    browser resolving `var(name, fallback)` against it uses the fallback, it
-    does not paste in the four letters `initial`.
+    is treated as absent, not substituted as text** (`resolve_vars`). On an
+    *unregistered* custom property, `initial` **is** the guaranteed-invalid
+    value — a browser resolving `var(name, fallback)` against it uses the
+    fallback, it does not paste in the four letters `initial`.
+
+    **Extended by T22 (`PLAN.md`, landed 2026-08-03): on a property
+    `@property` registers with a real `initial-value`, `initial` is not
+    guaranteed-invalid at all — it is a concrete, spec-defined value, and
+    `var(name, fallback)` must substitute *that*, ignoring any author
+    fallback, the same as it would for any other concretely-stored value.**
+    `extract._substitute_registered_initials` rewrites the table once,
+    before `resolve_vars` ever sees it, so this function's own "stored is
+    literally `initial`" branch is unchanged and does not need to know
+    registrations exist.
 
     Tailwind v4 guards every registered property this way for browsers with
     no `@property`: `@layer properties { *, ::before, ::after, ::backdrop {
@@ -1384,21 +1394,47 @@ Tailwind config should even look like first.
     `@import` itself is still not followed, so nothing ever lands in that
     layer from this route; the reservation just stops a later real `@layer
     x {…}` elsewhere in the document from silently mis-ordering around it.
-  - **`@property` registration itself is not read** — a property's declared
-    syntax, inheritance flag, and initial value from an `@property` rule play
-    no part here; only the plain custom-property declarations in the cascade
-    do. **Inheritance down the tree, for the off-page population, is now
-    modelled where the real tree can confirm an answer** (T9, `PLAN.md`,
-    landed 2026-08-02, invariant 19's own T9 addendum) — a property redefined
-    on `.card` resolves per real consuming element, not globally, when a
-    consumer is in the captured markup and the real ancestors agree. It still
-    resolves globally (last-wins) when the tree can't confirm either
-    direction: consumers disagree, or — the dominant real-world case per
-    T9's own corpus measurement — the consuming selector matches no element
-    in the captured markup at all (a Next.js app's client-hydrated content,
-    or a truncated HAR capture; see T18's note on this same finding). "Not
-    modelled" is no longer the accurate description; "modelled where the
-    static capture can confirm it, last-wins elsewhere" is.
+  - ~~`@property` registration itself is not read~~ — **read since T22
+    (`PLAN.md`, landed 2026-08-03)**, in the two places it changes an
+    answer: `inherits: false` stops T9's ancestry walk from crossing into an
+    ancestor at all (`resolve_by_ancestry`/`resolve_by_ancestry_kind`'s
+    `non_inheriting` flag — a value set on the consumer's own element still
+    counts), and a registered `initial-value` gives the literal keyword
+    `initial` a real substitution instead of invariant 26's "guaranteed
+    -invalid, treat as absent" (`extract._substitute_registered_initials`).
+    `syntax` itself is still not read — nothing here validates a stored
+    value against its registered grammar, only `inherits`/`initial-value`
+    are consulted. Found live on the corpus, not filed as a completeness
+    gap: `ui.shadcn.com.har`'s `--tw-ring-color`/`--tw-ring-shadow` (both
+    `inherits: false`) were resolving from an unrelated ancestor 12-14
+    levels up before this landed. **Inheritance down the tree, for the
+    off-page population, is now modelled where the real tree can confirm an
+    answer** (T9, `PLAN.md`, landed 2026-08-02, invariant 19's own T9
+    addendum) — a property redefined on `.card` resolves per real consuming
+    element, not globally, when a consumer is in the captured markup and the
+    real ancestors agree (and, since T22, when the property isn't
+    registered non-inheriting). It still resolves globally (last-wins) when
+    the tree can't confirm either direction: consumers disagree, or — the
+    dominant real-world case per T9's own corpus measurement — the
+    consuming selector matches no element in the captured markup at all (a
+    Next.js app's client-hydrated content, or a truncated HAR capture; see
+    T18's note on this same finding). "Not modelled" is no longer the
+    accurate description; "modelled where the static capture can confirm
+    it, last-wins elsewhere" is.
+  - **A selector list with one unsupported branch loses every branch, not
+    just the bad one** — found while landing T22, not yet fixed or filed
+    with a T-number. `cssselect2.compile_selector_list` fails the whole
+    comma-separated list on the first unparseable part (Tailwind's own
+    `*,:before,:after,::backdrop` reset selector, where `::backdrop` is
+    unsupported, is the corpus case), so `selector_matches`,
+    `dom._compile_usable`, and `dom._compile_reachable` — all three pass a
+    whole list to it in one call — can silently lose a perfectly good `*` or
+    class branch sitting alongside the one bad pseudo-element or
+    pseudo-class. The fix shape (`split_selector_list` each part and
+    compile/union the survivors) is plausible but touches three matching
+    call sites at once and deserves its own blast-radius measurement before
+    it lands, per this file's own "predict the blast radius before writing
+    the code" discipline — not attempted inside T22's diff.
   - **An at-rule nested inside a style rule** still loses its declarations —
     see the limit above; it is a parse-shape gap, not a cascade one.
 

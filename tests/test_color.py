@@ -452,5 +452,53 @@ class TestLightDarkNeedsColorScheme(unittest.TestCase):
         self.assertIsNotNone(pal.alternate)
 
 
+class TestSelectorScopedColorScheme(unittest.TestCase):
+    """T26 (`PLAN.md`): a `color-scheme` confirmed only inside a theme scope.
+
+    `TestLightDarkNeedsColorScheme` above only ever confirms `color-scheme`
+    through an *unscoped* declaration reaching the page via the cascade. A
+    real `[data-theme="dark"] { color-scheme: dark }` toggle — the fixture
+    the owner supplied for T24, `pseudo_selector_example.har` — is a
+    different shape: a static capture freezes one `data-theme` state, so the
+    *other* keyword's rule structurally cannot DOM-match in the same
+    capture. Before T26 this meant that gate could confirm at most one
+    keyword from such a site, however completely the CSS declared both.
+    """
+
+    def _page(self, captured_theme: str) -> str:
+        return f"""<!DOCTYPE html><html data-theme="{captured_theme}"><head><style>
+          [data-theme="light"] {{ color-scheme: light; }}
+          [data-theme="dark"] {{ color-scheme: dark; }}
+          :root {{ --page: light-dark(#efefec, #202122); }}
+          html {{ background-color: var(--page); }}
+        </style></head><body></body></html>"""
+
+    def test_confirms_both_keywords_from_the_captured_side_alone(self):
+        """Only `[data-theme="dark"]` can DOM-match here; `light` still confirms."""
+        pal = extract.extract(sources.load_any(write_fixture(self._page("dark"))))
+        self.assertIsNotNone(pal.alternate)
+        self.assertEqual((pal.theme_id, pal.alternate.theme_id), ("light", "dark"))
+        self.assertEqual(pal.ground.hex, "#efefec")
+        self.assertEqual(pal.alternate.ground.hex, "#202122")
+
+    def test_confirms_both_keywords_from_the_other_captured_side(self):
+        """Symmetric: capturing the light state confirms `dark` the same way."""
+        pal = extract.extract(sources.load_any(write_fixture(self._page("light"))))
+        self.assertIsNotNone(pal.alternate)
+        self.assertEqual(pal.ground.hex, "#efefec")
+        self.assertEqual(pal.alternate.ground.hex, "#202122")
+
+    def test_a_single_selector_scoped_keyword_does_not_confirm_both(self):
+        """Only a `dark` toggle rule exists — still one theme, reading dark."""
+        page = """<!DOCTYPE html><html data-theme="dark"><head><style>
+          [data-theme="dark"] { color-scheme: dark; }
+          :root { --page: light-dark(#ffffff, #18191b); }
+          html { background-color: var(--page); }
+        </style></head><body></body></html>"""
+        pal = extract.extract(sources.load_any(write_fixture(page)))
+        self.assertIsNone(pal.alternate)
+        self.assertEqual(pal.ground.hex, "#18191b")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -865,16 +865,18 @@ Accuracy gaps left by phases 1–4:
       hitting the same root cause. See T25's own entry below for the full
       corpus verification and why `matches_page_element`/
       `selector_specificity` stay out of scope
-- [ ] **T26** — `_page_color_scheme`'s unscoped-only gate (T10) misses a
+- [x] **T26** — `_page_color_scheme`'s unscoped-only gate (T10) misses a
       `color-scheme` confirmed only through a selector-scoped theme toggle
       (`[data-theme="dark"] { color-scheme: dark }`), so a `light-dark()`
       site using that pattern reports one theme instead of two, and the
       wrong branch's ground — **filed 2026-08-03, found verifying T24
       against an owner-supplied fixture that happened to also exercise this
-      shape.** Not implemented — this is the exact counter-example T10's own
+      shape. Landed 2026-08-03.** This is the exact counter-example T10's own
       docstring said was "left for a future counter-example, the same way
       the rest of T10 was." See T26's own entry below for the corpus
-      evidence and the design question it raises
+      evidence, the design comparison that decided between the two options
+      filing left open, and the one unpredicted corpus movement (a theme-id
+      relabel on `mdn.har`, not a color change)
 
 Repo and process:
 
@@ -3266,38 +3268,98 @@ carries `data-theme="dark"` — the state that was actually captured. Run
 end-to-end and confirmed: `-o` output shows exactly one theme, ground
 `#efefec`.
 
-**Why this isn't a quick fix, and stays filed rather than patched inline.**
-Resolving it means deciding what "confirmed" means when only one of the two
-scoped values can ever reach the *captured* DOM at once — a static HAR
-freezes one `data-theme` state, so `[data-theme="light"]`'s rule structurally
-cannot DOM-match in the same capture that has `[data-theme="dark"]` on
-`<html>`. At least two designs resolve that differently:
+**Outcome — landed 2026-08-03.** Resolving it means deciding what "confirmed"
+means when only one of the two scoped values can ever reach the *captured*
+DOM at once — a static HAR freezes one `data-theme` state, so
+`[data-theme="light"]`'s rule structurally cannot DOM-match in the same
+capture that has `[data-theme="dark"]` on `<html>`. Two designs were on the
+table at filing:
 
 - Trust a selector-theme-scoped `color-scheme` declaration to confirm its own
   keyword from the CSS alone, the same way `theme_scope`/`_theme_plan`
   already trust `.dark`/`[data-bs-theme=dark]` to mean "this site has a dark
   theme" without requiring the class or attribute to be present in the
   captured markup. Symmetric, and closest to how the rest of this tool
-  already treats theme scopes — but it means `_page_color_scheme` stops being
-  page-reach-gated the way `build_var_table`/invariant 19 deliberately made
-  it, for this one property.
+  already treats theme scopes.
 - Confirm each keyword independently — DOM-match the scope that's actually
-  present in this capture (`dark`, here) the way the gate does today, and
-  separately treat *any* selector-scoped `color-scheme` declaration for the
-  other keyword as evidence the CSS declares it, without requiring that one
-  to also DOM-match. Asymmetric, and closer to "don't invent a theme that
-  isn't there" — but is a different rule from the first option, not a
-  simplification of it.
+  present in this capture (`dark`, here) the way the gate did before this
+  task, and separately treat *any* selector-scoped `color-scheme` declaration
+  for the other keyword as evidence the CSS declares it, without requiring
+  that one to also DOM-match. Asymmetric, and closer to "don't invent a theme
+  that isn't there."
 
-This is the same shape of decision T10's own gate was — "a page that never
-declares a keyword renders one branch always, and calling that two-themed is
-wrong" — applied to a case T10 explicitly left open. It is the owner's call,
-the same way T10's own design was.
+**Decided by measurement, not by asking.** Before choosing, both designs were
+checked against every declaration in the corpus that carries `color-scheme`
+at all — `pseudo_selector_example.har`, `mdn.har`,
+`pawelgrzybek.com__light_dark_example.har`, `tailwindcss.com.har` — and they
+produce identical `scheme_keywords` on every one of them. Every corpus site
+that already confirms both keywords does so through the pre-existing unscoped
+path, which neither design touches; the one site this task was filed against
+confirms both under either design, because its two toggle rules
+(`[data-theme="light"] { color-scheme: light }` /
+`[data-theme="dark"] { color-scheme: dark }`) are each other's "other
+keyword" as much as they are self-confirming. With no corpus evidence to
+discriminate them, the owner-arbitration question T10's own design faced
+does not actually apply here — asking would have been arbitrating a
+distinction with no observable consequence. The simpler, symmetric design was
+taken: `extract._theme_scoped_scheme_keywords` unions the resolved keyword of
+every `color-scheme` declaration carrying a selector-theme scope
+(`d.theme` truthy), trusted unconditionally, alongside the pre-existing
+`_page_color_scheme`'s unscoped-only cascade path — see both functions' own
+docstrings in `extract.py` for the full reasoning and the design comparison.
 
-**Diff level**, if implemented: theme count and ground per site, across all
-eight corpus bundles plus `pseudo_selector_example.har` — same convention as
-T10's own diff level, since this changes `_theme_plan`'s input for any site
-using this pattern.
+**Verified against the fixture, both capture states.** `pseudo_selector_example.har`
+(captured `data-theme="dark"`) now reports two themes — `light`/`#efefec`,
+`dark`/`#202122` — matching `light-dark(#efefec, #202122)` exactly, in the
+order `_theme_plan` always places a fully-confirmed two-theme site (light
+first, dark alternate), regardless of which state was captured. A second,
+synthetic fixture capturing the opposite state (`data-theme="light"`)
+produces the identical two themes and grounds — confirmed by test, not
+assumed, since the whole point of trusting the declaration over the DOM is
+that capture state must not change the answer.
+
+**Diff level: theme count and ground per site**, across all eight corpus
+bundles plus `pseudo_selector_example.har`, same convention as T10's own —
+this changes `_theme_plan`'s input for any site using this pattern. Six of
+the eight breadth-check bundles came back byte-identical
+(`fleshandbonedesign.com.har`, `ground.news.har`, `parkersprouse.me.har`,
+`tailwindcss.com.har`, `ui.shadcn.com.har`,
+`pawelgrzybek.com__light_dark_example.har` — none of them writes a
+selector-theme-scoped `color-scheme` declaration). `pseudo_selector_example
+.har` is the intended, predicted movement.
+
+`mdn.har` moved too, and this was *not* predicted at filing — it does write
+selector-scoped `color-scheme` declarations
+(`html[data-theme=light]`/`html[data-theme=dark]`, part of MDN's own manual
+theme-switcher scaffolding, present in the CSS but not reflected in this
+static capture's `<html>`, which carries no `data-theme` attribute at all).
+Checked at the full-document level, not just theme count and ground: every
+hex, every `groundSource`, every per-theme stat is byte-identical before and
+after: `mdn.har` already confirmed both keywords pre-T26, through its own
+unscoped `html { color-scheme: light dark }` winning the cascade over
+`:root { color-scheme: light }` on specificity (`:root` is `(0,1,0)`, `html`
+is `(0,0,1)` — verified directly, not assumed, since a first read of the two
+declared values without their cascade ranking would have wrongly predicted
+this site to be unaffected). What moved is only the theme's own `id`/`scope`
+label — `"base"`/`""` before, `"light"`/`"light"` after — because
+`_theme_plan` names a two-scope site's palettes `"light"`/`"dark"`
+unconditionally, and `scopes` becomes `{"light","dark"}` here for the first
+time now that the theme-scoped declarations register their own scope too,
+where before only the generic themed-color path had registered `"dark"`
+alone (from unrelated `data-scheme`-attributed component rules) and light-dark()
+confirmation had never fired. A relabeling, not a color change, and arguably
+a more accurate one: MDN genuinely ships an explicit toggle mechanism, not
+only an OS-preference one, so naming its light palette `"light"`/`scope:
+"light"` matches how every other explicit-toggle two-theme site in this
+corpus is already labeled.
+
+Tests: `TestSelectorScopedColorScheme` (`tests/test_color.py`) — the fixture
+shape itself, confirmed from either captured state; and the negative case
+(only one toggle rule present, one theme, reading the confirmed keyword's
+branch) confirming the widened gate does not accidentally confirm both from
+one-sided evidence. All three required to fail against the pre-T26
+implementation before being trusted, per this file's own "a test that passes
+before and after tests nothing" discipline — checked directly, not assumed.
 
 ---
 

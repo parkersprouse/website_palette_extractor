@@ -824,7 +824,7 @@ def resolve_by_ancestry_kind(candidates: list, consumer_elements: list,
 
 def _page_color_scheme(sheets: list[Stylesheet], page: list[PageElement] | None,
                        layers: dict[str, int], table: dict[str, str]) -> str:
-    """The cascade-resolved `color-scheme` value reaching the page element, or "".
+    """The cascade-resolved *unscoped* `color-scheme` value reaching the page, or "".
 
     T10 (`PLAN.md`). `light-dark()` resolves against the *used* `color-scheme`,
     not against whatever the OS prefers, and a page that never declares one
@@ -834,11 +834,13 @@ def _page_color_scheme(sheets: list[Stylesheet], page: list[PageElement] | None,
     `_page_specificity`/`_cascade_key`), applied to one ordinary property
     instead of the whole custom-property population.
 
-    Deliberately unscoped-only (`d.theme == ""`): a `color-scheme` written
-    *inside* a theme scope would mean the browser's own light/dark switch and
-    this tool's theme model disagree about what "dark" means on the same
-    page, a shape no corpus site has shown. Left for a counter-example the
-    same way the rest of T10 was.
+    Unscoped-only (`d.theme == ""`) on purpose, and still is after T26: a
+    `prefers-color-scheme`/OS-driven site (MDN, pawelgrzybek.com) states its
+    confirmation this way, and it is genuinely one page-level value with one
+    cascade winner. A *selector*-theme-scoped `color-scheme` declaration
+    (`[data-theme="dark"] { color-scheme: dark }`) is a different shape —
+    see `_theme_scoped_scheme_keywords` below, which T26 (`PLAN.md`) added
+    to cover it rather than folding it in here.
     """
     best = None
     for sheet in sheets:
@@ -852,6 +854,53 @@ def _page_color_scheme(sheets: list[Stylesheet], page: list[PageElement] | None,
             if best is None or key > best[0]:
                 best = (key, d.value)
     return resolve_vars(best[1], table) if best else ""
+
+
+def _theme_scoped_scheme_keywords(sheets: list[Stylesheet],
+                                  table: dict[str, str]) -> set[str]:
+    """`light`/`dark` keywords a selector-theme-scoped `color-scheme` states.
+
+    T26 (`PLAN.md`, 2026-08-03). `_page_color_scheme` above only ever reads
+    an *unscoped* `color-scheme` declaration through the cascade, because a
+    static HAR capture freezes one `data-theme` state — `[data-theme="light"]
+    { color-scheme: light }` structurally cannot DOM-match in the same
+    capture that has `[data-theme="dark"]` on `<html>`. Gating on DOM reach
+    the way the unscoped path does would make this confirmation permanently
+    one-sided: whichever state the page happened to be captured in.
+
+    So a theme-scoped `color-scheme` declaration is trusted at face value
+    instead, the same way `theme_scope`/`_theme_plan` already trust
+    `.dark`/`[data-bs-theme=dark]` to mean "this site has a dark theme"
+    without requiring the class to be present in the captured markup
+    (invariant 16's own DOM-reach requirement is about *page-background*
+    candidates specifically, not about theme detection in general). A rule
+    scoped to a theme by its own selector marker is a first-party statement
+    about that theme, cascade or no cascade — there is nothing to rank it
+    against, because nothing else can be scoped to the same theme by the
+    same marker and disagree in a way ranking would resolve.
+
+    Two designs were weighed at filing (see T26's own write-up): trust every
+    theme-scoped declaration unconditionally, or DOM-match whichever scope
+    the capture is actually in and treat only the *other* keyword's
+    declaration as CSS-only evidence. Checked against every declaration in
+    the corpus that carries `color-scheme` at all — `pseudo_selector_example
+    .har`, `mdn.har`, `pawelgrzybek.com__light_dark_example.har`,
+    `tailwindcss.com.har` — the two produce identical `scheme_keywords` on
+    every one: every site that already confirms both keywords does so
+    through the unscoped path above and this function adds nothing, and the
+    one site this task was filed against (`pseudo_selector_example.har`)
+    confirms both either way. No corpus evidence distinguishes them, so the
+    simpler, symmetric design was taken rather than the one that would also
+    need a DOM-reach carve-out in `_page_specificity` for one selector but
+    not its sibling.
+    """
+    found: set[str] = set()
+    for sheet in sheets:
+        for d in sheet.declarations:
+            if d.prop != "color-scheme" or not d.theme:
+                continue
+            found |= _scheme_keywords(resolve_vars(d.value, table))
+    return found
 
 
 def _scheme_keywords(value: str) -> set[str]:
@@ -1063,8 +1112,16 @@ def extract(bundle: Bundle, *, merge_threshold: float = 0.02,
     # `default_appearance` feeds every `_build` call below regardless —
     # `--no-themes` still has to pick a branch for a site that writes
     # `light-dark(): dark` and confirms only `color-scheme: dark`.
+    #
+    # T26 adds `_theme_scoped_scheme_keywords` alongside the original
+    # unscoped-only `_page_color_scheme`: a `[data-theme="dark"]
+    # { color-scheme: dark }` toggle confirms its own keyword by its own
+    # selector marker, the same trust `theme_scope` already extends to
+    # `.dark`/`[data-bs-theme=dark]`, rather than needing to DOM-match a
+    # state a static capture cannot hold both sides of at once.
     table = build_var_table(sheets, page=page, layers=layers, properties=properties)
-    scheme_kw = _scheme_keywords(_page_color_scheme(sheets, page, layers, table))
+    scheme_kw = (_scheme_keywords(_page_color_scheme(sheets, page, layers, table))
+                 | _theme_scoped_scheme_keywords(sheets, table))
     scopes = _scopes_present(sheets, table, scheme_kw) if themes else set()
     default_appearance = "dark" if scheme_kw == {"dark"} else "light"
 

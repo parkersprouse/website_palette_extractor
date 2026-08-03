@@ -62,7 +62,7 @@ reached only through `images.py`, behind `--images`.
 
 ```bash
 python3 -m palettekit <target> -o out    # target: .har | URL | .html/.css path
-python3 -m unittest discover             # 184 tests, all must pass (needs the deps)
+python3 -m unittest discover             # 197 tests, all must pass (needs the deps)
 python3 -m palettekit x.har --no-themes  # collapse a two-theme site into one
 ruff check .                             # must stay clean; config in pyproject
 python3 -m palettekit x.har --list-sources   # diagnose framework noise first
@@ -190,7 +190,7 @@ sources.py   →  cssparse.py  →  extract.py  →  emit.py
 | `cssparse.py` | 1067 | `tinycss2` integration, `var()`, `selector_weight`, roles, theme scopes, `@layer` names, `color-scheme` pass-through (T10), `@supports` evaluation (T23), `@property` registrations (T22) |
 | `dom.py` | 718 | `html.parser` → `ElementTree` shim, `cssselect2` matching of `<html>`/`<body>`, specificity, plus `full_tree`/`elements_matching`/`wrap_tree` (T9: real DOM below the page element), `selector_reach` (T18: does a selector match anything, real/none/untestable), `element_signature` (T19: a short label for one real matched element), `_compile_selector_parts` (T25: one bad selector-list branch costs only itself), and `untestable_reason` (T24: which of the two causes made `selector_reach` answer `None`) |
 | `sources.py` | 292 | `load_har` / `load_url` / `load_paths` → `Bundle` |
-| `extract.py` | 1819 | `extract()`, the cascade, per-theme `_build`, ground, merging, statuses, naming, `resolve_by_ancestry`/`resolve_by_ancestry_kind` (T9, non-inheriting-aware since T22), `Entry.all_unmatched` (T18), per-usage `match_count`/`match_samples` (T19), `_page_color_scheme`/`_scopes_present`'s confirmation gate (T10), `property_registrations` (T22), `Entry.all_dynamic_only`/`Usage.reach_reason` (T24) |
+| `extract.py` | 1887 | `extract()`, the cascade, per-theme `_build`, ground, merging, statuses, naming, `resolve_by_ancestry`/`resolve_by_ancestry_kind` (T9, non-inheriting-aware since T22), `Entry.all_unmatched` (T18), per-usage `match_count`/`match_samples` (T19), `_page_color_scheme`/`_scopes_present`'s confirmation gate (T10), `_theme_scoped_scheme_keywords` (T26), `property_registrations` (T22), `Entry.all_dynamic_only`/`Usage.reach_reason` (T24) |
 | `emit.py` | 1059 | Emitters; `_HTML` is the report template (T20: status sub-headings, T24: always-present Caveats section) |
 | `images.py` | 148 | Optional image quantisation, not part of the token set |
 | `__main__.py` | 255 | CLI; `main()` guards `PYTHON_FLOOR` before anything else |
@@ -814,13 +814,33 @@ because the obvious implementation produced plausible but wrong output.
     resolves the winning value the same way `build_var_table` resolves a
     custom property — invariant 19's own `_page_specificity`/`_cascade_key`,
     applied to one ordinary property instead of the whole custom-property
-    population, and deliberately unscoped-only (~~a `color-scheme` written
-    *inside* a theme scope is a shape no corpus site has shown~~ — **one has,
-    since (`PLAN.md` T26, filed 2026-08-03, not yet fixed): a
-    `[data-theme="dark"] { color-scheme: dark }`-style toggle is exactly this
-    shape, and this gate reports one theme instead of two on a site using it.
-    Left open rather than patched — see T26 for why the fix isn't
-    mechanical**). `extract._scopes_present` gates its `light-dark()` →
+    population, and unscoped-only for that one cascade path. ~~A
+    `color-scheme` written *inside* a theme scope is a shape no corpus site
+    has shown~~ — **one has, and it's fixed: T26 (`PLAN.md`, landed
+    2026-08-03).** A `[data-theme="dark"] { color-scheme: dark }`-style
+    toggle rule cannot DOM-match through `_page_color_scheme`'s cascade path
+    for *both* keywords at once — a static capture freezes one `data-theme`
+    state, so the sibling `[data-theme="light"]` rule structurally cannot
+    also match in the same capture. `extract._theme_scoped_scheme_keywords`
+    covers this the same way `theme_scope` already trusts `.dark`/
+    `[data-bs-theme=dark]` to mean "this site has a dark theme" without
+    requiring the marker to be present in the captured markup: every
+    `color-scheme` declaration carrying a selector-theme scope
+    (`Declaration.theme` truthy) is trusted for its own declared keyword
+    unconditionally, unioned with `_page_color_scheme`'s unscoped-cascade
+    result. Two designs were weighed at filing and turned out to produce
+    identical results on every corpus site that carries `color-scheme` at
+    all, so the simpler, symmetric one was taken rather than treated as an
+    owner-arbitration question with nothing to arbitrate — see T26's own
+    write-up in `PLAN.md` for the corpus comparison that decided it, and for
+    the one unpredicted movement it found (`mdn.har`'s light theme relabels
+    from `id:"base"` to `id:"light"`/`scope:"light"` — hex sets and grounds
+    byte-identical, only the label changed, because MDN's own explicit
+    toggle markup — present in its CSS, absent from this particular static
+    capture's `<html>` — now registers a scope the generic themed-color path
+    alone did not).
+
+    `extract._scopes_present` gates its `light-dark()` →
     `{"light","dark"}` registration on `{"light","dark"} <= scheme_keywords`;
     unconfirmed, the colors still enter the palette, reading whichever single
     branch `extract._build`'s `default_appearance` selects — `"dark"` if the

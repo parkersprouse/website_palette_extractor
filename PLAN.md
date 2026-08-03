@@ -830,6 +830,17 @@ Accuracy gaps left by phases 1–4:
       `mdn.har`'s `light-dark()` polyfill fallback. See T23's own entry
       below for the design (a leaf never returns confirmed-`False`, only
       `True`/unknown) and both corpus results
+- [ ] **T24** — a report "Caveats" section naming colors whose only evidence
+      is a structurally unconfirmable selector (`:hover`, `:focus`,
+      `:focus-visible`, …) — **filed 2026-08-02, requested by the owner
+      after T18/T19/T21's own "untestable" investigation.** Unlike T21/T22,
+      this is the bucket nothing can ever close: a dynamic pseudo-class
+      describes an interaction state, not markup, so no capture — however
+      complete — resolves it. Measured on the live corpus, not assumed: 9
+      (`ui.shadcn.com`), 7 (`tailwindcss.com`) and 13 (`ground.news`) `live`
+      entries rest *entirely* on such a selector today, with zero signal to
+      the reader; both hand-written sites (`fleshandbonedesign.com`,
+      `parkersprouse.me`) have none. Not started. See T24's own entry below
 
 Repo and process:
 
@@ -2487,6 +2498,121 @@ with corpus evidence, not a general `@supports` evaluator, and the
 general case accurately.
 
 **Diff level:** JSON (`generated` dropped) across all seven frozen bundles.
+
+### T24 — A "Caveats" section for structurally unconfirmable colors
+
+**Filed 2026-08-02**, requested by the owner after the same conversation
+that filed T21/T22 — explaining the three different shapes of "untestable"
+(a dynamic pseudo-class, a JS-hydration gap, a pseudo-element the code
+discards unnecessarily) surfaced one this project hadn't named anywhere:
+**a `:hover`/`:focus`-style rule is not merely unverified today, it can
+never be verified by any capture, however complete.** T21 is a real gap
+(the library already answers; the code discards it). T22 is a real gap (the
+CSS is right there, unread). The "Potential future expansion" section above
+is a deliberate non-goal that more engineering — a browser engine — could
+still close. This is none of those: no markup capture, however complete,
+resolves an interaction state, because the state doesn't exist until a user
+is actually interacting. That is a different *kind* of gap from everything
+else filed in this document, and today it produces zero signal — a `live`
+entry sourced entirely from `.foo:hover` reads identically to one painted at
+rest.
+
+**Measured on the real corpus before writing anything, not assumed.** Using
+`dom`'s own classification (a selector is `dynamic-only` when every branch
+`cssselect2` reports `never_matches` and none carries a pseudo-element —
+kept deliberately distinct from "uncompilable," below) against every
+`Usage` on a real `extract()` run:
+
+| Bundle | Entries entirely `dynamic-only`-sourced |
+|---|---:|
+| `ui.shadcn.com.har` | 9 |
+| `ground.news.har` | 13 |
+| `tailwindcss.com.har` | 7 |
+| `fleshandbonedesign.com.har` | 0 |
+| `parkersprouse.me.har` | 0 |
+
+Sample: ui.shadcn.com's `#e7000b` is reported plain `live` with its only
+usage being `.hover\:bg-destructive\/80:hover` — a red the reader has no way
+to know is a *maybe*, not a *definitely*. The zero counts on both
+hand-written sites aren't a coincidence worth ignoring: utility-class
+frameworks generate a `:hover`/`:focus` variant for nearly every color
+utility they ship, so this is structurally a framework-heavy-site problem
+more than a general one — worth knowing before assuming every site needs
+the caveat rendered.
+
+**Deliberately narrower than "everything `matched is None`."** `Usage.matched
+= None` today conflates three causes this task must *not* treat alike:
+
+1. No captured HTML at all (a bare `.css` input) — uninteresting here; there
+   is nothing this section could single out, the whole document is
+   unconfirmed.
+2. An uncompilable selector — `cssselect2` doesn't recognise it (a
+   vendor-prefixed pseudo-class) or `_is_blanket`-shaped constructs like
+   `*,:before,:after,::backdrop`. This is a **library/parser coverage**
+   question, the same flavor of gap as T21, not a structural impossibility —
+   a different selector engine might answer it. Corpus-common (106–187
+   occurrences per major bundle, measured alongside the table above) but out
+   of scope for this task specifically.
+3. A selector every one of whose branches is a dynamic pseudo-class
+   (`cssselect2`'s own `never_matches`) — the one this task is about.
+
+Lumping (2) into "permanently unknowable" would be dishonest — T21's own
+finding is that some of what looks untestable today is actually just
+undertested. This task's classification has to keep that line intact, not
+blur it for the sake of one simpler caveat.
+
+**Shape of the change, sketched rather than designed.**
+
+- **Data.** `dom.py` needs a function distinguishing "dynamic-only" from
+  "uncompilable" from plain "no basis" — `_compile_usable`'s current `None`
+  return doesn't carry a reason. Likely a sibling to `selector_reach`
+  returning an enum/reason rather than reusing its boolean-ish tri-state,
+  since a fourth outcome squeezed into a `bool | None` return is exactly the
+  kind of collapsing invariant 27's own history (T18's own corpus
+  investigation) warns against.
+- **Threading.** `Usage` likely gains a marker for its own selector's
+  classification (mirroring `match_count`/`match_samples`'s T19 precedent
+  rather than inventing a new shape); `Entry` gains an `all_dynamic_only`-
+  style unanimity check, the exact same pattern `all_unmatched` (invariant
+  27) already established: *every* usage has to be dynamic-only for the
+  color's `live` status to be entirely resting on unconfirmable ground — one
+  ordinary matching usage alongside a `:hover` one means the color is
+  genuinely painted regardless, and no caveat is warranted for that entry.
+- **JSON.** Leaning toward extending T19's existing `examples[]` shape
+  rather than a parallel mechanism — `matchCount: null` already means "no
+  basis"; a `reason` field (`"dynamicState" | "uncompilable" |
+  "noCapturedHtml"`) turns that null into a specific, additive answer
+  instead of adding a whole new key namespace. Worth deciding against the
+  alternative (a dedicated entry-level flag) once this is picked up, not
+  now.
+- **Report.** A new, **always-present** section — unlike the per-site
+  `warnings` box (`emit.py`'s `#warnings`, only rendered when
+  `doc.warnings.length`), this should explain the *category* generically
+  even on a site that doesn't trigger it, the same way `renderFooter()`'s
+  static status vocabulary already explains `saved`/`inert`/`unmatched`
+  regardless of which ones a given palette actually has. Then, when the
+  current site does have `all_dynamic_only` entries, name them specifically
+  — mirroring `unmatched`'s own precedent of naming affected entries rather
+  than only gesturing at a global disclaimer. Placement: near the footer/
+  `#warnings` area, not inside the "Where each color came from" `<details>`
+  (T19's table already shows per-example match counts; a reader scanning
+  live swatches for outright guarantees is a different use case than a
+  reader auditing provenance).
+
+**What this does not fix.** No status or ranking changes — a dynamic-only
+entry stays `live`, correctly, per invariant 27's own "unconfirmed is not
+the same as absent" reasoning; this task is purely a transparency addition
+on top of an already-correct classification. Additive JSON only, no
+`schemaVersion` bump, same promise as T18/T19.
+
+**Diff level:** additive JSON key-set diff across all five frozen bundles,
+confirming the per-bundle `all_dynamic_only` entry counts land on exactly
+9/13/7/0/0 (the table above) — a number this task can be checked against
+before it's trusted, the same way T19's own corpus numbers were pinned
+before landing. Browser verification of the new section on a bundle with a
+non-zero count (`ui.shadcn.com`) and one with zero (`parkersprouse.me`), to
+confirm the generic explanation still renders when nothing site-specific
+does.
 
 ### T10 — Read `color-scheme` to confirm a `light-dark()` site is two-themed
 

@@ -814,9 +814,13 @@ because the obvious implementation produced plausible but wrong output.
     resolves the winning value the same way `build_var_table` resolves a
     custom property — invariant 19's own `_page_specificity`/`_cascade_key`,
     applied to one ordinary property instead of the whole custom-property
-    population, and deliberately unscoped-only (a `color-scheme` written
-    *inside* a theme scope is a shape no corpus site has shown).
-    `extract._scopes_present` gates its `light-dark()` →
+    population, and deliberately unscoped-only (~~a `color-scheme` written
+    *inside* a theme scope is a shape no corpus site has shown~~ — **one has,
+    since (`PLAN.md` T26, filed 2026-08-03, not yet fixed): a
+    `[data-theme="dark"] { color-scheme: dark }`-style toggle is exactly this
+    shape, and this gate reports one theme instead of two on a site using it.
+    Left open rather than patched — see T26 for why the fix isn't
+    mechanical**). `extract._scopes_present` gates its `light-dark()` →
     `{"light","dark"}` registration on `{"light","dark"} <= scheme_keywords`;
     unconfirmed, the colors still enter the palette, reading whichever single
     branch `extract._build`'s `default_appearance` selects — `"dark"` if the
@@ -1305,6 +1309,17 @@ answered `None`; `Usage.reach_reason` carries the answer (plus
 `"noCapturedHtml"`, read directly off `wrapped_root is None` in
 `extract._build` rather than handed to `untestable_reason`, which has no way
 to know it) through to `Entry.all_dynamic_only`'s unanimity check.
+
+**Verified against a purpose-built fixture, not only `ui.shadcn.com`'s
+incidental `:hover` utilities.** `pseudo_selector_example.har` (owner-supplied,
+2026-08-03) is a hand-written page whose `button` rule sets a resting color
+and whose `button:hover`/`:focus`/`:active` each set a color found nowhere
+else, with a real `<button>` in the captured markup — the detail that makes
+this a genuine test of `dynamicOnly` rather than of `unmatched` (T18), since a
+base compound matching nothing would explain the missing confirmation a
+different way. All three interaction-only colors came back `dynamicOnly:
+true`/`reason: "dynamicState"`/`matchCount: null`; the resting color came back
+unflagged with `matchCount: 1`.
 
 ## Themes
 

@@ -865,6 +865,16 @@ Accuracy gaps left by phases 1–4:
       hitting the same root cause. See T25's own entry below for the full
       corpus verification and why `matches_page_element`/
       `selector_specificity` stay out of scope
+- [ ] **T26** — `_page_color_scheme`'s unscoped-only gate (T10) misses a
+      `color-scheme` confirmed only through a selector-scoped theme toggle
+      (`[data-theme="dark"] { color-scheme: dark }`), so a `light-dark()`
+      site using that pattern reports one theme instead of two, and the
+      wrong branch's ground — **filed 2026-08-03, found verifying T24
+      against an owner-supplied fixture that happened to also exercise this
+      shape.** Not implemented — this is the exact counter-example T10's own
+      docstring said was "left for a future counter-example, the same way
+      the rest of T10 was." See T26's own entry below for the corpus
+      evidence and the design question it raises
 
 Repo and process:
 
@@ -2820,6 +2830,22 @@ general case accurately.
 > implementation before being trusted (`git stash push palettekit/`,
 > the T25/T22 discipline), which they did — four of six errored on a
 > missing `reason`/`dynamicOnly` key entirely.
+>
+> **`pseudo_selector_example.har`, added 2026-08-03 (owner-supplied, after
+> landing), is the first purpose-built fixture for this shape — everything
+> above was verified against `ui.shadcn.com`'s incidental `:hover` utilities,
+> not a fixture built to isolate the mechanism.** A hand-written page with
+> `button { background-color: light-dark(#bdbdbd, #52505e); … }` and
+> `button:hover`/`button:focus`/`button:active` each setting a color found
+> nowhere else in the sheet, with a real `<button class="theme-toggle">` in
+> the captured markup — the discriminating detail, since a base compound that
+> matches nothing would let `unmatched` (T18) explain the missing confirmation
+> instead of `dynamicOnly`. Ran end-to-end: `#ffffff` (hover), `#800000`
+> (focus, `maroon`), `#ffa500` (active, `orange`) all came back
+> `dynamicOnly: true`, `reason: "dynamicState"`, `matchCount: null`; the
+> resting-state `#bdbdbd`/`#52505e` from the bare `button` rule came back
+> unflagged with `matchCount: 1`. Exactly the mechanism as designed, on a
+> fixture that could have falsified it.
 
 **Filed 2026-08-02**, requested by the owner after the same conversation
 that filed T21/T22 — explaining the three different shapes of "untestable"
@@ -3176,6 +3202,102 @@ is a different, larger problem (parsing and evaluating a boolean feature
 query) than anything this task's diff level covers.
 
 **Diff level:** theme count and ids per site.
+
+### T26 — `_page_color_scheme`'s unscoped-only gate misses a selector-scoped confirmation
+
+**Filed 2026-08-03**, found verifying T24 against `pseudo_selector_example.har`
+— a fixture the owner added specifically to exercise structurally
+unconfirmable `:hover`/`:focus`/`:active` colors (T24's own subject).
+Confirming T24 worked meant running it end-to-end, and the same fixture's
+`light-dark()` usage turned up a second, unrelated finding: T10's own
+docstring, at the line the gate lives on, already named this shape and
+deferred it —
+
+> Deliberately unscoped-only (`d.theme == ""`): a `color-scheme` written
+> *inside* a theme scope is a shape no corpus site has shown. Left for a
+> counter-example the same way the rest of T10 was.
+
+This fixture is that counter-example.
+
+**The shape.** The page writes an ordinary attribute-toggle theme mechanism
+— `[data-theme="light"] { color-scheme: light }` and
+`[data-theme="dark"] { color-scheme: dark }`, switched by a click handler —
+alongside `html, body { background-color: light-dark(#efefec, #202122) }`
+and three more `light-dark()` declarations on `button`/`button:hover`/
+`button:focus`/`button:active`. The captured `<html>` carries
+`data-theme="dark"`. This is structurally the same pattern invariant 19 already
+names for custom properties (`[data-bs-theme=dark]`) and the same one
+`selector_theme` (`cssparse.py`) already recognizes for ordinary theme
+detection — just applied to `color-scheme` specifically, which is the one
+property T10 built its own, separate, unscoped-only resolution path for.
+
+**Verified directly, not inferred from the palette.** Instrumented
+`extract._page_color_scheme`/`_scheme_keywords` against the fixture:
+
+```
+resolved color-scheme value: ''
+scheme_keywords: set()
+```
+
+even though the real page genuinely is two-themed and the captured `<html>`
+really does carry `data-theme="dark"`. Cause confirmed by printing each
+`color-scheme` declaration's own `.theme` field:
+
+```
+'root' theme= ''      value= 'light dark'   # a `root`/`:root` typo — doesn't reach the page either way, a red herring
+'[data-theme="light"]' theme= 'light'  value= 'light'
+'[data-theme="dark"]'  theme= 'dark'   value= 'dark'
+```
+
+Both real declarations are selector-theme-scoped (`d.theme` truthy), so
+`_page_color_scheme`'s `d.theme` check — the gate's own "deliberately
+unscoped-only" design — skips both, `best` stays `None`, and
+`{"light","dark"} <= scheme_keywords` fails. (The `root`/`:root` typo in the
+fixture's own CSS is a separate, inert bug in the test page — verified
+`matches_page_element("root", page)` is `False` — and not the actual cause:
+even a corrected `:root { color-scheme: light dark }` wouldn't change
+anything here, since the real mechanism is the two scoped rules, not that
+one.)
+
+**Effect.** `extract()` builds one theme (`base`, appearance `light`, ground
+`#efefec`) instead of two, and the reported ground is the *light* branch of
+`light-dark(#efefec, #202122)` even though the HAR's own captured `<html>`
+carries `data-theme="dark"` — the state that was actually captured. Run
+end-to-end and confirmed: `-o` output shows exactly one theme, ground
+`#efefec`.
+
+**Why this isn't a quick fix, and stays filed rather than patched inline.**
+Resolving it means deciding what "confirmed" means when only one of the two
+scoped values can ever reach the *captured* DOM at once — a static HAR
+freezes one `data-theme` state, so `[data-theme="light"]`'s rule structurally
+cannot DOM-match in the same capture that has `[data-theme="dark"]` on
+`<html>`. At least two designs resolve that differently:
+
+- Trust a selector-theme-scoped `color-scheme` declaration to confirm its own
+  keyword from the CSS alone, the same way `theme_scope`/`_theme_plan`
+  already trust `.dark`/`[data-bs-theme=dark]` to mean "this site has a dark
+  theme" without requiring the class or attribute to be present in the
+  captured markup. Symmetric, and closest to how the rest of this tool
+  already treats theme scopes — but it means `_page_color_scheme` stops being
+  page-reach-gated the way `build_var_table`/invariant 19 deliberately made
+  it, for this one property.
+- Confirm each keyword independently — DOM-match the scope that's actually
+  present in this capture (`dark`, here) the way the gate does today, and
+  separately treat *any* selector-scoped `color-scheme` declaration for the
+  other keyword as evidence the CSS declares it, without requiring that one
+  to also DOM-match. Asymmetric, and closer to "don't invent a theme that
+  isn't there" — but is a different rule from the first option, not a
+  simplification of it.
+
+This is the same shape of decision T10's own gate was — "a page that never
+declares a keyword renders one branch always, and calling that two-themed is
+wrong" — applied to a case T10 explicitly left open. It is the owner's call,
+the same way T10's own design was.
+
+**Diff level**, if implemented: theme count and ground per site, across all
+eight corpus bundles plus `pseudo_selector_example.har` — same convention as
+T10's own diff level, since this changes `_theme_plan`'s input for any site
+using this pattern.
 
 ---
 

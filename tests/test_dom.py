@@ -7,6 +7,7 @@ from palettekit.dom import (
     full_tree,
     matches_page_element,
     page_elements,
+    reach_elements,
     selector_matches,
     selector_reach,
     wrap_tree,
@@ -157,6 +158,11 @@ class TestFullTree(unittest.TestCase):
         self.assertIsNone(selector_matches(".theme-neutral", el))
 
     def test_elements_matching_refuses_pseudo_elements_and_dynamic_state(self):
+        """`elements_matching` backs T9's real-inheritance walk, a different
+        question than T18/T19's reach (see `reach_elements` below, T21,
+        `PLAN.md`) -- a pseudo-element styles a generated box, not a real
+        element real inheritance can originate from, so this stays refused.
+        """
         tree = full_tree(self.HTML)
         self.assertEqual(elements_matching(".bg-card::after", tree), [])
         self.assertEqual(elements_matching(".bg-card:hover", tree), [])
@@ -201,11 +207,31 @@ class TestSelectorReach(unittest.TestCase):
         """
         self.assertIsNone(selector_reach(".bg-card:hover", self.wrapped()))
 
-    def test_a_pseudo_element_is_none_not_false(self):
-        self.assertIsNone(selector_reach(".bg-card::after", self.wrapped()))
+    def test_a_pseudo_elements_base_compound_answers_reach(self):
+        """T21: `.bg-card::after` is not refused -- `cssselect2` still tests
+        its base compound `.bg-card`, which is on the page, so this is `True`,
+        not the `None` "no basis to answer" this used to collapse pseudo
+        -elements into alongside genuinely untestable dynamic states.
+        """
+        self.assertIs(selector_reach(".bg-card::after", self.wrapped()), True)
+
+    def test_a_pseudo_element_on_an_absent_class_is_false(self):
+        self.assertIs(
+            selector_reach(".no-such-class::after", self.wrapped()), False)
 
     def test_a_selector_that_will_not_compile_is_none_not_false(self):
         self.assertIsNone(selector_reach(":is( , .x)", self.wrapped()))
+
+    def test_reach_elements_answers_a_pseudo_elements_base_compound(self):
+        """T21: `reach_elements` backs `matchCount`/`examples[].matches` for
+        a usage `selector_reach` found `True` for -- including a pseudo
+        -element usage, where the base compound's real elements are what
+        gets reported. Deliberately not `elements_matching`, which still
+        refuses pseudo-elements for T9's different question.
+        """
+        found = reach_elements(".bg-card::after", self.wrapped())
+        self.assertEqual(len(found), 2)
+        self.assertEqual({e.local_name for e in found}, {"span"})
 
     def test_a_list_with_one_testable_branch_answers_from_that_branch(self):
         """`.bg-card:hover, .no-such-class` has one untestable branch and one

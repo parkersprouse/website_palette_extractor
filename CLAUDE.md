@@ -1001,20 +1001,30 @@ because the obvious implementation produced plausible but wrong output.
     `Entry.all_unmatched`, `dom.selector_reach`). `dom.selector_reach` answers
     three things, not two: `True` (matched a real element), `False` (compiled,
     was actually tested, matched nothing), `None` (could not be tested at
-    all — uncompilable, or every branch is a pseudo-element or a dynamic state
-    `cssselect2` marks `never_matches`). `all_unmatched` checks `u.matched is
-    False` specifically, not `not u.matched`, so a `None` cannot silently read
-    as a non-match.
+    all — uncompilable, or every branch is a dynamic state `cssselect2` marks
+    `never_matches`). `all_unmatched` checks `u.matched is False`
+    specifically, not `not u.matched`, so a `None` cannot silently read as a
+    non-match.
+
+    **A pseudo-element branch (`.card::after`) is not one of the untestable
+    cases — since T21 (`PLAN.md`, landed 2026-08-02) it is tested against its
+    *base compound*, and answers whatever `.card` itself answers.** Read
+    T21's own note under invariant 27's amendment below before touching
+    `dom._compile_reachable`/`dom.reach_elements` or `extract.consumers_of` —
+    the two filters look interchangeable and are not, and sharing them
+    reintroduces a real, corpus-found bug in T9's ancestry resolution rather
+    than merely a missed edge case.
 
     This is not a hypothetical guard. `elements_matching_wrapped` — T9's own
-    existing function — already collapses `None` and `False` to the same `[]`,
-    because none of its callers needed the distinction; reusing it for T18
-    would have flagged every `:hover`/`:focus`/`::after`/`::before`
-    declaration on every site as content-not-on-the-page, including
-    hand-written, fully-static ones. `dom.selector_reach` is the tri-state
-    function built to keep the two apart, and `_compile_usable` is the shared
-    filter both functions now call so they can't drift on what counts as
-    untestable.
+    existing function — already collapses `None` and `False` to the same `[]`
+    for a pseudo-element and a dynamic state alike, because none of its
+    callers needed the distinction; reusing it for T18 would have flagged
+    every `:hover`/`:focus`/`::after`/`::before` declaration on every site as
+    content-not-on-the-page, including hand-written, fully-static ones.
+    `dom.selector_reach` is the tri-state function built to keep `None` and
+    `False` apart; `_compile_reachable` is its own filter, deliberately not
+    shared with `elements_matching_wrapped`'s `_compile_usable` — see T21
+    below for why.
 
     **The corpus investigation here is worth keeping because the first
     reading of it was wrong, and wrong in a specific, catchable way.**
@@ -1111,6 +1121,80 @@ because the obvious implementation produced plausible but wrong output.
     than guessing, `saved`/`inert` priority holding over `unmatched`, and a
     bare `.css` input with no captured HTML at all staying `live` rather than
     manufacturing a determinate answer from zero evidence).
+
+    **T21 (`PLAN.md`, landed 2026-08-02): a pseudo-element branch is tested
+    against its *base compound* instead of being refused.**
+    `dom._compile_usable` used to drop every selector with
+    `sel.pseudo_element is not None`, lumping `.card::after` in with
+    `.card:hover`'s genuine unanswerability — but `cssselect2` happily
+    evaluates `.test()` against a pseudo-element selector's base compound;
+    `.pseudo_element` is only an annotation for the caller about a generated
+    box `cssselect2` cannot itself represent as a tree node. Verified
+    directly: `cssselect2.compile_selector_list(".card::after")[0].test(div)`
+    is `True` for a real `<div class="card">`. Refusing the answer it already
+    has made `unmatched`/`matchCount`/`matches` report `None` for a
+    normalize-style reset's real `::before`/`::after` rules regardless of
+    whether the base selector is on the page — the shape this task was filed
+    against, and `parkersprouse.me.har`'s own reset stylesheet is the
+    corpus's one live example of it.
+
+    **`wrapped_root.query_all(*usable)` cannot be used to test it, which the
+    filing's own sketch did not anticipate.** `cssselect2`'s `query_all`
+    re-filters its arguments through `ElementWrapper._compile`, which drops
+    `pseudo_element is not None` a *second* time, independently of and after
+    any filtering the caller already did — verified directly, the identical
+    compiled selector answers `True` from `.test(node)` and empty from
+    `wrapped_root.query_all(sel)`. `dom.reach_elements`/`selector_reach`
+    instead walk `wrapped_root.iter_subtree()` by hand and call
+    `sel.test(element)` directly, which carries no such filter.
+
+    **The filing's implementation predicted only `matched`/`matchCount`
+    would move, and one declaration on `tailwindcss.com.har` also changed
+    color — which is not a hex the palette lost, but the sign of a second,
+    real bug the first draft of this task introduced rather than found.**
+    T21's first draft shared one filter between `selector_reach`
+    (T18/T19's reach question) and `extract.consumers_of` (T9's real
+    -inheritance question, `resolve_by_ancestry_kind`), on the reasoning that
+    both were "does this selector reach a real element." They are not the
+    same question: T9 asks which element a declaration's *value* directly
+    applies to — the element real CSS inheritance could originate from — and
+    a pseudo-element's generated box is not that element; T9 was never meant
+    to change. But `dom.selector_matches`, the *candidate* matcher
+    `_ancestry_winners` uses to test a property's real setters against a
+    consumer's ancestors, still refuses pseudo-elements unconditionally and
+    was correctly left untouched — so once the shared filter let a
+    pseudo-element consumer through, T9's ancestry walk ran, found no
+    candidate `selector_matches` could see (because the real setters were
+    *also* pseudo-element-scoped Tailwind utilities), and confirmed
+    `"absent"` — a status `resolve_by_ancestry_kind`'s own contract treats as
+    safe to override last-wins with, per invariant 19's T9 addendum. On
+    `tailwindcss.com.har`, `.after\:inset-ring:after`'s
+    `--tw-inset-ring-color` went from a wrong last-wins guess (`#00a6f4ff`,
+    Tailwind's alphabetically-last `.inset-ring-*` utility, painted nowhere
+    on the page) to no color at all — a **false confirmed absence**, worse
+    than the guess it replaced, and not merely a missed edge case.
+
+    Fixed by keeping the two questions on two filters:
+    `dom._compile_usable`/`elements_matching_wrapped` (T9's, unchanged,
+    still refuses pseudo-elements) and a new
+    `dom._compile_reachable`/`dom.reach_elements` (T18/T19's, base-compound
+    -aware). `extract._build` correspondingly gained a second memoized cache,
+    `match_elements_of`, alongside the pre-existing `consumers_of` — the two
+    must not be the same cache either, since `samples_of`/`matchCount` need
+    the base-compound-aware answer and `consumers_of`'s off-page-var
+    resolution must not see it. Guarded by
+    `test_a_pseudo_element_consumer_does_not_trigger_ancestry_override`
+    (`tests/test_extract.py`), built to fail against the shared-filter draft
+    and pass against the split one — checked directly, per this file's own
+    "a test that passes before and after tests nothing" discipline, rather
+    than trusted by inspection.
+
+    Verified on the corpus at the per-declaration `matched`/`matchCount`
+    level (the diff convention T18/T19 set): across all seven frozen
+    bundles, every moved key is `None` → a determinate value and nothing
+    else — the union of keys before and after is identical, so no hex
+    entered or left any palette. That was not true of the shared-filter
+    draft, which is exactly why the split exists.
 
 28. **A `@supports` leaf never confirms unsupported — only supported, or
     unknown** (`cssparse.supports_condition`, T23). `@media` and `@supports`

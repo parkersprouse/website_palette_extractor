@@ -231,14 +231,20 @@ def wrap_tree(root: ET.Element) -> cssselect2.ElementWrapper:
 
 
 def _compile_usable(selector: str) -> list | None:
-    """The parts of a selector list a real element can be tested against.
+    """The parts of a selector list a real element can be directly styled by.
 
-    None covers everything `elements_matching_wrapped`/`selector_reach` treat
-    as "no basis to answer": a selector `cssselect2` cannot compile, and a
-    selector list where every branch is a pseudo-element or a dynamic state
-    `cssselect2` marks `never_matches`. Shared so the two callers can't drift
-    on what counts as untestable — they used to duplicate this try/except and
-    filter inline.
+    None covers everything `elements_matching_wrapped` treats as "no basis to
+    answer": a selector `cssselect2` cannot compile, and a selector list
+    where every branch is a pseudo-element or a dynamic state `cssselect2`
+    marks `never_matches`. A pseudo-element is excluded here on purpose, not
+    merely by inheritance from `cssselect2`'s own `query_all` filtering
+    (which drops it independently — see `elements_matching_wrapped`'s
+    docstring): this function backs T9's real-inheritance walk
+    (`resolve_by_ancestry_kind`, `extract.consumers_of`), and a generated box
+    is not an element real inheritance can originate from or be asked about —
+    see `_compile_reachable` for the different, narrower question T18/T19
+    need answered instead, and T21's own write-up (`PLAN.md`) for why the two
+    must not share a filter despite looking like the same refusal.
     """
     try:
         compiled = cssselect2.compile_selector_list(selector)
@@ -265,6 +271,83 @@ def elements_matching_wrapped(
     return list(wrapped_root.query_all(*usable))
 
 
+def _compile_reachable(selector: str) -> list | None:
+    """The parts of a selector list this project can test reach for (T18/T19).
+
+    Like `_compile_usable`, except a pseudo-element branch (`.card::after`)
+    stays usable rather than being dropped (T21, `PLAN.md`, landed
+    2026-08-02): `cssselect2` still evaluates `.test()` against a
+    pseudo-element selector's *base* compound, since `.pseudo_element` is
+    only an annotation for the caller about a generated box `cssselect2`
+    cannot itself represent as a tree node. Reach against `.card::after`'s
+    base compound `.card` is exactly the question `selector_reach`/
+    `reach_elements` answer — whether the class the rule is written for is on
+    the page — and refusing it lumped a real, testable rule in with
+    `:hover`'s genuine unanswerability.
+
+    **Deliberately not shared with `_compile_usable`, despite the near-
+    identical bodies.** T9's ancestry walk (`extract.consumers_of`, backed by
+    `_compile_usable`) asks a different question — which real element a
+    declaration's *value* directly applies to, the element real CSS
+    inheritance could originate from — and a generated box is not that
+    element. Sharing this filter with `elements_matching_wrapped` was T21's
+    first draft and was wrong: `dom.selector_matches` (T9's own candidate
+    matcher, used by `_ancestry_winners`) still refuses pseudo-elements
+    unconditionally and was never meant to change, so a pseudo-element
+    consumer would make T9 walk real ancestors for a property whose only
+    real setters are *also* pseudo-element-scoped and therefore invisible to
+    that walk — producing a confirmed `"absent"` (which overrides last-wins
+    per `resolve_by_ancestry_kind`'s own contract) for a property that is
+    genuinely set, just not through a selector `selector_matches` can see.
+    Caught on `tailwindcss.com.har`: `.after\\:inset-ring:after`'s
+    `--tw-inset-ring-color` resolved to a wrong last-wins guess (`#00a6f4ff`,
+    Tailwind's alphabetically-last `.inset-ring-*` utility, painted nowhere
+    on the page) before this split, and to nothing at all — a false
+    `"absent"` — in the shared-filter draft, dropping a real, page-painted
+    color. Splitting the filter restores the original last-wins answer for
+    that declaration (still not exact, but not a fabricated non-answer
+    either) and leaves it as a documented gap rather than a regression;
+    fixing it for real needs `selector_matches` to test pseudo-element
+    candidates against their base compound too, which is out of scope here
+    since it changes what T9 confirms, not merely what T18/T19 report.
+    """
+    try:
+        compiled = cssselect2.compile_selector_list(selector)
+    except Exception:
+        return None
+    usable = [sel for sel in compiled if not sel.never_matches]
+    return usable or None
+
+
+def reach_elements(selector: str,
+                   wrapped_root: cssselect2.ElementWrapper
+                   ) -> list[cssselect2.ElementWrapper]:
+    """The real elements `selector_reach` tested this selector against (T19).
+
+    Backs `matchCount`/`matches` for a usage `selector_reach` found `True`
+    for — including a pseudo-element usage, whose base compound is what gets
+    reported (T21, `PLAN.md`): the right unit, since a generated box isn't a
+    separate node this tool could name even if it wanted to.
+
+    **Not `wrapped_root.query_all(*usable)`.** `cssselect2`'s own `query_all`
+    re-filters its arguments through `ElementWrapper._compile`, which drops
+    any selector with `pseudo_element is not None` a *second* time —
+    independently of, and after, `_compile_reachable`'s own filtering above.
+    That means a pseudo-element branch this function deliberately keeps
+    usable so it can be tested against its base compound would silently
+    vanish again inside the very library call meant to test it; verified
+    directly (`sel.test(node)` is `True`, `wrapped_root.query_all(sel)` is
+    empty, for the identical compiled selector and node). `sel.test(element)`
+    carries no such filter, so walking the subtree by hand and calling it
+    directly is what actually reaches the base compound.
+    """
+    usable = _compile_reachable(selector)
+    if usable is None:
+        return []
+    return [el for el in wrapped_root.iter_subtree()
+           if any(sel.test(el) for sel in usable)]
+
+
 def selector_reach(selector: str,
                    wrapped_root: cssselect2.ElementWrapper) -> bool | None:
     """Does this selector match at least one real element? `None` if untestable.
@@ -274,29 +357,38 @@ def selector_reach(selector: str,
     both mean the selector compiled and was actually tested — the difference
     is only whether anything in the document matched. `None` means the
     question could not be asked at all: uncompilable, or every branch is a
-    pseudo-element or a dynamic state `cssselect2` marks `never_matches` (see
-    `_compile_usable`, shared with `elements_matching_wrapped`).
+    dynamic state `cssselect2` marks `never_matches` (see `_compile_reachable`,
+    shared with `reach_elements`). A pseudo-element branch is tested against
+    its *base compound* instead of being refused (T21, `PLAN.md`) —
+    `.card::after` answers whatever `.card` itself answers. This is a
+    deliberately different filter than `elements_matching_wrapped`'s — see
+    `_compile_reachable`'s own docstring for why the two must not share one.
 
     Collapsing `None` into `False` is the specific mistake this function
     exists to prevent. `.old-class:hover` and a genuinely-dead `.old-class`
-    both make `elements_matching_wrapped` return `[]` — that function's
-    empty-list contract does not distinguish "tested, matched nothing" from
-    "could not test the resting-state question at all" (`:hover` has no
-    resting state to test), because none of its existing callers needed that
-    distinction. This one does: flagging every `:hover`/`::after`/`:focus`
-    declaration in a hand-written site as content-not-on-the-page would be
-    wrong on exactly the sites this tool trusts most.
+    both make `reach_elements` return `[]` — that function's empty-list
+    contract does not distinguish "tested, matched nothing" from "could not
+    test the resting-state question at all" (`:hover` has no resting state to
+    test), because none of its existing callers needed that distinction.
+    This one does: flagging every `:hover`/`:focus` declaration in a
+    hand-written site as content-not-on-the-page would be wrong on exactly
+    the sites this tool trusts most.
 
-    `bool(list(...))`, not `bool(...)` — `query_all` returns a generator, and
-    a generator object is truthy regardless of whether it yields anything.
-    Caught by a sanity check against a known-absent selector before this was
-    trusted for T18's own blast-radius measurement, which is why the list
-    call is spelled out here rather than assumed correct by inspection.
+    Walks the subtree and calls `sel.test(element)` directly, the same way
+    `reach_elements` does and for the same reason (T21, `PLAN.md`):
+    `wrapped_root.query_all(*usable)` would silently re-drop any
+    pseudo-element branch through `cssselect2`'s own internal filtering,
+    independently of `_compile_reachable` above — see that function's
+    docstring for the direct verification. `any(...)` over a generator
+    expression short-circuits on the first match, so a selector that reaches
+    something near the start of the document does not pay for walking the
+    rest of it.
     """
-    usable = _compile_usable(selector)
+    usable = _compile_reachable(selector)
     if usable is None:
         return None
-    return bool(list(wrapped_root.query_all(*usable)))
+    return any(sel.test(el) for el in wrapped_root.iter_subtree()
+              for sel in usable)
 
 
 def element_signature(node: cssselect2.ElementWrapper, *, depth: int = 3,
@@ -357,6 +449,10 @@ def elements_matching(selector: str,
     `cssselect2` itself cannot evaluate (a pseudo-element styles a generated
     box, not a real element; `never_matches` has no interaction state to test
     against), and leaves the rest, including `*`, to the caller's judgment.
+    Reach — whether a pseudo-element rule's *base compound* is on the page —
+    is a deliberately different question, answered by `reach_elements`
+    instead (T21, `PLAN.md`); see `_compile_reachable`'s docstring for why
+    this function does not answer it too.
 
     A selector `cssselect2` cannot compile returns no matches rather than
     raising, the same contract every other matcher in this module keeps —

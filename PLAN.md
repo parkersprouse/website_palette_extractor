@@ -808,14 +808,16 @@ Accuracy gaps left by phases 1–4:
       per-status descriptions — **filed 2026-08-02, requested by the owner,
       depends on T18's new status value (landed: `unmatched`).** Not
       started. See T20's own entry below
-- [ ] **T21** — test a pseudo-element selector's base compound against the
+- [x] **T21** — test a pseudo-element selector's base compound against the
       real element, instead of treating every pseudo-element as no-basis —
-      **filed 2026-08-02, found while explaining T18/T19's "untestable"
-      cases to the owner.** `cssselect2` already evaluates `.card::after`
-      correctly against a real `.card` (`sel.test(element)` returns `True`
-      despite `sel.pseudo_element == "after"`); `dom._compile_usable` throws
-      that answer away unconditionally. Not started. See T21's own entry
-      below
+      **filed 2026-08-02, landed 2026-08-02.** Fixed T18/T19's reach
+      question as predicted, and along the way found and fixed a second,
+      unpredicted bug the first draft *introduced*: sharing the new filter
+      with T9's consumer lookup produced a false confirmed `"absent"` on
+      `tailwindcss.com.har`, dropping a real color rather than merely
+      missing an edge case. Landed with the reach and consumer questions on
+      two separate filters. See T21's own entry below for the full
+      write-up and the regression test that guards the split
 - [ ] **T22** — read `@property` registrations (`syntax`/`inherits`/
       `initial-value`) — **filed 2026-08-02, found the same way as T21.**
       Not a hypothetical: `@property` appears in 3 of 5 frozen bundles
@@ -2266,6 +2268,32 @@ stay standalone, `file://`-openable) and the report-theme-readability test
 apply to any new markup this adds, same as the rest of the report.
 
 ### T21 — Test a pseudo-element's base compound instead of refusing it outright
+
+> **Outcome — landed 2026-08-02.** The reach question itself was fixed as
+> filed. The blast-radius prediction below ("expect any pseudo-element
+> usages on real, present selectors to move from `None` to a determinate
+> answer and nothing else to move") was **falsified once, on the first
+> implementation, and corrected before landing** — not merely unpredicted
+> the way T23's `mdn.har` move was. Sharing `dom._compile_usable` between
+> `selector_reach` (this task's own question) and `extract.consumers_of`
+> (T9's real-inheritance question) let a pseudo-element consumer through to
+> T9's ancestry walk, where `dom.selector_matches` — the *candidate* matcher
+> T9 uses, correctly left untouched — still refuses pseudo-elements. On
+> `tailwindcss.com.har` this produced a **false confirmed absence** for
+> `.after\:inset-ring:after`'s `--tw-inset-ring-color`: a real, page-painted
+> color dropped entirely, replacing a wrong-but-present last-wins guess with
+> nothing, which is a worse answer than either the pre-T21 guess or the
+> correct one. Fixed by keeping the reach question
+> (`dom._compile_reachable`/`dom.reach_elements`, base-compound-aware) and
+> T9's consumer question (`dom._compile_usable`/`elements_matching_wrapped`,
+> unchanged, still pseudo-refusing) on two separate filters and two separate
+> `extract._build` caches. See CLAUDE.md invariant 27's own T21 addendum for
+> the full write-up, the corpus numbers, and the regression test
+> (`test_a_pseudo_element_consumer_does_not_trigger_ancestry_override`) built
+> to fail against the shared-filter draft before being trusted. With the
+> split, the corpus verification below holds exactly as originally
+> predicted: `None` → determinate and nothing else, on all seven frozen
+> bundles, key-set identical before and after.
 
 **Filed 2026-08-02**, found while explaining to the owner why T18/T19 report
 `None`/"no basis" for some selectors — three different mechanisms produce

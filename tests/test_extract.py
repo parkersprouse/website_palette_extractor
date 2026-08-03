@@ -754,6 +754,52 @@ class TestAncestryWiredIntoBuild(unittest.TestCase):
         colors = {c["hex"] for c in doc["colors"]}
         self.assertIn("#f5f5f5", colors)
 
+    def test_a_pseudo_element_consumer_does_not_trigger_ancestry_override(self):
+        """T21 (`PLAN.md`): `consumers_of` (this function's own lookup) must
+        stay on the pseudo-refusing filter even though `selector_reach`
+        (T18/T19) no longer does. Found on `tailwindcss.com.har`:
+        `.after\\:inset-ring:after`'s `--tw-inset-ring-color` only has real
+        setters that are *themselves* pseudo-element-scoped
+        (`.after\\:inset-ring-gray-950\\/5:after`) -- invisible to
+        `selector_matches`, T9's own candidate matcher, which was never
+        changed. Letting the pseudo-element consumer lookup return real
+        elements made the ancestry walk run, find no visible winner, and
+        confirm `"absent"` -- which overrides last-wins and drops the color
+        entirely, worse than the plain last-wins guess that was there before.
+
+        This reproduces that shape with a minimal fixture: `--x`'s only
+        matching real elements are consumed by a pseudo-element selector,
+        and its candidates are an unrelated class plus a same-element
+        pseudo-element definition `selector_matches` cannot see either. If
+        `consumers_of` ever starts using the base-compound-aware filter
+        again, the ancestry override fires, finds no visible candidate,
+        confirms `absent`, and this color vanishes -- catching the
+        regression the corpus found.
+        """
+        html = """<!DOCTYPE html><html><head><style>
+  body { background-color: #ffffff; }
+  .other { --x: #f5f5f5; }
+  .card::before { --x: #1d4ed8; }
+  .card::after { color: var(--x); }
+</style></head>
+<body><div class="card">x</div></body></html>
+"""
+        doc = emit.to_document(extract.extract(sources.load_any(
+            write_fixture(html))))
+        # `--x: #1d4ed8` is itself a color-bearing declaration (invariant
+        # 10) and would appear regardless of whether anything consumes it
+        # correctly -- a custom property merges into whatever role consumes
+        # it (`_merge_near_duplicates`'s own `compatible`), so `.card::after`
+        # and `.card::before` land in one entry either way. The real check is
+        # `usedIn`: it names every *usage* actually attributed to this
+        # entry, so `"color"` only appears if `.card::after`'s declaration
+        # resolved to this value -- last-wins across the off-page `--x`
+        # candidates, unconfirmed by any ancestry override, since
+        # `.card::before` is the later declaration. A false `"absent"` drops
+        # the consuming usage silently, leaving only `"--x"` behind.
+        by_hex = {c["hex"]: c for c in doc["colors"]}
+        self.assertIn("color", by_hex["#1d4ed8"]["usedIn"])
+
 
 class TestUnmatchedStatus(unittest.TestCase):
     """T18: a fourth status for a declaration whose selector reaches no real
@@ -851,6 +897,31 @@ class TestUnmatchedStatus(unittest.TestCase):
         by_hex = {c["hex"]: c for c in doc["colors"]}
         self.assertEqual(by_hex["#ff0000"]["status"], "live")
 
+    def test_a_pseudo_element_on_an_absent_class_is_unmatched(self):
+        """T21 (`PLAN.md`): `.old-badge::after`'s base compound `.old-badge`
+        is genuinely absent from the page, and `selector_reach` now says so
+        (`False`) rather than refusing to answer (`None`) -- so this flips
+        `unmatched` the same way a plain absent class already does, instead
+        of `None` silently blocking the flip the way it used to.
+        """
+        html = """<!DOCTYPE html><html><head><style>
+  body { background-color: #ffffff; }
+  .old-badge::after { color: #ff0000; }
+</style></head><body></body></html>
+"""
+        self.assertEqual(self._status_of("#ff0000", html), "unmatched")
+
+    def test_a_pseudo_element_on_a_real_class_stays_live(self):
+        """The base compound `.badge` is on the page, so `.badge::after`
+        reads as `live`, the same as a plain matching selector would.
+        """
+        html = """<!DOCTYPE html><html><head><style>
+  body { background-color: #ffffff; }
+  .badge::after { color: #ff0000; }
+</style></head><body><div class="badge">x</div></body></html>
+"""
+        self.assertEqual(self._status_of("#ff0000", html), "live")
+
 
 class TestMatchDetail(unittest.TestCase):
     """T19: `examples` reports how many real elements a selector reached,
@@ -916,6 +987,22 @@ class TestMatchDetail(unittest.TestCase):
         ex = self._examples_for("#ff0000", html)
         self.assertEqual(ex[0]["matchCount"], 5)
         self.assertEqual(len(ex[0]["matches"]), extract.MATCH_SAMPLES)
+
+    def test_a_pseudo_element_selectors_match_count_is_its_base_compounds(self):
+        """T21 (`PLAN.md`): `.card::after` styles a generated box, not a
+        tree node -- but `matchCount`/`matches` report the real `.card`
+        elements its base compound reaches, rather than `None`.
+        """
+        html = """<!DOCTYPE html><html><head><style>
+  body { background-color: #ffffff; }
+  .card::after { color: #ff0000; }
+</style></head><body>
+  <div class="card">a</div><div class="card">b</div>
+</body></html>
+"""
+        ex = self._examples_for("#ff0000", html)
+        self.assertEqual(ex[0]["matchCount"], 2)
+        self.assertEqual(len(ex[0]["matches"]), 2)
 
 
 if __name__ == "__main__":

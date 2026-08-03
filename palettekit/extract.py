@@ -30,6 +30,7 @@ from .dom import (
     full_tree,
     matches_page_element,
     page_elements,
+    reach_elements,
     selector_matches,
     selector_reach,
     selector_specificity,
@@ -1027,18 +1028,6 @@ def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
                 if wrapped_root is not None else [])
         return consumer_cache[selector]
 
-    # T19: the bounded, formatted sample for `examples[].matches`, memoized
-    # by selector text the same way `consumer_cache` is — a selector reused
-    # across many declarations (a shared utility class, say) would otherwise
-    # re-run `element_signature` on the same elements once per declaration.
-    sample_cache: dict[str, list[str]] = {}
-
-    def samples_of(selector: str) -> list[str]:
-        if selector not in sample_cache:
-            sample_cache[selector] = [element_signature(n) for n in
-                                      consumers_of(selector)[:MATCH_SAMPLES]]
-        return sample_cache[selector]
-
     # T18: does this usage's own selector reach a real element at all — the
     # same hoisted `wrapped_root` as `consumers_of`, memoized the same way.
     # `None` (no captured HTML) rather than `[]`-style False when there is no
@@ -1052,6 +1041,35 @@ def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
                 selector_reach(selector, wrapped_root)
                 if wrapped_root is not None else None)
         return reach_cache[selector]
+
+    # T19: the real elements backing `matchCount`/`examples[].matches` for a
+    # usage `reach_of` found `True` for. **Deliberately not `consumers_of`**
+    # (T21, `PLAN.md`) despite the obvious-looking overlap — `consumers_of`
+    # backs T9's real-inheritance walk and must stay on `_compile_usable`'s
+    # pseudo-refusing filter (see that function's docstring for why sharing
+    # it here produced a false-confirmed `absent` on `tailwindcss.com.har`).
+    # This one is `reach_of`'s own base-compound-testing filter
+    # (`dom._compile_reachable`), memoized the same way.
+    match_cache: dict[str, list] = {}
+
+    def match_elements_of(selector: str) -> list:
+        if selector not in match_cache:
+            match_cache[selector] = (
+                reach_elements(selector, wrapped_root)
+                if wrapped_root is not None else [])
+        return match_cache[selector]
+
+    # The bounded, formatted sample for `examples[].matches`, memoized by
+    # selector text the same way `match_cache` is — a selector reused across
+    # many declarations (a shared utility class, say) would otherwise re-run
+    # `element_signature` on the same elements once per declaration.
+    sample_cache: dict[str, list[str]] = {}
+
+    def samples_of(selector: str) -> list[str]:
+        if selector not in sample_cache:
+            sample_cache[selector] = [element_signature(n) for n in
+                                      match_elements_of(selector)[:MATCH_SAMPLES]]
+        return sample_cache[selector]
 
     # Which branch a `light-dark()` resolves to. A themed build (`scope` set)
     # reads its own branch, same as always. An unscoped build — `--no-themes`,
@@ -1145,16 +1163,16 @@ def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
             reach = reach_of(sel)
             # T19: how many real elements this usage's selector reaches, and
             # a bounded sample of which ones. `reach is False` already means
-            # `selector_reach` ran `_compile_usable` + `query_all` on this
-            # exact selector against this exact root and found nothing, so
-            # `consumers_of` is guaranteed `[]` — asking it again would repeat
-            # that query for every distinct selector in the document, not
-            # just the off-page-var subset T9 needs it for. Only a confirmed
-            # `True` is worth a second, sample-bearing lookup; `None` (no
-            # basis to test at all) leaves both `None`/empty, same as `reach`
-            # itself.
+            # `selector_reach` ran `_compile_reachable` on this exact selector
+            # against this exact root and found nothing, so
+            # `match_elements_of` is guaranteed `[]` — asking it again would
+            # repeat that query for every distinct selector in the document.
+            # Only a confirmed `True` is worth a second, sample-bearing
+            # lookup; `None` (no basis to test at all) leaves both
+            # `None`/empty, same as `reach` itself.
             if reach is True:
-                match_count, match_samples = len(consumers_of(sel)), samples_of(sel)
+                match_count = len(match_elements_of(sel))
+                match_samples = samples_of(sel)
             elif reach is False:
                 match_count, match_samples = 0, []
             else:

@@ -1016,6 +1016,104 @@ class TestUnmatchedStatus(unittest.TestCase):
 """
         self.assertEqual(self._status_of("#ff0000", html), "live")
 
+class TestDynamicOnly(unittest.TestCase):
+    """T24: a color whose only usages are interaction-state selectors can
+    never be confirmed by any capture, however complete -- distinct from
+    `unmatched` (a confirmed non-match) and from an ordinary untested `live`
+    color (undertested, not structurally unknowable).
+    """
+
+    def _color_for(self, hexval, html):
+        doc = emit.to_document(extract.extract(sources.load_any(
+            write_fixture(html))))
+        by_hex = {c["hex"]: c for c in doc["colors"]}
+        return by_hex[hexval]
+
+    def test_a_hover_only_color_is_flagged_dynamic_only(self):
+        html = """<!DOCTYPE html><html><head><style>
+  body { background-color: #ffffff; }
+  .cta:hover { color: #ff0000; }
+</style></head><body><div class="cta">x</div></body></html>
+"""
+        c = self._color_for("#ff0000", html)
+        self.assertEqual(c["status"], "live")
+        self.assertTrue(c["dynamicOnly"])
+        self.assertEqual(c["examples"][0]["reason"], "dynamicState")
+
+    def test_one_resting_usage_clears_the_flag(self):
+        """The same color, painted once at rest and once only on `:hover` --
+        real evidence exists for it, so the entry is not resting entirely on
+        unconfirmable ground even though one of its two usages still is.
+        """
+        html = """<!DOCTYPE html><html><head><style>
+  body { background-color: #ffffff; }
+  .cta { color: #ff0000; }
+  .cta:hover { color: #ff0000; }
+</style></head><body><div class="cta">x</div></body></html>
+"""
+        c = self._color_for("#ff0000", html)
+        self.assertNotIn("dynamicOnly", c)
+
+    def test_a_plain_matching_color_is_not_flagged(self):
+        html = """<!DOCTYPE html><html><head><style>
+  body { background-color: #ffffff; }
+  .card { color: #ff0000; }
+</style></head><body><div class="card">x</div></body></html>
+"""
+        c = self._color_for("#ff0000", html)
+        self.assertNotIn("dynamicOnly", c)
+
+    def test_an_uncompilable_selector_is_not_flagged_dynamic_only(self):
+        """`matched is None` here too, but for a library-coverage reason
+        (T21's territory), not a structural one -- lumping the two together
+        would be the exact "dishonest" caveat T24's own filing rejected.
+        `::backdrop` is a real pseudo-element `cssselect2` doesn't implement
+        (verified directly against the library, same shape as T25's own
+        `*,:before,:after,::backdrop` finding) -- it raises rather than
+        compiling to a `never_matches` selector.
+        """
+        html = """<!DOCTYPE html><html><head><style>
+  body { background-color: #ffffff; }
+  ::backdrop { color: #ff0000; }
+</style></head><body></body></html>
+"""
+        c = self._color_for("#ff0000", html)
+        self.assertNotIn("dynamicOnly", c)
+        self.assertEqual(c["examples"][0]["reason"], "uncompilable")
+
+    def test_no_captured_html_is_not_flagged_dynamic_only(self):
+        """A bare `.css` input leaves every selector untested for a reason
+        that has nothing to do with interaction state -- there is no
+        document at all. Singling out one color here would be noise, not
+        the transparency this task is for.
+        """
+        css = ".cta:hover { color: #ff0000; }"
+        doc = emit.to_document(extract.extract(sources.load_any(
+            write_fixture(css, name="page.css"))))
+        by_hex = {c["hex"]: c for c in doc["colors"]}
+        c = by_hex["#ff0000"]
+        self.assertNotIn("dynamicOnly", c)
+        self.assertEqual(c["examples"][0]["reason"], "noCapturedHtml")
+
+    def test_a_saved_entry_is_not_flagged_dynamic_only(self):
+        """A custom property declared only inside a `:hover` rule and
+        referenced nowhere is `saved` (invariant 10's own check, over the
+        `var()` reference graph), not `live` -- `all_dynamic_only` can still
+        be structurally true for it (every usage's selector genuinely is
+        dynamic-state-only), but `dynamicOnly` must not be set regardless,
+        because the report's Caveats section is about doubting a color's
+        `live` status specifically. Flagging a `saved` entry there would
+        claim doubt about a "live" claim this entry never made.
+        """
+        html = """<!DOCTYPE html><html><head><style>
+  body { background-color: #ffffff; }
+  .old-swatches:hover { --brand: #ff0000; }
+</style></head><body></body></html>
+"""
+        c = self._color_for("#ff0000", html)
+        self.assertEqual(c["status"], "saved")
+        self.assertNotIn("dynamicOnly", c)
+
 
 class TestMatchDetail(unittest.TestCase):
     """T19: `examples` reports how many real elements a selector reached,

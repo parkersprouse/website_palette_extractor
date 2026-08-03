@@ -836,17 +836,24 @@ Accuracy gaps left by phases 1–4:
       `mdn.har`'s `light-dark()` polyfill fallback. See T23's own entry
       below for the design (a leaf never returns confirmed-`False`, only
       `True`/unknown) and both corpus results
-- [ ] **T24** — a report "Caveats" section naming colors whose only evidence
+- [x] **T24** — a report "Caveats" section naming colors whose only evidence
       is a structurally unconfirmable selector (`:hover`, `:focus`,
       `:focus-visible`, …) — **filed 2026-08-02, requested by the owner
-      after T18/T19/T21's own "untestable" investigation.** Unlike T21/T22,
-      this is the bucket nothing can ever close: a dynamic pseudo-class
-      describes an interaction state, not markup, so no capture — however
-      complete — resolves it. Measured on the live corpus, not assumed: 9
-      (`ui.shadcn.com`), 7 (`tailwindcss.com`) and 13 (`ground.news`) `live`
-      entries rest *entirely* on such a selector today, with zero signal to
-      the reader; both hand-written sites (`fleshandbonedesign.com`,
-      `parkersprouse.me`) have none. Not started. See T24's own entry below
+      after T18/T19/T21's own "untestable" investigation, landed
+      2026-08-03.** Unlike T21/T22, this is the bucket nothing can ever
+      close: a dynamic pseudo-class describes an interaction state, not
+      markup, so no capture — however complete — resolves it. Landed as
+      sketched: `dom.untestable_reason` tells "dynamicState" apart from
+      "uncompilable" once `selector_reach` has already answered `None`;
+      `Usage.reach_reason`/`Entry.all_dynamic_only` thread the unanimity
+      check through `extract._build`; `describe()` adds an additive
+      `examples[].reason` and an entry-level `dynamicOnly` flag; the report
+      gains an always-present Caveats section naming affected entries.
+      Corpus counts landed exactly on the filing's own prediction — 9
+      (`ui.shadcn.com`, 3 light + 6 dark), 13 (`ground.news`), 7
+      (`tailwindcss.com`), 0/0 on both hand-written sites — and all seven
+      frozen bundles are byte-identical once the two additive keys are
+      stripped. See T24's own entry below
 - [x] **T25** — a comma-separated selector list loses every branch to one bad
       one — **filed 2026-08-03, found while diagnosing T22, landed
       2026-08-03.** `dom._compile_selector_parts` splits each list and
@@ -2713,6 +2720,96 @@ general case accurately.
 **Diff level:** JSON (`generated` dropped) across all seven frozen bundles.
 
 ### T24 — A "Caveats" section for structurally unconfirmable colors
+
+> **Outcome — landed 2026-08-03.** Landed close to the sketch below, with
+> the "leaning toward" calls resolved rather than left open.
+>
+> `dom.untestable_reason(selector)` is the sibling function to
+> `selector_reach` the sketch called for — an enum-shaped `str`, not a
+> fourth value squeezed into `bool | None`. It only distinguishes
+> `"dynamicState"` from `"uncompilable"`, exactly the two causes the filing
+> named as this module's own; it is only ever called once `selector_reach`
+> has already answered `None`, and does not re-derive that determination
+> itself. "No captured HTML at all" — the third cause the filing's own
+> classification (reason 1) set aside as uninteresting — is read directly
+> off `wrapped_root is None` in `extract._build`, never handed to
+> `dom.untestable_reason`, which has no way to know it.
+>
+> **Threading matched the sketch exactly**: `Usage.reach_reason` (`None`
+> whenever `matched` is determinate), and `Entry.all_dynamic_only` checking
+> `u.reach_reason == "dynamicState"` unanimously — not "was `matched`
+> `None`", which would have re-admitted reasons 1 and 2 the filing's own
+> "dishonest" line rejected.
+>
+> **JSON went with the `examples[].reason` extension the sketch leaned
+> toward**, plus an entry-level `dynamicOnly: True` flag (only present when
+> true) rather than making the report recompute unanimity from raw
+> examples — a JSON consumer gets the same shortcut. Both are additive; no
+> `schemaVersion` bump.
+>
+> **Report placement matched the sketch**: an always-present `#caveats`
+> section, generic copy regardless of whether the current theme has any
+> affected entries, placed near the footer rather than inside "Where each
+> color came from". Per-theme rather than one-time like `#warnings` —
+> `dynamicOnly` is a per-color flag, so `renderCaveats()` reruns inside
+> `render()` on every theme/filter/format switch, the same lifecycle
+> `renderFooter()` already has.
+>
+> **Corpus counts landed on exactly the filing's own prediction**: 9
+> (`ui.shadcn.com` — 3 light + 6 dark, verified per-theme), 13
+> (`ground.news`), 7 (`tailwindcss.com`), 0 on both hand-written sites. All
+> seven frozen bundles are byte-identical once `dynamicOnly` and
+> `examples[].reason` are stripped — no ground, status, hex, or ranking
+> moved, confirming this is purely additive as designed. Browser-verified
+> on `ui.shadcn.com` (both themes, via the toggle) and `parkersprouse.me`
+> (zero-count case, generic copy only, no list).
+>
+> **Two corrections found in review, before landing, neither reachable by
+> the corpus counts above.** `describe()`'s first draft set `dynamicOnly`
+> from `entry.all_dynamic_only` alone, with no status gate — but
+> `_status_for`'s `saved`/`inert` priority (invariant 27's own note) can
+> still land on an entry every one of whose usages is dynamic-state-only, a
+> custom property declared only inside a `:hover` rule and referenced
+> nowhere being the concrete shape. `all_unmatched` avoids this because
+> `_status_for` only ever consults it *after* ruling out `saved`/`inert` —
+> position does the gating there; `all_dynamic_only` had no equivalent
+> position, being read straight into `describe()`. Not present on any of
+> the seven frozen bundles (checked directly, not assumed — every flagged
+> entry across all three non-zero bundles came back `live`), so the corpus
+> diff could not have caught it; fixed by gating on `entry.status == "live"`
+> at the one call site, and it is now the exact discriminator
+> `test_a_saved_entry_is_not_flagged_dynamic_only` tests, required to fail
+> against the ungated version before being trusted (it does — a `saved`
+> entry carried `dynamicOnly: true`). Second, the report's own subtitle read
+> "N colors **confirmed painted** on the page", which is invariant 27's own
+> previously-fixed overclaim recurring in a new spot: a live entry sourced
+> entirely from a dynamic-state selector is exactly what this task says is
+> *not* confirmed. Dropped "confirmed" rather than hedging it inline, the
+> same precedent invariant 27's own subtitle fix set for `unmatched`.
+>
+> One correction found while writing the tests: `:is( , .x)` — the
+> selector `test_a_selector_that_will_not_compile_is_none_not_false`
+> (invariant 27/T18) uses as its "won't compile" example — does not
+> actually fail to compile. Verified directly against `cssselect2`: an
+> empty branch inside `:is()` compiles to a selector `cssselect2` itself
+> marks `never_matches`, not a `SelectorError`. That test's own name
+> predates this task and is still accurate for `selector_reach` (`None`
+> either way), but it would have been the wrong fixture for
+> `untestable_reason`'s "uncompilable" branch specifically — `::backdrop`
+> (T25's own example, a real pseudo-element `cssselect2` doesn't implement)
+> is what genuinely raises, and is what the new tests use instead.
+>
+> Tests: `TestUntestableReason` (`tests/test_dom.py`) and `TestDynamicOnly`
+> (`tests/test_extract.py`), the latter end-to-end through `extract()` —
+> a hover-only color flagged, one resting usage clearing the flag, a plain
+> matching color never flagged, an uncompilable selector and a
+> no-captured-HTML input both correctly *not* flagged despite also being
+> `matched is None`, and a `saved` entry (the status-gate correction above)
+> also correctly not flagged despite `all_dynamic_only` being structurally
+> true for it. All required to fail against the pre-fix
+> implementation before being trusted (`git stash push palettekit/`,
+> the T25/T22 discipline), which they did — four of six errored on a
+> missing `reason`/`dynamicOnly` key entirely.
 
 **Filed 2026-08-02**, requested by the owner after the same conversation
 that filed T21/T22 — explaining the three different shapes of "untestable"

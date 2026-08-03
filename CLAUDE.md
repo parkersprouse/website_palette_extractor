@@ -188,10 +188,10 @@ sources.py   →  cssparse.py  →  extract.py  →  emit.py
 |---|---:|---|
 | `color.py` | 1182 | `Color`, parsing, sRGB↔OKLab/CIE Lab/XYZ both ways, `color-mix()`, `light-dark()`, `calc()`, contrast, hue names |
 | `cssparse.py` | 1067 | `tinycss2` integration, `var()`, `selector_weight`, roles, theme scopes, `@layer` names, `color-scheme` pass-through (T10), `@supports` evaluation (T23), `@property` registrations (T22) |
-| `dom.py` | 685 | `html.parser` → `ElementTree` shim, `cssselect2` matching of `<html>`/`<body>`, specificity, plus `full_tree`/`elements_matching`/`wrap_tree` (T9: real DOM below the page element), `selector_reach` (T18: does a selector match anything, real/none/untestable), `element_signature` (T19: a short label for one real matched element), and `_compile_selector_parts` (T25: one bad selector-list branch costs only itself) |
+| `dom.py` | 718 | `html.parser` → `ElementTree` shim, `cssselect2` matching of `<html>`/`<body>`, specificity, plus `full_tree`/`elements_matching`/`wrap_tree` (T9: real DOM below the page element), `selector_reach` (T18: does a selector match anything, real/none/untestable), `element_signature` (T19: a short label for one real matched element), `_compile_selector_parts` (T25: one bad selector-list branch costs only itself), and `untestable_reason` (T24: which of the two causes made `selector_reach` answer `None`) |
 | `sources.py` | 292 | `load_har` / `load_url` / `load_paths` → `Bundle` |
-| `extract.py` | 1750 | `extract()`, the cascade, per-theme `_build`, ground, merging, statuses, naming, `resolve_by_ancestry`/`resolve_by_ancestry_kind` (T9, non-inheriting-aware since T22), `Entry.all_unmatched` (T18), per-usage `match_count`/`match_samples` (T19), `_page_color_scheme`/`_scopes_present`'s confirmation gate (T10), `property_registrations` (T22) |
-| `emit.py` | 1010 | Emitters; `_HTML` is the report template (T20: status sub-headings) |
+| `extract.py` | 1819 | `extract()`, the cascade, per-theme `_build`, ground, merging, statuses, naming, `resolve_by_ancestry`/`resolve_by_ancestry_kind` (T9, non-inheriting-aware since T22), `Entry.all_unmatched` (T18), per-usage `match_count`/`match_samples` (T19), `_page_color_scheme`/`_scopes_present`'s confirmation gate (T10), `property_registrations` (T22), `Entry.all_dynamic_only`/`Usage.reach_reason` (T24) |
+| `emit.py` | 1059 | Emitters; `_HTML` is the report template (T20: status sub-headings, T24: always-present Caveats section) |
 | `images.py` | 148 | Optional image quantisation, not part of the token set |
 | `__main__.py` | 255 | CLI; `main()` guards `PYTHON_FLOOR` before anything else |
 
@@ -1287,6 +1287,24 @@ because the obvious implementation produced plausible but wrong output.
 | `saved` | Custom property nothing references — usually a design tool's saved swatches | `_status_for` vs `var_refs` |
 | `inert` | Declaration that paints nothing, e.g. `drop-shadow(0 0 0 #13330d)` | `is_inert_shadow` |
 | `unmatched` | Every usage's selector was tested against the real captured document and matched nothing there (T18) | `Entry.all_unmatched` vs `dom.selector_reach` |
+
+**`dynamicOnly` (T24) is a flag, not a fifth status.** A color whose every
+usage's selector is a dynamic pseudo-class (`:hover`, `:focus`, …) stays
+`live` — invariant 27's own "unconfirmed is not the same as absent" reasoning
+still applies, and no capture, however complete, could ever confirm or refute
+an interaction state. `Entry.all_dynamic_only` sets an additive
+`dynamicOnly: true` on that entry's JSON record instead, and the HTML
+report's always-present Caveats section (`emit.py`'s `#caveats`, distinct
+from the per-site `#warnings` box) names affected entries by theme. Narrower
+than "every usage's `matched` is `None`" on purpose: an uncompilable selector
+(T21's own territory — some other engine might answer it) and a bare `.css`
+input with no captured HTML at all both also leave `matched` at `None`, and
+conflating either with "structurally unknowable" would be dishonest.
+`dom.untestable_reason` tells the two apart once `selector_reach` has already
+answered `None`; `Usage.reach_reason` carries the answer (plus
+`"noCapturedHtml"`, read directly off `wrapped_root is None` in
+`extract._build` rather than handed to `untestable_reason`, which has no way
+to know it) through to `Entry.all_dynamic_only`'s unanimity check.
 
 ## Themes
 

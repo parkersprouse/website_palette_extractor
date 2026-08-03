@@ -526,6 +526,18 @@ __UI_THEMES__
                  text-transform: uppercase; color: var(--ui-accent); }
   .warn-box ul { margin: 0; padding-left: 1.1rem; color: var(--ui-muted); }
 
+  /* T24: always-present, unlike .warn-box -- explains the category even on
+     a site that triggers none of it, the same way STATUS_BLURBS explains
+     every status regardless of which ones a given palette has. Neutral
+     border rather than --ui-accent: this is a standing limit of the method,
+     not a site-specific problem to flag. */
+  .caveat-box { border: 1px solid var(--ui-line); padding: .8rem 1rem;
+                margin-bottom: 1.6rem; font-size: .84rem; color: var(--ui-muted); }
+  .caveat-box h3 { margin: 0 0 .4rem; font-size: .72rem; letter-spacing: .1em;
+                   text-transform: uppercase; color: var(--ui-strong); }
+  .caveat-box p { margin: 0 0 .5rem; max-width: 64ch; }
+  .caveat-box ul { margin: 0; padding-left: 1.1rem; }
+
   .pairs { display: grid; gap: 8px;
            grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
   .pair { border: 1px solid var(--ui-line); padding: .7rem .8rem; }
@@ -591,6 +603,8 @@ __UI_THEMES__
   <summary>Extraction report</summary>
   <div class="detail-body" id="report"></div>
 </details>
+
+<div id="caveats"></div>
 
 <footer id="footer"></footer>
 </div>
@@ -823,6 +837,7 @@ __UI_THEMES__
     renderProv(cols);
     renderReport();
     renderFooter();
+    renderCaveats();
   }
 
   function renderPairs(cols) {
@@ -934,6 +949,40 @@ __UI_THEMES__
       "source page are licensed separately.";
   }
 
+  /* ---------- caveats ---------- */
+  /* T24: always present, unlike #warnings -- explains the category even when
+     this theme has no example of it, then names the entries it does have.
+     Per-theme (dynamicOnly is a per-color flag), so it lives in render()
+     rather than the one-time #warnings block above. */
+  function renderCaveats() {
+    var host = document.getElementById("caveats");
+    host.textContent = "";
+    var box = el("div", "caveat-box");
+    box.appendChild(el("h3", null, "What “live” can't promise"));
+    box.appendChild(el("p", null,
+      "A color is marked live once this tool can show its selector on the " +
+      "page it captured. A selector written only for an interaction state " +
+      "— :hover, :focus, and the like — has no resting state to " +
+      "capture: the state doesn't exist until someone is actually " +
+      "interacting, so no capture, however complete, can confirm or rule " +
+      "it out. Those colors stay live — unconfirmed is not the same " +
+      "as absent — but nothing here has verified they render."));
+    var dyn = theme().colors.filter(function (c) { return c.dynamicOnly; });
+    if (dyn.length) {
+      var p2 = el("p", null, dyn.length === 1
+        ? "One color in this theme rests entirely on that kind of rule:"
+        : dyn.length + " colors in this theme rest entirely on that kind " +
+          "of rule:");
+      box.appendChild(p2);
+      var ul = el("ul");
+      dyn.forEach(function (c) {
+        ul.appendChild(el("li", null, c.name + " (" + c.hex + ")"));
+      });
+      box.appendChild(ul);
+    }
+    host.appendChild(box);
+  }
+
   /* ---------- copy ---------- */
   var toast = document.getElementById("toast");
   var timer;
@@ -978,8 +1027,14 @@ def emit_html(doc: dict, pal: Palette) -> str:
     n_other = len(doc["colors"]) - n_live
 
     sub = (
-        f"{n_live} color{'s' if n_live != 1 else ''} confirmed painted on the "
-        "page"
+        # T24: not "confirmed painted" -- a live color sourced entirely from
+        # a `:hover`/`:focus`-only selector (Caveats section, below) is
+        # never confirmed at all, the same overclaim invariant 27's own
+        # subtitle fix already corrected for `unmatched` ("found in the
+        # source but not painted" implied a confirmed non-match every
+        # `unmatched` entry doesn't have). Dropped rather than hedged
+        # inline, same precedent.
+        f"{n_live} color{'s' if n_live != 1 else ''} painted on the page"
         + (f", plus {n_other} more found in the source" if n_other else "")
         + ". Read from the site's own stylesheets, not sampled from a "
           "screenshot. Click any swatch to copy it."

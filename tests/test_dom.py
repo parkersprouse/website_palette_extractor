@@ -10,6 +10,7 @@ from palettekit.dom import (
     reach_elements,
     selector_matches,
     selector_reach,
+    untestable_reason,
     wrap_tree,
 )
 
@@ -275,6 +276,27 @@ class TestSelectorReach(unittest.TestCase):
         self.assertIs(
             selector_reach("*,:before,:after,::backdrop", self.wrapped()),
             True)
+
+
+class TestUntestableReason(unittest.TestCase):
+    """T24: which of the two causes made `selector_reach` answer `None`."""
+
+    def test_a_dynamic_state_is_dynamic_state(self):
+        self.assertEqual(untestable_reason(".bg-card:hover"), "dynamicState")
+
+    def test_an_uncompilable_selector_is_uncompilable(self):
+        """`::backdrop` is a real pseudo-element `cssselect2` doesn't
+        implement -- it raises rather than compiling to anything, unlike
+        `:is( , .x)`, which compiles to a selector `cssselect2` itself marks
+        `never_matches` (verified directly: an empty branch inside `:is()`
+        is a compile-time `never_matches`, not a `SelectorError`).
+        """
+        self.assertEqual(untestable_reason("::backdrop"), "uncompilable")
+
+    def test_a_list_of_only_dynamic_states_is_dynamic_state(self):
+        self.assertEqual(
+            untestable_reason(".bg-card:hover, .bg-card:focus"),
+            "dynamicState")
 
 
 class TestElementSignature(unittest.TestCase):

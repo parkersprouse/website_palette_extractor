@@ -34,6 +34,7 @@ from .dom import (
     selector_matches,
     selector_reach,
     selector_specificity,
+    untestable_reason,
     wrap_tree,
 )
 from .sources import Bundle
@@ -103,6 +104,13 @@ class Usage:
     # here, so `Usage` stays a plain record of what was already decided.
     match_count: int | None = None
     match_samples: list[str] = field(default_factory=list)
+    # T24: why `matched` is `None`, when it is. `dom.untestable_reason`'s two
+    # causes, plus a third this module alone knows about — no captured HTML
+    # at all, which never reaches `dom.selector_reach` to begin with.
+    # `None` here whenever `matched` is determinate (`True`/`False`); never
+    # consulted otherwise. See `Entry.all_dynamic_only` for why the three
+    # must stay distinguishable rather than folding into one flag.
+    reach_reason: str | None = None
 
 
 @dataclass
@@ -157,6 +165,31 @@ class Entry:
         across every usage is confident enough to report.
         """
         return bool(self.usages) and all(u.matched is False
+                                         for u in self.usages)
+
+    @property
+    def all_dynamic_only(self) -> bool:
+        """T24: does this color's `live` status rest entirely on ground that
+        can never be confirmed, by any capture however complete — not merely
+        ground that hasn't been confirmed yet.
+
+        Unanimous, the same pattern `all_unmatched` (invariant 27) already
+        established: one ordinary matching usage, or even one merely
+        `unmatched` one, alongside a `:hover`-only usage means this color is
+        painted (or at least tested) on some non-dynamic basis, so the whole
+        entry no longer rests entirely on interaction state.
+
+        Checks `u.reach_reason == "dynamicState"` specifically, not "was
+        `matched` `None`" — deliberately narrower, per T24's own filing.
+        `matched is None` also covers an uncompilable selector (a library
+        coverage gap, T21's own territory: some other engine might answer
+        it, so it is undertested, not unknowable) and a bare `.css` input
+        with no captured HTML at all (uninteresting here — the whole
+        document is unconfirmed, singling out one color would be noise).
+        Both leave `reach_reason` as something other than `"dynamicState"`,
+        so they correctly fail this check rather than falsely qualifying.
+        """
+        return bool(self.usages) and all(u.reach_reason == "dynamicState"
                                          for u in self.usages)
 
     @property
@@ -1140,6 +1173,20 @@ def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
                 if wrapped_root is not None else None)
         return reach_cache[selector]
 
+    # T24: why `reach_of` came back `None`, for the one case worth naming
+    # specifically (invariant 27/T18's "dynamic pseudo-class" shape). Only
+    # ever consulted when `reach_of` is already `None` — see `reach` below —
+    # so this stays a rare, memoized lookup rather than a per-declaration
+    # cost. `dom.untestable_reason` only distinguishes "uncompilable" from
+    # "dynamicState"; "no captured HTML at all" is this module's own third
+    # cause and is read directly off `wrapped_root`, never handed to it.
+    reason_cache: dict[str, str] = {}
+
+    def reason_of(selector: str) -> str:
+        if selector not in reason_cache:
+            reason_cache[selector] = untestable_reason(selector)
+        return reason_cache[selector]
+
     # T19: the real elements backing `matchCount`/`examples[].matches` for a
     # usage `reach_of` found `True` for. **Deliberately not `consumers_of`**
     # (T21, `PLAN.md`) despite the obvious-looking overlap — `consumers_of`
@@ -1282,12 +1329,17 @@ def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
             # lookup; `None` (no basis to test at all) leaves both
             # `None`/empty, same as `reach` itself.
             if reach is True:
-                match_count = len(match_elements_of(sel))
-                match_samples = samples_of(sel)
+                match_count, match_samples, reason = (
+                    len(match_elements_of(sel)), samples_of(sel), None)
             elif reach is False:
-                match_count, match_samples = 0, []
+                match_count, match_samples, reason = 0, [], None
             else:
+                # T24: no captured HTML at all reads `reason_of` a selector
+                # `dom.untestable_reason` never sees — this module's own
+                # third cause, distinct from that function's two.
                 match_count, match_samples = None, []
+                reason = reason_of(sel) if wrapped_root is not None \
+                    else "noCapturedHtml"
 
             for c in colors:
                 if c.a < 0.02:
@@ -1313,7 +1365,8 @@ def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
                           layer=d.layer, theme_media=d.theme_media,
                           theme_scoped=bool(d.theme), matched=reach,
                           match_count=match_count,
-                          match_samples=match_samples)
+                          match_samples=match_samples,
+                          reach_reason=reason)
                 )
                 if d.is_custom_property:
                     entry.var_names.add(d.prop)
@@ -1732,6 +1785,13 @@ def describe(entry: Entry, ground: Color) -> dict:
                 # list, when there is nothing real to show.
                 "matchCount": u.match_count,
                 **({"matches": u.match_samples} if u.match_samples else {}),
+                # T24: why `matchCount` is `None`, when it is —
+                # `"dynamicState"` (no resting state any capture could ever
+                # test), `"uncompilable"` (a library coverage gap, T21's
+                # territory), or `"noCapturedHtml"` (a bare `.css` input).
+                # Additive and specific rather than leaving the reader to
+                # guess at a bare `null`.
+                **({"reason": u.reach_reason} if u.reach_reason else {}),
             }
             for u in top
         ],
@@ -1747,4 +1807,24 @@ def describe(entry: Entry, ground: Color) -> dict:
         rec["customProperties"] = sorted(entry.var_names)
     if entry.merged_hexes:
         rec["mergedFrom"] = sorted(entry.merged_hexes)
+    if entry.status == "live" and entry.all_dynamic_only:
+        # T24: this color's `live` status rests entirely on a selector with
+        # no resting state — every usage is `:hover`/`:focus`/etc-only. Not
+        # a status change (invariant 27's own "unconfirmed is not absent"
+        # reasoning still applies) — a transparency flag the report's
+        # Caveats section and any JSON consumer can single this entry out
+        # with, rather than a reader having to notice every example's
+        # `reason` individually.
+        #
+        # `entry.status == "live"` is required, not implied by
+        # `all_dynamic_only` alone: `_status_for`'s `saved`/`inert`
+        # priority (invariant 27's own note) can still land on an entry
+        # every one of whose usages is dynamic-state-only, e.g. a custom
+        # property declared only inside a `:hover` rule and referenced
+        # nowhere (`saved`). Without this gate that entry would carry
+        # `dynamicOnly: true` while `renderCaveats()` names it as resting on
+        # unconfirmable ground the reader has "live" reason to doubt — a
+        # claim this flag has no business making about a color that was
+        # never claimed live in the first place.
+        rec["dynamicOnly"] = True
     return rec

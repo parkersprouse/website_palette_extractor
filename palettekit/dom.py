@@ -451,6 +451,36 @@ def selector_reach(selector: str,
               for sel in usable)
 
 
+def untestable_reason(selector: str) -> str:
+    """Why `selector_reach` answered `None` for this selector (T24, `PLAN.md`).
+
+    Only meaningful once `selector_reach` has already answered `None` — this
+    recomputes `_compile_selector_parts` to tell apart the two causes that
+    answer collapses into, on purpose (see its own docstring: keeping `None`
+    a single tri-state value there, rather than a fourth outcome, is
+    deliberate). `selector_reach` is `None` exactly when `_compile_reachable`
+    finds no usable branch, which happens two structurally different ways:
+
+    - `"uncompilable"` — nothing in the list compiled at all
+      (`_compile_selector_parts` returns an empty tuple). A library/parser
+      coverage gap, the same flavor as T21/T25: a different selector engine
+      might answer this selector, so it is undertested, not permanently
+      unknowable.
+    - `"dynamicState"` — every branch that *did* compile is a dynamic
+      pseudo-class `cssselect2` marks `never_matches` (`:hover`, `:focus`,
+      `:target`, …). A pseudo-element branch would have stayed usable
+      instead of being filtered out here (T21 — its base compound is real,
+      testable evidence), so reaching this branch means every surviving
+      selector genuinely has no resting state any capture could test: not
+      undertested, structurally unanswerable.
+
+    Callers must only invoke this after `selector_reach` returns `None` —
+    it does not itself re-derive that determination.
+    """
+    compiled = _compile_selector_parts(selector)
+    return "uncompilable" if not compiled else "dynamicState"
+
+
 def element_signature(node: cssselect2.ElementWrapper, *, depth: int = 3,
                       max_len: int = 50) -> str:
     """A short, human-readable label for one real matched element (T19).

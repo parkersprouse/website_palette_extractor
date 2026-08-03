@@ -2432,13 +2432,29 @@ reset stylesheet is the most likely site to actually exercise this.
 >
 > 9 new tests (4 `TestPropertyRegistration` in `test_cssparse.py`; 3
 > `TestNonInheritingAncestry` plus 2 new cases in
-> `TestAncestryWiredIntoBuild`, `test_extract.py`), all five of the ones
-> exercising the new behavior confirmed to fail against pre-task code before
-> being trusted (`git stash push palettekit/`) — three with a bare
-> `TypeError` from the not-yet-existing `non_inheriting` parameter, and the
-> two end-to-end ones with a genuine `KeyError` (the expected color simply
-> isn't in the palette yet), not merely a wrong assertion. 181 tests total,
-> `ruff` clean, 3.11–3.14 green.
+> `TestAncestryWiredIntoBuild`, `test_extract.py`). **8 of the 9 confirmed to
+> fail against pre-task code** (checked against `8bbcbbe`, the commit before
+> this landed, not merely reasoned about): the 3
+> `TestPropertyRegistration` cases that read `sheet.properties` fail with a
+> bare `AttributeError` (the field didn't exist yet); the 3
+> `TestNonInheritingAncestry` cases fail with `TypeError` from the
+> not-yet-existing `non_inheriting` parameter; the 2 end-to-end
+> `TestAncestryWiredIntoBuild` cases fail with a genuine `KeyError` (the
+> expected color simply isn't in the palette). **The 9th,
+> `test_a_property_rule_contributes_no_declaration_or_var_ref`, passes
+> against both** — checked, not assumed, after an initial write-up wrongly
+> implied it had been verified alongside the other 8. Pre-task, an
+> `@property` block's declarations already produced no
+> `sheet.declarations`/`var_refs` entries, but incidentally: `_walk`
+> recursed into the block with `selector=""`, and `_record` silently drops
+> any declaration when `selector` is falsy — the same fallback invariant 18
+> exploits for a statement at-rule's body. This task's own `continue`
+> branch makes that explicit rather than relying on it, but the *observable*
+> outcome doesn't move, so the test can't discriminate the fix. Kept anyway,
+> deliberately, as a regression lock on the explicit behavior rather than a
+> proof of it — not the same thing as an untested claim, but worth being
+> honest about which one it is. 181 tests total, `ruff` clean, 3.11–3.14
+> green.
 >
 > **A new, related gap surfaced and was deliberately not fixed here**:
 > `cssselect2.compile_selector_list` fails the *entire* selector list when
@@ -2739,6 +2755,79 @@ before landing. Browser verification of the new section on a bundle with a
 non-zero count (`ui.shadcn.com`) and one with zero (`parkersprouse.me`), to
 confirm the generic explanation still renders when nothing site-specific
 does.
+
+### T25 — A comma-separated selector list loses every branch to one bad one
+
+**Filed 2026-08-03**, found while diagnosing T22's `--tw-ring-color`/
+`--tw-ring-shadow` bug — the false-confirmed-ancestor value was only
+possible because the same-element default that should have preempted it
+was invisible, and the reason it was invisible is this task.
+
+**The gap, verified directly.** `cssselect2.compile_selector_list` parses a
+whole comma-separated selector list in one call and raises if *any* branch
+is unparseable — it does not compile the good branches and skip the bad
+one:
+
+```python
+>>> cssselect2.compile_selector_list("*,:before,:after,::backdrop")
+cssselect2.parser.SelectorError: Expected a supported pseudo-element, got backdrop
+```
+
+`::backdrop` is a real, valid CSS pseudo-element `cssselect2` simply
+doesn't implement. Three call sites in `dom.py` — `selector_matches`,
+`_compile_usable`, `_compile_reachable` — each pass a whole selector-list
+string to `compile_selector_list` in one call and catch the exception by
+returning "no answer" (`None`, or `[]` downstream) for the *entire* list,
+including branches like the leading `*` that would compile fine on their
+own. This is exactly `split_selector_list`'s own reason for existing
+(invariant 17) — a selector list where one part is malformed — except none
+of these three call sites uses it before compiling.
+
+**Why it matters beyond this one selector.** Tailwind v4's own
+`@layer properties` reset opens with
+`*,:before,:after,::backdrop { … : initial; … }` on every corpus bundle
+that carries `@property` (`ground.news.har`, `tailwindcss.com.har`,
+`ui.shadcn.com.har` — T22's own measurement). On `ui.shadcn.com.har` this
+selector's failure to compile is *why* `--tw-ring-color`/`--tw-ring-shadow`
+resolved from an unrelated ancestor 12–14 levels up instead of stopping at
+the consumer's own element: the `*` branch that should have answered
+"initial" there, immediately, was never considered at all. T22's own fix
+(a `non_inheriting` flag that keeps the ancestry walk from crossing into an
+ancestor for a non-inheriting property) happens to prevent this *specific*
+symptom without touching the underlying compile failure — so the same class
+of bug remains possible anywhere a selector list mixes a good branch with
+one `cssselect2` can't parse, on any of the three call sites above, for any
+property.
+
+**Not filed as urgent — no second corpus instance found yet.** The only
+confirmed occurrence is the one T22 diagnosed. Whether it's common depends
+on how often real stylesheets pair a broad selector (`*`, a class) with an
+unsupported pseudo-element or pseudo-class in the same comma list;
+Tailwind's own reset is the one shape known to do it, and it's now handled
+correctly for the one property pair the corpus exercises, via T22's
+unrelated fix.
+
+**Shape of the change, sketched rather than designed.** All three call
+sites already have `split_selector_list` available (`cssparse.py`) for
+exactly this shape. The fix is mechanical in outline — split the selector
+list first, `compile_selector_list` (or a single-selector compile) each
+part independently inside a `try`/`except`, and union the survivors — but
+touches three matching call sites at once, each with its own contract
+(`selector_matches` returns a specificity; `_compile_usable`/
+`_compile_reachable` return compiled-selector lists with different
+pseudo-element filtering, per T21's own hard-won distinction between the
+two). A change here risks re-merging exactly the filter T21 had to split
+apart, so it needs the same "predict the blast radius before writing the
+code" discipline as every other selector-matching change in this file, not
+a quick patch.
+
+**Diff level:** same convention as T21/T22 — per-declaration `matched`/
+`matchCount`/ancestry-resolved-value diff, old vs new, across all seven
+frozen bundles. Expect `ui.shadcn.com.har`'s `--tw-ring-color`/
+`--tw-ring-shadow` entries to move again (this time via the root cause
+rather than T22's workaround) and predict everything else stays put before
+trusting a byte-identical palette diff — the same shape T22 itself just
+demonstrated.
 
 ### T10 — Read `color-scheme` to confirm a `light-dark()` site is two-themed
 

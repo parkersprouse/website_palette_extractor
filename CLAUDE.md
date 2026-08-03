@@ -1422,9 +1422,9 @@ Tailwind config should even look like first.
     accurate description; "modelled where the static capture can confirm
     it, last-wins elsewhere" is.
   - **A selector list with one unsupported branch loses every branch, not
-    just the bad one** — found while landing T22, not yet fixed or filed
-    with a T-number. `cssselect2.compile_selector_list` fails the whole
-    comma-separated list on the first unparseable part (Tailwind's own
+    just the bad one** — found while landing T22, filed as **T25**
+    (`PLAN.md`), not yet fixed. `cssselect2.compile_selector_list` fails the
+    whole comma-separated list on the first unparseable part (Tailwind's own
     `*,:before,:after,::backdrop` reset selector, where `::backdrop` is
     unsupported, is the corpus case), so `selector_matches`,
     `dom._compile_usable`, and `dom._compile_reachable` — all three pass a
@@ -1434,7 +1434,8 @@ Tailwind config should even look like first.
     compile/union the survivors) is plausible but touches three matching
     call sites at once and deserves its own blast-radius measurement before
     it lands, per this file's own "predict the blast radius before writing
-    the code" discipline — not attempted inside T22's diff.
+    the code" discipline — not attempted inside T22's diff. See T25's own
+    entry for the corpus evidence and why it isn't marked urgent.
   - **An at-rule nested inside a style rule** still loses its declarations —
     see the limit above; it is a parse-shape gap, not a cascade one.
 

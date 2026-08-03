@@ -818,13 +818,16 @@ Accuracy gaps left by phases 1–4:
       missing an edge case. Landed with the reach and consumer questions on
       two separate filters. See T21's own entry below for the full
       write-up and the regression test that guards the split
-- [ ] **T22** — read `@property` registrations (`syntax`/`inherits`/
-      `initial-value`) — **filed 2026-08-02, found the same way as T21.**
+- [x] **T22** — read `@property` registrations (`syntax`/`inherits`/
+      `initial-value`) — **filed 2026-08-02, landed 2026-08-03.**
       Not a hypothetical: `@property` appears in 3 of 5 frozen bundles
       (`ground.news.har`, `tailwindcss.com.har`, `ui.shadcn.com.har` — all
-      Tailwind v4's own registrations). Starts with measuring whether any
-      registered `initial-value` is color-bearing before touching the
-      parser. Not started. See T22's own entry below
+      Tailwind v4's own registrations). Fixed `ui.shadcn.com.har`'s
+      `--tw-ring-color`/`--tw-ring-shadow` resolving from an unrelated
+      ancestor 12-14 levels up. Along the way, found and filed T25 (the
+      same-element default that should have preempted this was invisible
+      because the reset's own selector list couldn't compile). See T22's
+      own entry below
 - [x] **T23** — evaluate `@supports` conditions instead of reading every
       conditional block as though it always applies — **filed 2026-08-02,
       landed 2026-08-02.** Fixed the `pawelgrzybek.com` dark ground exactly
@@ -843,6 +846,16 @@ Accuracy gaps left by phases 1–4:
       entries rest *entirely* on such a selector today, with zero signal to
       the reader; both hand-written sites (`fleshandbonedesign.com`,
       `parkersprouse.me`) have none. Not started. See T24's own entry below
+- [x] **T25** — a comma-separated selector list loses every branch to one bad
+      one — **filed 2026-08-03, found while diagnosing T22, landed
+      2026-08-03.** `dom._compile_selector_parts` splits each list and
+      compiles branches independently. `ui.shadcn.com.har` came back
+      byte-identical — T22's `non_inheriting` flag already covers its two
+      properties, contrary to this task's own filing-time prediction —
+      while `tailwindcss.com.har` moved via a *different* `--tw-*` property
+      hitting the same root cause. See T25's own entry below for the full
+      corpus verification and why `matches_page_element`/
+      `selector_specificity` stay out of scope
 
 Repo and process:
 
@@ -2757,6 +2770,54 @@ confirm the generic explanation still renders when nothing site-specific
 does.
 
 ### T25 — A comma-separated selector list loses every branch to one bad one
+
+> **Outcome — landed 2026-08-03.** Fixed as sketched: `split_selector_list`
+> each list, `compile_selector_list` each branch on its own inside a
+> `try`/`except`, union the survivors (`dom._compile_selector_parts`,
+> `@lru_cache`d and shared by all three named call sites). One prediction in
+> the filing did not hold: `ui.shadcn.com.har`'s `--tw-ring-color`/
+> `--tw-ring-shadow` were expected to "move again, this time via the root
+> cause" and instead came back **byte-identical** — T22's `non_inheriting`
+> flag already stops the ancestry walk for those two specific properties
+> independently of this bug, so the compile fix has nothing left to change
+> there. `ground.news.har` moves only in reach metadata (`matchCount`/
+> `matches` on one example, `None` → a real count against the whole
+> document) with no color change. Four of seven bundles — everything
+> without the `::backdrop`-shaped reset selector — are byte-identical.
+>
+> `tailwindcss.com.har` is the real movement, and the mechanism was traced
+> to one declaration rather than inferred from the palette diff, after an
+> initial write-up of this outcome got the causal story wrong by reading a
+> *positional* list diff instead of the keyed one — caught before landing,
+> not after. Every `.shadow-{color}\/{opacity}` utility (and its
+> `inset-shadow-`/`drop-shadow-`/`text-shadow-` siblings) bakes its own
+> opacity suffix into an inner `color-mix()` and separately multiplies by
+> `var(--tw-shadow-alpha)`, an `@property`-registered (`inherits: false`,
+> `initial-value: 100%`) scaling factor the reset sets back to `100%` on
+> every element via the same broken `*,:before,:after,::backdrop` selector.
+> Pre-fix, that same-element default was invisible, so T9's ancestry walk
+> confirmed `"absent"` — discarding even the legitimate off-page last-wins
+> fallback `build_var_table` would otherwise have supplied — and the
+> unresolved `var()` with no written fallback left `color-mix()`'s own
+> missing-percentage default rule to produce alpha `0.25`, an accident of
+> CSS fallback grammar unrelated to the utility's actual opacity suffix.
+> Post-fix it resolves to the reset's literal `100%`, and the outer mix
+> collapses to the inner one unchanged (invariant 22's zero-alpha
+> shortcut) — alpha `0.5`, exactly what a `\/50` utility promises. The four
+> hexes that disappear from the palette (`#e4a340` light; `#21274d`,
+> `#33244d`, `#411e3b` dark) were checked individually: all four are
+> `--tw-shadow-color` at the wrong-alpha `0.25`, not a real rendered color.
+> `matches_page_element` and `selector_specificity` were deliberately left
+> unfixed, per the filing's own scope, but the filing's assumption that
+> neither call site's answer would move for the known selector was only
+> half right: `selector_specificity` *would* move (`:before`'s specificity
+> is `(0, 0, 1)`, not `(0, 0, 0)` — checked directly, not assumed, before
+> writing that down) and feeds `_cascade_key` unmeasured, so it stays out
+> of scope for its own task rather than on the strength of a false
+> "changes nothing" claim. Full write-up, corpus numbers, and the three
+> regression tests (each checked to fail against the pre-fix
+> implementation) are in CLAUDE.md's "Known limits" section under this
+> task's own former entry there.
 
 **Filed 2026-08-03**, found while diagnosing T22's `--tw-ring-color`/
 `--tw-ring-shadow` bug — the false-confirmed-ancestor value was only

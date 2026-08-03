@@ -62,7 +62,7 @@ reached only through `images.py`, behind `--images`.
 
 ```bash
 python3 -m palettekit <target> -o out    # target: .har | URL | .html/.css path
-python3 -m unittest discover             # 153 tests, all must pass (needs the deps)
+python3 -m unittest discover             # 184 tests, all must pass (needs the deps)
 python3 -m palettekit x.har --no-themes  # collapse a two-theme site into one
 ruff check .                             # must stay clean; config in pyproject
 python3 -m palettekit x.har --list-sources   # diagnose framework noise first
@@ -188,7 +188,7 @@ sources.py   →  cssparse.py  →  extract.py  →  emit.py
 |---|---:|---|
 | `color.py` | 1182 | `Color`, parsing, sRGB↔OKLab/CIE Lab/XYZ both ways, `color-mix()`, `light-dark()`, `calc()`, contrast, hue names |
 | `cssparse.py` | 1067 | `tinycss2` integration, `var()`, `selector_weight`, roles, theme scopes, `@layer` names, `color-scheme` pass-through (T10), `@supports` evaluation (T23), `@property` registrations (T22) |
-| `dom.py` | 535 | `html.parser` → `ElementTree` shim, `cssselect2` matching of `<html>`/`<body>`, specificity, plus `full_tree`/`elements_matching`/`wrap_tree` (T9: real DOM below the page element), `selector_reach` (T18: does a selector match anything, real/none/untestable), and `element_signature` (T19: a short label for one real matched element) |
+| `dom.py` | 685 | `html.parser` → `ElementTree` shim, `cssselect2` matching of `<html>`/`<body>`, specificity, plus `full_tree`/`elements_matching`/`wrap_tree` (T9: real DOM below the page element), `selector_reach` (T18: does a selector match anything, real/none/untestable), `element_signature` (T19: a short label for one real matched element), and `_compile_selector_parts` (T25: one bad selector-list branch costs only itself) |
 | `sources.py` | 292 | `load_har` / `load_url` / `load_paths` → `Bundle` |
 | `extract.py` | 1750 | `extract()`, the cascade, per-theme `_build`, ground, merging, statuses, naming, `resolve_by_ancestry`/`resolve_by_ancestry_kind` (T9, non-inheriting-aware since T22), `Entry.all_unmatched` (T18), per-usage `match_count`/`match_samples` (T19), `_page_color_scheme`/`_scopes_present`'s confirmation gate (T10), `property_registrations` (T22) |
 | `emit.py` | 959 | Emitters; `_HTML` is the report template |
@@ -1421,21 +1421,109 @@ Tailwind config should even look like first.
     T18's note on this same finding). "Not modelled" is no longer the
     accurate description; "modelled where the static capture can confirm
     it, last-wins elsewhere" is.
-  - **A selector list with one unsupported branch loses every branch, not
-    just the bad one** — found while landing T22, filed as **T25**
-    (`PLAN.md`), not yet fixed. `cssselect2.compile_selector_list` fails the
-    whole comma-separated list on the first unparseable part (Tailwind's own
+  - ~~A selector list with one unsupported branch loses every branch, not
+    just the bad one~~ — **fixed, T25 (`PLAN.md`, landed 2026-08-03).**
+    `cssselect2.compile_selector_list` fails the whole comma-separated list
+    on the first unparseable part (Tailwind's own
     `*,:before,:after,::backdrop` reset selector, where `::backdrop` is
     unsupported, is the corpus case), so `selector_matches`,
-    `dom._compile_usable`, and `dom._compile_reachable` — all three pass a
-    whole list to it in one call — can silently lose a perfectly good `*` or
-    class branch sitting alongside the one bad pseudo-element or
-    pseudo-class. The fix shape (`split_selector_list` each part and
-    compile/union the survivors) is plausible but touches three matching
-    call sites at once and deserves its own blast-radius measurement before
-    it lands, per this file's own "predict the blast radius before writing
-    the code" discipline — not attempted inside T22's diff. See T25's own
-    entry for the corpus evidence and why it isn't marked urgent.
+    `dom._compile_usable`, and `dom._compile_reachable` — all three used to
+    pass a whole list to it in one call — silently lost a perfectly good `*`
+    or class branch sitting alongside the one bad pseudo-element or
+    pseudo-class. `dom._compile_selector_parts` (`@lru_cache`d, the three
+    call sites' new shared entry point) splits with `split_selector_list`
+    first and compiles each branch on its own, unioning the survivors,
+    exactly the shape sketched at filing time.
+
+    **Deliberately not extended to `matches_page_element` or
+    `selector_specificity`**, which share the identical
+    try/except-the-whole-list shape. `matches_page_element` is unaffected
+    either way for the one selector this bug is known to hit — `*` is
+    already refused as blanket and `:before`/`:after` as pseudo-elements.
+    `selector_specificity` is not so lucky: verified directly,
+    `cssselect2.compile_selector_list(":before")[0].specificity` is
+    `(0, 0, 1)`, not `(0, 0, 0)`, so fixing that call site would move an
+    answer it feeds into `_cascade_key` (invariant 21) — an unmeasured
+    blast radius across `detect_ground`/`build_var_table` this task did not
+    sign up to predict. Left for its own task if a corpus case ever needs
+    it.
+
+    Verified on the corpus at the per-declaration `matched`/`matchCount`/
+    ancestry-resolved-value level (T21/T22's own convention): four of seven
+    bundles are byte-identical (no `::backdrop`-shaped selector list
+    present). `ui.shadcn.com.har` is also byte-identical — T22's
+    `non_inheriting` flag already stopped its `--tw-ring-color`/
+    `--tw-ring-shadow` bug from this exact root cause, which is *not* what
+    was predicted at filing time (the filing expected this bundle to move
+    again "via the root cause"; it does not, because T22's fix already
+    covers those two properties independently). `ground.news.har` moves
+    only in `matchCount`/`matches` metadata on one example (`None` → a real
+    count against every element in the document — the `*` branch reaching
+    everywhere, exactly as predicted) with no hex, status, or occurrence
+    change.
+
+    `tailwindcss.com.har` is the real positive, and the mechanism was traced
+    to a specific declaration rather than inferred from the palette diff —
+    a keyed (hex, role) diff first, since positional list diffs misreport
+    reordering as changed entries (this file's own recurring caution), then
+    the actual `resolve_vars`/`resolve_by_ancestry_kind` inputs and outputs
+    for one representative declaration, instrumented directly. Every Tailwind
+    v4 `.shadow-{color}\/{opacity}` utility (and the matching
+    `inset-shadow-`/`drop-shadow-`/`text-shadow-` families) writes
+    `--tw-shadow-color:
+    color-mix(in oklab, color-mix(in oklab, var(--color-{color}) {opacity}%,
+    transparent) var(--tw-shadow-alpha), transparent)` — the utility's own
+    opacity suffix is a literal percentage baked into the *inner* mix, and
+    `--tw-shadow-alpha` (`@property`-registered `inherits: false`,
+    `initial-value: 100%`) is a second, independent scaling factor that
+    Tailwind's `@layer properties` reset sets back to `100%` — "no extra
+    dimming" — on every element via exactly the broken
+    `*,:before,:after,::backdrop` selector this task fixes. Pre-fix, that
+    reset candidate never matched anything (whole list uncompilable), so
+    T9's ancestry walk (`non_inheriting`-restricted to the consumer's own
+    element, T22) found no same-element setter and confirmed `"absent"` —
+    which discards even the legitimate off-page last-wins fallback
+    (`30%`, from an unrelated `.shadow-xl\/30` utility elsewhere in the
+    document) that `build_var_table` would otherwise have supplied. With
+    `--tw-shadow-alpha` unresolved and no fallback written in the `var()`
+    call, `resolve_vars` substituted empty text, `color-mix()`'s own
+    missing-percentage default rule applied to the *outer* mix, and the
+    result was alpha `0.25` — half of the inner mix's own `50%`, an
+    accident of CSS's fallback grammar with no relationship to the class's
+    own opacity suffix. Post-fix, the reset's `*` branch matches the
+    consumer at its own element, `_ancestry_winners` returns the reset's
+    literal declared value `100%` (not `initial` — the reset writes the
+    number directly), `resolve_vars` substitutes it, and the outer mix
+    collapses to the inner one unchanged (invariant 22's zero-alpha
+    shortcut) — alpha `0.5`, exactly what a `\/50` utility promises and the
+    page actually renders.
+
+    The four hexes that disappear from `tailwindcss.com.har`'s palette
+    entirely (`#e4a340` light; `#21274d`, `#33244d`, `#411e3b` dark) were
+    checked individually rather than assumed: all four are `--tw-shadow
+    -color`, all four carry `"alpha": 0.25` in their old `source`
+    metadata — the artifact above, not a real rendered color, and its
+    removal is the fix landing. `#b4b337`'s `live` → `unmatched` flip is a
+    second-order effect of the same declaration moving: its one `live`
+    usage (`matchCount: 1` against a real div, for `--tw-shadow-color` on
+    `.shadow-sky-400\/50`) was this exact wrong-alpha artifact: fixed, that
+    usage no longer flattens into this bucket, leaving only usages already
+    confirmed non-matches — invariant 27's unanimity rule then fires
+    correctly, which is a new way for this task to interact with T18/T19,
+    not a bug in either. `afterMerge`/`distinctColors` move by exactly 1
+    per theme once the wrong-alpha entries fold away and the corrected
+    -alpha declarations rejoin buckets already tracked from other,
+    unaffected declarations sharing the same rendered color;
+    `declarationsScanned` and `customProperties` counts are unchanged, and
+    JSON size does not grow. No ground moved on any bundle. Performance:
+    `tailwindcss.com.har` end-to-end at ~19s, under invariant 27's recorded
+    ~47s baseline — the new cache more than pays for the added per-branch
+    compile. Tests:
+    `test_an_unparseable_branch_does_not_void_a_good_one`,
+    `test_an_unparseable_branch_does_not_void_a_matching_candidate`,
+    `test_an_unparseable_branch_does_not_void_a_reachable_one`
+    (`tests/test_dom.py`), each required to fail against the pre-fix
+    implementation before being trusted.
   - **An at-rule nested inside a style rule** still loses its declarations —
     see the limit above; it is a parse-shape gap, not a cascade one.
 

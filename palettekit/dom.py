@@ -40,6 +40,8 @@ from html.parser import HTMLParser
 import cssselect2
 import html5lib
 
+from .cssparse import split_selector_list
+
 # `cssselect2.ElementWrapper.from_html_root` expects XHTML-namespaced tags,
 # which is how a real HTML parser reports them.
 _XHTML = "{http://www.w3.org/1999/xhtml}"
@@ -230,6 +232,70 @@ def wrap_tree(root: ET.Element) -> cssselect2.ElementWrapper:
     return cssselect2.ElementWrapper.from_html_root(root)
 
 
+@lru_cache(maxsize=4096)
+def _compile_selector_parts(selector: str) -> tuple:
+    """Compile a selector list branch by branch, so one bad branch costs only itself.
+
+    T25 (`PLAN.md`). `cssselect2.compile_selector_list` fails the *whole*
+    list if any one branch is unparseable — it does not compile the good
+    branches and skip the bad one:
+
+    ```
+    >>> cssselect2.compile_selector_list("*,:before,:after,::backdrop")
+    cssselect2.parser.SelectorError: Expected a supported pseudo-element, got backdrop
+    ```
+
+    `::backdrop` is a real, valid CSS pseudo-element `cssselect2` simply
+    doesn't implement. Tailwind v4's own `@layer properties` reset opens
+    with exactly this selector on every corpus bundle that carries
+    `@property` (`ground.news.har`, `tailwindcss.com.har`,
+    `ui.shadcn.com.har`), so compiling the list as one unit lost the leading
+    `*` branch too — the branch that should have answered every consumer's
+    `@property`-registered `initial-value` at its own element, immediately.
+
+    `split_selector_list` (invariant 17) already exists for exactly this
+    shape — a selector list where one part is malformed — so each branch is
+    split and compiled on its own; a branch that raises is dropped rather
+    than voiding the whole list. Each of the three callers below filters the
+    survivors differently afterward (pseudo-elements, `never_matches`), so
+    this returns the raw compiled selectors rather than pre-filtering.
+
+    Cached, the same reasoning as `selector_specificity`: `selector_matches`
+    sits in T9's ancestry walk, called once per (consumer, ancestor,
+    candidate) — compiling a selector list from scratch there was already
+    wasteful before this added a split and per-branch compile on top of the
+    single `compile_selector_list` call it replaces. `lru_cache` itself only
+    requires hashable *arguments*; the tuple return is a separate
+    precaution, because a cached *list* would be one mutable object handed
+    to every caller sharing this cache entry. None of the three callers
+    mutates what it gets back — and none may start to, including the
+    compiled selector objects themselves, which are now shared across all
+    three call sites rather than freshly compiled per caller.
+
+    **Not used by `matches_page_element` or `selector_specificity`**, which
+    have the identical try/except-the-whole-list shape and the identical
+    bug, but were left out of T25's filing on purpose. For the one selector
+    this bug is known to affect, `matches_page_element` is unaffected either
+    way — `*` is already refused as blanket (`_is_blanket`) and `:before`/
+    `:after` are refused as pseudo-elements, so the surviving branches
+    change nothing it reports. `selector_specificity` is not so lucky and
+    the claim "changes nothing" would be false there: verified directly,
+    `cssselect2.compile_selector_list(":before")[0].specificity` is
+    `(0, 0, 1)`, not `(0, 0, 0)`, so fixing that call site would move its
+    answer for this selector — and `selector_specificity` feeds
+    `_cascade_key` (invariant 21, `detect_ground`/`build_var_table`), an
+    unmeasured blast radius this task did not sign up to predict. Left for
+    its own task if a corpus case ever needs it.
+    """
+    compiled: list = []
+    for part in split_selector_list(selector):
+        try:
+            compiled.extend(cssselect2.compile_selector_list(part))
+        except Exception:
+            continue
+    return tuple(compiled)
+
+
 def _compile_usable(selector: str) -> list | None:
     """The parts of a selector list a real element can be directly styled by.
 
@@ -246,10 +312,7 @@ def _compile_usable(selector: str) -> list | None:
     need answered instead, and T21's own write-up (`PLAN.md`) for why the two
     must not share a filter despite looking like the same refusal.
     """
-    try:
-        compiled = cssselect2.compile_selector_list(selector)
-    except Exception:
-        return None
+    compiled = _compile_selector_parts(selector)
     usable = [sel for sel in compiled
              if sel.pseudo_element is None and not sel.never_matches]
     return usable or None
@@ -311,10 +374,7 @@ def _compile_reachable(selector: str) -> list | None:
     candidates against their base compound too, which is out of scope here
     since it changes what T9 confirms, not merely what T18/T19 report.
     """
-    try:
-        compiled = cssselect2.compile_selector_list(selector)
-    except Exception:
-        return None
+    compiled = _compile_selector_parts(selector)
     usable = [sel for sel in compiled if not sel.never_matches]
     return usable or None
 
@@ -480,10 +540,7 @@ def selector_matches(selector: str,
     questions (that one has no element to test against; this one does) and
     would otherwise silently disagree on a list where only one branch matches.
     """
-    try:
-        compiled = cssselect2.compile_selector_list(selector)
-    except Exception:
-        return None
+    compiled = _compile_selector_parts(selector)
     best = None
     for sel in compiled:
         if sel.pseudo_element is not None or sel.never_matches:

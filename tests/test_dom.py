@@ -171,6 +171,28 @@ class TestFullTree(unittest.TestCase):
         tree = full_tree(self.HTML)
         self.assertEqual(elements_matching(":is( , .x)", tree), [])
 
+    def test_an_unparseable_branch_does_not_void_a_good_one(self):
+        """T25 (`PLAN.md`): Tailwind v4's own reset selector,
+        `*,:before,:after,::backdrop` -- `::backdrop` is a real pseudo
+        -element `cssselect2` doesn't implement, and used to fail
+        `compile_selector_list` for the *whole* list, costing the `*`
+        branch too. Split first, compile each branch on its own, and `*`
+        should reach every element in the tree.
+        """
+        tree = full_tree(self.HTML)
+        found = elements_matching("*,:before,:after,::backdrop", tree)
+        self.assertEqual(len(found), 7)
+
+    def test_an_unparseable_branch_does_not_void_a_matching_candidate(self):
+        """Same shape, through `selector_matches` -- T9's own candidate
+        matcher (`_ancestry_winners`). `*` is weak (`(0, 0, 0)`) but real,
+        where the pre-fix code answered `None`, "does not match at all".
+        """
+        tree = full_tree(self.HTML)
+        el = elements_matching(".bg-card", tree)[0]
+        self.assertEqual(
+            selector_matches("*,:before,:after,::backdrop", el), (0, 0, 0))
+
     def test_non_string_input_is_none_not_a_raise(self):
         """`html5lib` is lenient about malformed markup by design -- empty
         string and outright garbage both come back a minimal tree, checked
@@ -242,6 +264,17 @@ class TestSelectorReach(unittest.TestCase):
         self.assertIs(
             selector_reach(".bg-card:hover, .no-such-class", self.wrapped()),
             False)
+
+    def test_an_unparseable_branch_does_not_void_a_reachable_one(self):
+        """T25 (`PLAN.md`): unlike the mixed list above, `::backdrop` doesn't
+        compile at all rather than merely `never_matches` -- pre-fix,
+        `compile_selector_list` raised on the whole
+        `*,:before,:after,::backdrop` list, so this answered `None`, "cannot
+        tell", instead of `True`.
+        """
+        self.assertIs(
+            selector_reach("*,:before,:after,::backdrop", self.wrapped()),
+            True)
 
 
 class TestElementSignature(unittest.TestCase):

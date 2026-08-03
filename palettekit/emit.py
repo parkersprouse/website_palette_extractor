@@ -31,6 +31,26 @@ GROUP_BLURBS = {
     "chroma": "Everything with actual hue.",
 }
 
+# T20: one line per status, shown next to that status's own swatches rather
+# than deferred to a single dense footer sentence. Order matches README's
+# "Four statuses" section.
+STATUS_TITLES = {
+    "live": "Live",
+    "saved": "Saved",
+    "inert": "Inert",
+    "unmatched": "Unmatched",
+}
+STATUS_BLURBS = {
+    "live": "Actually painted on the page.",
+    "saved": "A custom property nothing in the CSS references — often a "
+             "design tool's saved swatches.",
+    "inert": "A declaration that paints nothing, such as a shadow with "
+             "every length at zero.",
+    "unmatched": "This selector matched nothing in the page this tool "
+                 "captured — could be unused CSS, or could be markup only "
+                 "client-side JavaScript adds, which this tool cannot run.",
+}
+
 
 def _theme_document(pal: Palette) -> dict:
     """One theme's half of the document.
@@ -447,6 +467,12 @@ __UI_THEMES__
   .blurb { margin: 0 0 1rem; font-size: .86rem; color: var(--ui-muted);
            max-width: 62ch; }
 
+  h3.status-heading { font-size: .66rem; font-weight: 700; letter-spacing: .1em;
+       text-transform: uppercase; color: var(--ui-muted); margin: 1.2rem 0 .15rem; }
+  h3.status-heading:first-of-type { margin-top: .3rem; }
+  .status-blurb { margin: 0 0 .6rem; font-size: .78rem; color: var(--ui-muted);
+                  max-width: 60ch; }
+
   .grid { display: grid; gap: 10px;
           grid-template-columns: repeat(auto-fill, minmax(198px, 1fr)); }
 
@@ -580,6 +606,9 @@ __UI_THEMES__
   var GROUP_TITLES = __GROUP_TITLES__;
   var GROUP_BLURBS = __GROUP_BLURBS__;
   var GROUP_ORDER = ["ground", "surface", "ink", "line", "neutral", "chroma"];
+  var STATUS_TITLES = __STATUS_TITLES__;
+  var STATUS_BLURBS = __STATUS_BLURBS__;
+  var STATUS_ORDER = ["live", "saved", "inert", "unmatched"];
 
   var fmt = "hex";
   var filter = "live";
@@ -760,9 +789,32 @@ __UI_THEMES__
       var sec = el("section");
       sec.appendChild(el("h2", null, GROUP_TITLES[g] || g));
       sec.appendChild(el("p", "blurb", GROUP_BLURBS[g] || ""));
-      var grid = el("div", "grid");
-      list.forEach(function (c) { grid.appendChild(swatch(c)); });
-      sec.appendChild(grid);
+
+      /* T20: sub-group by status so a reader can see *why* a swatch isn't
+         live without leaving the section — a per-status heading and one-line
+         description, right beside the colors it explains. Skipped when the
+         section is purely live (the default "rendered only" view, and any
+         section with nothing else to explain), so the common case renders
+         exactly as before. */
+      var byStatus = {};
+      list.forEach(function (c) {
+        (byStatus[c.status] = byStatus[c.status] || []).push(c);
+      });
+      var statusesPresent = Object.keys(byStatus);
+      var showStatusHeadings =
+        statusesPresent.length > 1 || statusesPresent[0] !== "live";
+
+      STATUS_ORDER.forEach(function (s) {
+        var sub = byStatus[s];
+        if (!sub || !sub.length) return;
+        if (showStatusHeadings) {
+          sec.appendChild(el("h3", "status-heading", STATUS_TITLES[s] || s));
+          sec.appendChild(el("p", "status-blurb", STATUS_BLURBS[s] || ""));
+        }
+        var grid = el("div", "grid");
+        sub.forEach(function (c) { grid.appendChild(swatch(c)); });
+        sec.appendChild(grid);
+      });
       host.appendChild(sec);
     });
 
@@ -872,12 +924,8 @@ __UI_THEMES__
     var f = document.getElementById("footer");
     f.textContent =
       "Ground " + theme().ground + ". Values are read from the site's " +
-      "stylesheets, not sampled from pixels. \\u201csaved\\u201d means a custom " +
-      "property nothing references; \\u201cinert\\u201d means a declaration that " +
-      "paints nothing; \\u201cunmatched\\u201d means a selector that matches " +
-      "nothing in the page this tool captured \\u2014 could be unused CSS, or " +
-      "could be markup only client-side JavaScript adds (a hover state, a " +
-      "toggled class), which this tool cannot run. " +
+      "stylesheets, not sampled from pixels. Non-live statuses are labelled " +
+      "and described next to the colors they apply to, above. " +
       (THEMES.length > 1
         ? "The site ships two themes; each was extracted separately, so every " +
           "ratio above is measured against that theme's own ground. "
@@ -956,4 +1004,7 @@ def emit_html(doc: dict, pal: Palette) -> str:
     out = out.replace("__DATA__", payload)
     out = out.replace("__GROUP_TITLES__", json.dumps(GROUP_TITLES))
     out = out.replace("__GROUP_BLURBS__", json.dumps(GROUP_BLURBS))
+    out = out.replace("__STATUS_TITLES__", json.dumps(STATUS_TITLES))
+    out = out.replace("__STATUS_BLURBS__",
+                       json.dumps(STATUS_BLURBS, ensure_ascii=False))
     return out

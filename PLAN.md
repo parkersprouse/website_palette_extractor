@@ -804,10 +804,11 @@ Accuracy gaps left by phases 1–4:
       (`emit.py`), the exact gap this task's own write-up named. 153 tests,
       `ruff` clean, 3.11–3.14 green, module/zipapp JSON identity reverified.
       See T19's own entry below for the full design and both measurements
-- [ ] **T20** — categorize the HTML report's palette by status, with
-      per-status descriptions — **filed 2026-08-02, requested by the owner,
-      depends on T18's new status value (landed: `unmatched`).** Not
-      started. See T20's own entry below
+- [x] **T20** — categorize the HTML report's palette by status, with
+      per-status descriptions — **filed 2026-08-02, landed 2026-08-03.**
+      Sub-grouped each hue/role section by status rather than adding an
+      orthogonal filter axis, per the sketch's first option. See T20's own
+      entry below for the outcome
 - [x] **T21** — test a pseudo-element selector's base compound against the
       real element, instead of treating every pseudo-element as no-basis —
       **filed 2026-08-02, landed 2026-08-02.** Fixed T18/T19's reach
@@ -2225,9 +2226,66 @@ specifically (105 chars vs the 50-char cap), not on import.
 
 ### T20 — Categorize the HTML report's palette by status, with descriptions
 
+> **Outcome — landed 2026-08-03.** Took the first of the two sketched
+> shapes: sub-group *within* each existing hue/role section by status,
+> rather than an orthogonal filter axis. The filter-button shape doesn't
+> give the per-status prose a location to live next to its colors, which is
+> the whole point of "near where that status's colors actually are" — a
+> second axis of buttons still leaves the description in a tooltip or a
+> footnote.
+>
+> `render()` (`emit.py`) now sub-groups each `GROUP_ORDER` section's visible
+> colors by `status`, in a fixed `STATUS_ORDER` (`live`, `saved`, `inert`,
+> `unmatched` — README's own order), and inserts an `h3.status-heading` +
+> `p.status-blurb` pair before each status's own `.grid`, sourced from new
+> `emit.STATUS_TITLES`/`STATUS_BLURBS` dicts (mirroring `GROUP_TITLES`/
+> `GROUP_BLURBS`) and injected the same way, via `__STATUS_TITLES__`/
+> `__STATUS_BLURBS__` template placeholders.
+>
+> **Heading suppression has a real edge case, caught before landing rather
+> than found live.** The first draft suppressed the subheadings whenever a
+> section held only one status (`statusesPresent.length > 1`) — which hides
+> the heading and description for a section that is entirely non-live, e.g.
+> an all-`unmatched` `line` group: exactly the shape this task exists to
+> explain. Fixed to suppress only when the section is purely `live`
+> (`statusesPresent.length > 1 || statusesPresent[0] !== "live"`), so the
+> default "rendered only" view — always live-only, since `visible()` already
+> filters to it — renders exactly as before, byte-for-byte, and any section
+> with even one non-live color always carries its explanation.
+>
+> **The footer's dense three-status sentence was cut, not left duplicated.**
+> With the description sitting next to the colors it explains, repeating it
+> a fourth time in a document-wide footnote was the exact anti-pattern this
+> task was filed against. `renderFooter()` now only states the ground,
+> where values come from, and points at the sections above; the `unmatched`
+> blurb keeps invariant 27's "which this tool cannot run" hedge intact
+> (`STATUS_BLURBS["unmatched"]`) since that's the one place it still lives.
+>
+> **Verified against `fleshandbonedesign.com.har`, not synthetically only.**
+> It's the one frozen bundle whose `base` theme carries all four statuses at
+> once (`live: 19, unmatched: 9, saved: 14, inert: 1`), split across three
+> different hue/role groups (`surface`, `ink`/`line`, `chroma`) — so it
+> exercises both the multi-status and mixed-group-membership cases in one
+> report. Checked in a real browser tab, `file://`, both filter states:
+> "rendered only" shows plain sections with no subheadings (unchanged from
+> before this task); "everything found" shows each mixed section's LIVE /
+> SAVED / INERT / UNMATCHED subheadings in that fixed order, each with its
+> one-line description directly above its swatches. The reference fixture's
+> own tests fixture (`tests/helpers.py FIXTURE`) independently carries all
+> four statuses too, split across `surface`/`ink`/`line`/`chroma` — used for
+> the new regression test rather than requiring network access.
+>
+> No data diff, as predicted — `to_document`'s output is unchanged; this is
+> presentation only. New CSS uses existing `var(--ui-*)` tokens exclusively,
+> so `test_report_theme_is_readable` needed no changes and still passes.
+> 185 tests (184 + 1 new: `test_report_status_subheadings_appear_for_mixed_sections`,
+> asserting the status markup and every status's blurb text land in the
+> emitted HTML), `ruff` clean, 3.11–3.14 green, module/zipapp JSON identity
+> reverified on `fleshandbonedesign.com.har` (`generated` excluded).
+
 **Filed 2026-08-02, requested by the owner alongside T18's status-shape
 decision. T18 has since landed** (`unmatched`, invariant 27) **— no longer
-blocked.** Not started.
+blocked.**
 
 **The gap, verified directly in `emit.py`.** The report's swatch grid
 (`render()`, `emit.py:747`) groups entries by hue/role (`GROUP_ORDER`:

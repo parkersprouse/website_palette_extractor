@@ -191,7 +191,7 @@ sources.py   →  cssparse.py  →  extract.py  →  emit.py
 | `dom.py` | 685 | `html.parser` → `ElementTree` shim, `cssselect2` matching of `<html>`/`<body>`, specificity, plus `full_tree`/`elements_matching`/`wrap_tree` (T9: real DOM below the page element), `selector_reach` (T18: does a selector match anything, real/none/untestable), `element_signature` (T19: a short label for one real matched element), and `_compile_selector_parts` (T25: one bad selector-list branch costs only itself) |
 | `sources.py` | 292 | `load_har` / `load_url` / `load_paths` → `Bundle` |
 | `extract.py` | 1750 | `extract()`, the cascade, per-theme `_build`, ground, merging, statuses, naming, `resolve_by_ancestry`/`resolve_by_ancestry_kind` (T9, non-inheriting-aware since T22), `Entry.all_unmatched` (T18), per-usage `match_count`/`match_samples` (T19), `_page_color_scheme`/`_scopes_present`'s confirmation gate (T10), `property_registrations` (T22) |
-| `emit.py` | 959 | Emitters; `_HTML` is the report template |
+| `emit.py` | 1010 | Emitters; `_HTML` is the report template (T20: status sub-headings) |
 | `images.py` | 148 | Optional image quantisation, not part of the token set |
 | `__main__.py` | 255 | CLI; `main()` guards `PYTHON_FLOOR` before anything else |
 

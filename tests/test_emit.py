@@ -77,6 +77,37 @@ class TestEndToEnd(unittest.TestCase):
             self.assertGreaterEqual(
                 ratio, floor, f"{role} only {ratio:.2f}:1 on the ground")
 
+    def test_report_status_subheadings_predicate_is_not_the_naive_one(self):
+        """T20: a section that is entirely non-live still gets its heading.
+
+        `STATUS_TITLES`/`STATUS_BLURBS` text and the `status-heading`/
+        `status-blurb` classes are emitted into the template unconditionally
+        (the injected JSON dict and the stylesheet), so their presence in the
+        HTML proves nothing about whether `render()` ever actually shows a
+        heading -- a naive first draft (`statusesPresent.length > 1`, which
+        hides the heading for a section whose only status is e.g.
+        `unmatched`, exactly the shape this task exists to surface) would
+        pass a presence-only check. This pins the corrected predicate in the
+        emitted JS source instead. Final DOM rendering -- that the fixture's
+        purely-`unmatched` `line` section really does show its heading, and a
+        mixed section shows all its statuses in order -- was verified by
+        hand in a browser against both this fixture and
+        `fleshandbonedesign.com.har`; see PLAN.md's T20 entry.
+        """
+        html = emit.emit_html(self.doc, self.pal)
+        self.assertIn(
+            'statusesPresent.length > 1 || statusesPresent[0] !== "live"',
+            html)
+
+        # The fixture exercises all four statuses (verified directly against
+        # extract() output), so every title/blurb pair is load-bearing here,
+        # not merely present in the unconditional template scaffolding.
+        statuses = {c["status"] for c in self.doc["colors"]}
+        self.assertEqual(statuses, {"live", "saved", "inert", "unmatched"})
+        for status in statuses:
+            self.assertIn(emit.STATUS_TITLES[status], html)
+            self.assertIn(emit.STATUS_BLURBS[status], html)
+
     def test_document_has_a_schema_version(self):
         """schemaVersion is the only intended addition to the key set.
 

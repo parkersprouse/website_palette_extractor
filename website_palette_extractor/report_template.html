@@ -79,7 +79,7 @@
         color: var(--ui-strong);
       }
 
-      h1 .dot {
+      .dot {
         color: var(--ui-accent);
       }
 
@@ -108,13 +108,21 @@
         flex-wrap: wrap;
         gap: .5rem;
         align-items: center;
+        justify-content: space-evenly;
         margin-bottom: 2rem;
       }
 
-      .controls label {
+      .controls .controls__control-wrapper {
+        display: inline-flex;
+        flex-wrap: nowrap;
+        gap: .5rem;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .controls .controls__control-wrapper label {
         font-size: .8rem;
         color: var(--ui-muted);
-        margin-right: .2rem;
       }
 
       .seg {
@@ -130,7 +138,7 @@
         font: inherit;
         font-size: .78rem;
         padding: .34rem .7rem;
-        color: var(--ui-muted);
+        color: var(--ui-body);
         border-right: 1px solid var(--ui-line);
       }
 
@@ -162,27 +170,29 @@
       }
 
       h2 {
-        font-size: .72rem;
+        font-size: 1.25rem;
         font-weight: 700;
         letter-spacing: .14em;
-        text-transform: uppercase;
-        color: var(--ui-muted);
+        /* text-transform: uppercase; */
+        font-variant: small-caps;
+        color: var(--ui-strong);
         margin: 0 0 .2rem;
       }
 
       .blurb {
         margin: 0 0 1rem;
         font-size: .86rem;
-        color: var(--ui-muted);
+        color: var(--ui-body);
         max-width: 62ch;
       }
 
       h3.status-heading {
-        font-size: .66rem;
+        font-size: 1rem;
         font-weight: 700;
         letter-spacing: .1em;
-        text-transform: uppercase;
-        color: var(--ui-muted);
+        /* text-transform: uppercase; */
+        font-variant: small-caps;
+        color: var(--ui-body);
         margin: 1.2rem 0 .15rem;
       }
 
@@ -193,7 +203,7 @@
       .status-blurb {
         margin: 0 0 .6rem;
         font-size: .78rem;
-        color: var(--ui-muted);
+        color: var(--ui-body);
         max-width: 60ch;
       }
 
@@ -254,10 +264,11 @@
         font-size: .58rem;
         font-weight: 700;
         letter-spacing: .09em;
-        text-transform: uppercase;
+        text-transform: lowercase;
+        /* font-variant: small-caps; */
         padding: .16rem .38rem;
         background: var(--ui-ground);
-        color: var(--ui-muted);
+        color: var(--ui-body);
         border: 1px solid var(--ui-line);
       }
 
@@ -279,7 +290,7 @@
 
       .val {
         font-size: .78rem;
-        color: var(--ui-muted);
+        color: var(--ui-body);
         text-transform: lowercase;
         word-break: break-all;
         margin-top: .1rem;
@@ -287,13 +298,13 @@
 
       .role {
         font-size: .74rem;
-        color: var(--ui-muted);
+        color: var(--ui-body);
         margin-top: .3rem;
       }
 
       .cr {
         font-size: .7rem;
-        color: var(--ui-muted);
+        color: var(--ui-body);
         margin-top: .25rem;
       }
 
@@ -306,24 +317,66 @@
         border: 1px solid var(--ui-line);
       }
 
-      details.detail summary {
+      details.detail .detail-header {
         cursor: pointer;
         padding: .6rem .8rem;
-        font-size: .78rem;
+        font-size: 1rem;
         letter-spacing: .1em;
-        text-transform: uppercase;
+        /* text-transform: uppercase; */
+        font-variant: small-caps;
         font-weight: 700;
-        color: var(--ui-muted);
+        color: var(--ui-strong);
+
+        display: flex;
+        flex-wrap: nowrap;
+        flex-direction: row;
+        gap: 0.25em;
+        justify-content: flex-start;
+        align-items: center;
       }
 
-      details.detail summary:focus-visible {
+      details.detail[open] .detail-header {
+        border-bottom: 1px dashed var(--ui-line);
+      }
+
+      details.detail .detail-header:focus-visible {
         outline: 2px solid var(--ui-accent);
         outline-offset: -2px;
       }
 
-      .detail-body {
-        padding: 0 .8rem .8rem;
+      details.detail .detail-header .detail-header__marker {
+        width: 1.5rem;
+        height: 1.5rem;
+      }
+
+      details.detail:not([open]) .detail-header .detail-header__marker svg[data-icon-open] {
+        display: none;
+      }
+
+      details.detail[open] .detail-header .detail-header__marker svg[data-icon-closed] {
+        display: none;
+      }
+
+      details.detail .detail-body {
+        padding: .8rem;
         font-size: .8rem;
+      }
+
+      details.detail .detail-body table#prov tbody tr td {
+        white-space: pre-line;
+        vertical-align: middle;
+      }
+
+      details.detail .detail-body table#prov thead tr th:not(:last-of-type),
+      details.detail .detail-body table#prov tbody tr td:not(:last-of-type) {
+        text-align: center;
+      }
+
+      details.detail .detail-body .detail-body__section-header {
+        margin-bottom: 0.5em;
+        margin-top: 1.5em;
+        font-variant: small-caps;
+        letter-spacing: .05em;
       }
 
       table {
@@ -341,8 +394,16 @@
       }
 
       th {
-        color: var(--ui-muted);
+        color: var(--ui-body);
         font-weight: 700;
+      }
+
+      table#prov tr:last-of-type td {
+        border-bottom: none;
+      }
+
+      details.detail div#report table#report-details th {
+        text-align: right;
       }
 
       .warn-box {
@@ -354,16 +415,17 @@
 
       .warn-box h3 {
         margin: 0 0 .4rem;
-        font-size: .72rem;
+        font-size: 1rem;
         letter-spacing: .1em;
-        text-transform: uppercase;
+        /* text-transform: uppercase; */
+        font-variant: small-caps;
         color: var(--ui-accent);
       }
 
       .warn-box ul {
         margin: 0;
         padding-left: 1.1rem;
-        color: var(--ui-muted);
+        color: var(--ui-body);
       }
 
       /*
@@ -373,19 +435,25 @@
        * border rather than --ui-accent: this is a standing limit of the method,
        * not a site-specific problem to flag.
        */
+
+      #caveats {
+        margin-top: 1.4rem;
+      }
+
       .caveat-box {
         border: 1px solid var(--ui-line);
         padding: .8rem 1rem;
         margin-bottom: 1.6rem;
         font-size: .84rem;
-        color: var(--ui-muted);
+        color: var(--ui-body);
       }
 
       .caveat-box h3 {
         margin: 0 0 .4rem;
-        font-size: .72rem;
+        font-size: 1rem;
         letter-spacing: .1em;
-        text-transform: uppercase;
+        /* text-transform: uppercase; */
+        font-variant: small-caps;
         color: var(--ui-strong);
       }
 
@@ -472,12 +540,18 @@
       <div id='warnings'></div>
 
       <div class='controls'>
-        <label id='theme-label' hidden>Theme</label>
-        <div class='seg cap' role='group' aria-labelledby='theme-label' id='theme' hidden></div>
-        <label id='fmt-label'>Copy as</label>
-        <div class='seg' role='group' aria-labelledby='fmt-label' id='fmt'></div>
-        <label id='show-label' style='margin-left:auto'>Show</label>
-        <div class='seg' role='group' aria-labelledby='show-label' id='filter'></div>
+        <div class='controls__control-wrapper'>
+          <label id='theme-label' hidden>Theme</label>
+          <div class='seg cap' role='group' aria-labelledby='theme-label' id='theme' hidden></div>
+        </div>
+        <div class='controls__control-wrapper'>
+          <label id='fmt-label'>Copy as</label>
+          <div class='seg' role='group' aria-labelledby='fmt-label' id='fmt'></div>
+        </div>
+        <div class='controls__control-wrapper'>
+          <label id='show-label'>Show</label>
+          <div class='seg' role='group' aria-labelledby='show-label' id='filter'></div>
+        </div>
       </div>
 
       <div id='groups'></div>
@@ -490,7 +564,15 @@
       </section>
 
       <details class='detail'>
-        <summary>Where each color came from</summary>
+        <summary class='detail-header'>
+          <span class='detail-header__marker'>
+            <svg data-icon-closed xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24'><path fill='currentColor' d='M10 8.068a.5.5 0 0 1 .82-.385l4.72 3.933a.5.5 0 0 1 0 .768l-4.72 3.933a.5.5 0 0 1-.82-.384z' /></svg>
+            <svg data-icon-open xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24'><path fill='currentColor' d='M15.933 10a.5.5 0 0 1 .384.82l-3.933 4.72a.5.5 0 0 1-.768 0l-3.933-4.72a.5.5 0 0 1 .385-.82z'/></svg>
+          </span>
+          <span class='detail-header__label'>
+            Where each color came from
+          </span>
+        </summary>
         <div class='detail-body'>
           <table id='prov'>
             <thead>
@@ -508,7 +590,15 @@
       </details>
 
       <details class='detail'>
-        <summary>Extraction report</summary>
+        <summary class='detail-header'>
+          <span class='detail-header__marker'>
+            <svg data-icon-closed xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24'><path fill='currentColor' d='M10 8.068a.5.5 0 0 1 .82-.385l4.72 3.933a.5.5 0 0 1 0 .768l-4.72 3.933a.5.5 0 0 1-.82-.384z'/></svg>
+            <svg data-icon-open xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24'><path fill='currentColor' d='M15.933 10a.5.5 0 0 1 .384.82l-3.933 4.72a.5.5 0 0 1-.768 0l-3.933-4.72a.5.5 0 0 1 .385-.82z'/></svg>
+          </span>
+          <span class='detail-header__label'>
+            Extraction report
+          </span>
+        </summary>
         <div class='detail-body' id='report'></div>
       </details>
 
@@ -532,7 +622,7 @@
         var STATUS_BLURBS = __STATUS_BLURBS__;
         var STATUS_ORDER = ['live', 'saved', 'inert', 'unmatched'];
 
-        var fmt = 'hex';
+        var fmt = 'declared';
         var filter = 'live';
 
         /* Always at least one entry, so everything below has one code path whether
@@ -632,8 +722,13 @@
           document.getElementById('theme-label').hidden = false;
         }
 
-        var FORMATS = [['hex', 'hex'], ['rgb', 'rgb'], ['hsl', 'hsl'],
-        ['oklch', 'oklch'], ['declared', 'as declared']];
+        var FORMATS = [
+          ['declared', 'as declared'],
+          ['hex', 'hex'],
+          ['rgb', 'rgb'],
+          ['hsl', 'hsl'],
+          ['oklch', 'oklch'],
+        ];
         var fmtHost = document.getElementById('fmt');
         FORMATS.forEach(function (f) {
           var b = el('button', null, f[1]);
@@ -782,7 +877,7 @@
                 s += ' (' + e.matchCount + (e.matchCount === 1 ? ' match' : ' matches') + ')';
               }
               return s;
-            }).join('  ·  ');
+            }).join('\n');
             tr.appendChild(el('td', 'mono', ex));
             tb.appendChild(tr);
           });
@@ -795,6 +890,7 @@
           rep.textContent = '';
           var t = theme();
           var dl = el('table');
+          dl.id = 'report-details';
           var tbody = el('tbody');
           function row(k, v) {
             var tr = el('tr');
@@ -820,7 +916,7 @@
           rep.appendChild(dl);
 
           if (t.stats.sources && t.stats.sources.length) {
-            rep.appendChild(el('p', null, 'Stylesheets read:'));
+            rep.appendChild(el('h3', 'detail-body__section-header', 'Stylesheets read'));
             var st = el('table');
             var sh = el('thead');
             var shr = el('tr');

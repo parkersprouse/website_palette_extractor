@@ -62,7 +62,7 @@ reached only through `images.py`, behind `--images`.
 
 ```bash
 python3 -m palettekit <target> -o out    # target: .har | URL | .html/.css path
-python3 -m unittest discover             # 197 tests, all must pass (needs the deps)
+python3 -m unittest discover             # 198 tests, all must pass (needs the deps)
 python3 -m palettekit x.har --no-themes  # collapse a two-theme site into one
 ruff check .                             # must stay clean; config in pyproject
 python3 -m palettekit x.har --list-sources   # diagnose framework noise first

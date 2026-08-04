@@ -3323,12 +3323,20 @@ that carry a `color-scheme` declaration at all (the six breadth-check sites,
 `pseudo_selector_example.har`, and `mdn.har`), plus a second pass under
 `--no-themes` to cover `default_appearance`, the key's other consumer — see
 below. Same convention as T10's own: this changes `_theme_plan`'s input for
-any site using this pattern. Six of the eight came back byte-identical
-(`fleshandbonedesign.com.har`, `ground.news.har`, `parkersprouse.me.har`,
-`tailwindcss.com.har`, `ui.shadcn.com.har`,
-`pawelgrzybek.com__light_dark_example.har` — none of them writes a
-selector-theme-scoped `color-scheme` declaration). `pseudo_selector_example
-.har` is the intended, predicted movement.
+any site using this pattern. Six of the eight showed no movement in theme
+count or ground — the declared diff level, not a stronger "byte-identical"
+claim. Four of those six are true no-ops a priori:
+`fleshandbonedesign.com.har`, `ground.news.har`, `parkersprouse.me.har` and
+`ui.shadcn.com.har` carry no `color-scheme` declaration at all, checked
+directly, so `_theme_scoped_scheme_keywords` has nothing to iterate. The
+other two genuinely exercise the new function and still show no movement:
+`tailwindcss.com.har` writes `.dark { color-scheme: dark }` /
+`.light { color-scheme: light }`, and `pawelgrzybek.com__light_dark_example
+.har`'s single `html { color-scheme: light dark }` is unscoped and so never
+reaches this function at all — both already had `scheme_kw ==
+{"light","dark"}` through the pre-existing unscoped path, so the union this
+task adds changes nothing for either. `pseudo_selector_example.har` is the
+intended, predicted movement.
 
 `mdn.har` moved too, and this was *not* predicted at filing — it does write
 selector-scoped `color-scheme` declarations
@@ -3386,13 +3394,34 @@ clean check rather than a coincidence: `TestSelectorScopedColorScheme
 .test_a_single_selector_scoped_keyword_does_not_confirm_both` is what
 exercises that path, synthetically, since no corpus site does.
 
+**Media-scoped is excluded, and this was caught in review rather than at
+first implementation.** `Declaration.theme` does not distinguish a
+selector-scoped rule from a media-scoped one —
+`theme_scope() = selector_theme(selector) or media_theme(at_rules)` — so
+the first version of `_theme_scoped_scheme_keywords`'s filter
+(`d.theme` truthy) also admitted
+`@media (prefers-color-scheme: dark) { :root { color-scheme: dark } }`.
+That block is *conditional* — a browser whose OS preference is not dark
+never applies it — where a selector toggle is an unconditional statement
+the page makes about itself. Trusting the media-scoped shape the same way
+reintroduces exactly the overreach T10's own gate was built to prevent (the
+`light-dark()` initial value is `normal`, i.e. light, regardless of any one
+block's own condition). The filter now excludes `d.theme_media`. Checked
+directly, not assumed: zero declarations across all eight bundles examined
+above carry this shape, so the exclusion changed nothing measured — printed
+`d.theme_media`/`d.at_rules` for every `color-scheme` declaration in the
+corpus rather than inferring it from selector text.
+
 Tests: `TestSelectorScopedColorScheme` (`tests/test_color.py`) — the fixture
-shape itself, confirmed from either captured state; and the negative case
-(only one toggle rule present, one theme, reading the confirmed keyword's
-branch) confirming the widened gate does not accidentally confirm both from
-one-sided evidence. All three required to fail against the pre-T26
-implementation before being trusted, per this file's own "a test that passes
-before and after tests nothing" discipline — checked directly, not assumed.
+shape itself, confirmed from either captured state; the negative case (only
+one toggle rule present, one theme, reading the confirmed keyword's branch)
+confirming the widened gate does not accidentally confirm both from
+one-sided evidence; and the media-scoped case confirming a
+`prefers-color-scheme` block does not confirm unconditionally the way a
+selector toggle does. All four required to fail against the implementation
+they were written to pin before being trusted, per this file's own "a test
+that passes before and after tests nothing" discipline — checked directly,
+not assumed.
 
 ---
 

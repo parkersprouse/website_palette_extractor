@@ -499,6 +499,23 @@ class TestSelectorScopedColorScheme(unittest.TestCase):
         self.assertIsNone(pal.alternate)
         self.assertEqual(pal.ground.hex, "#18191b")
 
+    def test_a_media_scoped_keyword_does_not_confirm_unconditionally(self):
+        """A `prefers-color-scheme` block is conditional, unlike a selector toggle.
+
+        Trusting it the same way a selector-scoped declaration is trusted
+        would let a single `@media (prefers-color-scheme: dark)` block
+        confirm `dark` for every visitor, including one whose browser is not
+        in dark mode — the same overreach T10's own gate exists to prevent.
+        """
+        page = """<!DOCTYPE html><html><head><style>
+          @media (prefers-color-scheme: dark) { :root { color-scheme: dark; } }
+          :root { --page: light-dark(#ffffff, #18191b); }
+          html { background-color: var(--page); }
+        </style></head><body></body></html>"""
+        pal = extract.extract(sources.load_any(write_fixture(page)))
+        self.assertIsNone(pal.alternate)
+        self.assertEqual(pal.ground.hex, "#ffffff")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

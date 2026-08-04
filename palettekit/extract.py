@@ -905,11 +905,27 @@ def _theme_scoped_scheme_keywords(sheets: list[Stylesheet],
     only as the DOM-matched state's complement (the other design) land on
     the same set either way. See T26's write-up in `PLAN.md` for the
     per-site mechanism, printed rather than inferred.
+
+    **Media-scoped, not selector-scoped, is excluded** (`d.theme_media`) even
+    though `Declaration.theme` does not distinguish the two mechanisms
+    (`theme_scope() = selector_theme(selector) or media_theme(at_rules)`).
+    `@media (prefers-color-scheme: dark) { :root { color-scheme: dark } }`
+    is conditional — it only applies in a browser whose OS preference is
+    already dark — where a selector toggle like
+    `[data-theme="dark"] { color-scheme: dark }` is an unconditional
+    statement the page makes about itself regardless of what any browser
+    prefers. Trusting the media-scoped shape the same way would let a single
+    `prefers-color-scheme: dark` block confirm a keyword no visitor's
+    unmodified browser is guaranteed to ever render, which is the same
+    overreach T10's own gate exists to prevent (the light-dark() initial
+    value is `normal`). Zero declarations in the corpus carry this shape
+    (checked directly across all eight bundles examined above, not assumed),
+    so the exclusion has had no observable effect yet.
     """
     found: set[str] = set()
     for sheet in sheets:
         for d in sheet.declarations:
-            if d.prop != "color-scheme" or not d.theme:
+            if d.prop != "color-scheme" or not d.theme or d.theme_media:
                 continue
             found |= _scheme_keywords(resolve_vars(d.value, table))
     return found

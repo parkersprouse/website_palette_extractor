@@ -3318,10 +3318,12 @@ produces the identical two themes and grounds — confirmed by test, not
 assumed, since the whole point of trusting the declaration over the DOM is
 that capture state must not change the answer.
 
-**Diff level: theme count and ground per site**, across all eight corpus
-bundles plus `pseudo_selector_example.har`, same convention as T10's own —
-this changes `_theme_plan`'s input for any site using this pattern. Six of
-the eight breadth-check bundles came back byte-identical
+**Diff level: theme count and ground per site**, across all eight bundles
+that carry a `color-scheme` declaration at all (the six breadth-check sites,
+`pseudo_selector_example.har`, and `mdn.har`), plus a second pass under
+`--no-themes` to cover `default_appearance`, the key's other consumer — see
+below. Same convention as T10's own: this changes `_theme_plan`'s input for
+any site using this pattern. Six of the eight came back byte-identical
 (`fleshandbonedesign.com.har`, `ground.news.har`, `parkersprouse.me.har`,
 `tailwindcss.com.har`, `ui.shadcn.com.har`,
 `pawelgrzybek.com__light_dark_example.har` — none of them writes a
@@ -3335,23 +3337,54 @@ theme-switcher scaffolding, present in the CSS but not reflected in this
 static capture's `<html>`, which carries no `data-theme` attribute at all).
 Checked at the full-document level, not just theme count and ground: every
 hex, every `groundSource`, every per-theme stat is byte-identical before and
-after: `mdn.har` already confirmed both keywords pre-T26, through its own
-unscoped `html { color-scheme: light dark }` winning the cascade over
-`:root { color-scheme: light }` on specificity (`:root` is `(0,1,0)`, `html`
-is `(0,0,1)` — verified directly, not assumed, since a first read of the two
-declared values without their cascade ranking would have wrongly predicted
-this site to be unaffected). What moved is only the theme's own `id`/`scope`
-label — `"base"`/`""` before, `"light"`/`"light"` after — because
-`_theme_plan` names a two-scope site's palettes `"light"`/`"dark"`
-unconditionally, and `scopes` becomes `{"light","dark"}` here for the first
-time now that the theme-scoped declarations register their own scope too,
-where before only the generic themed-color path had registered `"dark"`
-alone (from unrelated `data-scheme`-attributed component rules) and light-dark()
-confirmation had never fired. A relabeling, not a color change, and arguably
-a more accurate one: MDN genuinely ships an explicit toggle mechanism, not
-only an OS-preference one, so naming its light palette `"light"`/`scope:
-"light"` matches how every other explicit-toggle two-theme site in this
-corpus is already labeled.
+after — only the theme's own `id`/`scope` label moved
+(`"base"`/`""` → `"light"`/`"light"`).
+
+**The mechanism, printed rather than inferred** (`_page_color_scheme`'s own
+candidate list, instrumented directly — a first read of the two declared
+values without their cascade ranking gave the wrong answer once already and
+wasn't trusted a second time): `:root { color-scheme: light }` beats
+`html { color-scheme: light dark }` on specificity — `:root` is `(0,1,0)`,
+`html` is `(0,0,1)`, and `:root` wins regardless of document order — so
+**pre-T26 `_page_color_scheme` resolved to `"light"` alone**, not both
+keywords. `scheme_kw` was `{"light"}`, the `{"light","dark"} <= scheme_keywords`
+gate never fired, and `light-dark()` was never confirmed two-themed through
+this path at all. `scopes` was `{"dark"}` pre-T26 purely from the *other*,
+unrelated mechanism in `_scopes_present` — the generic themed-color path,
+which found real color on the `dark`-scoped `data-scheme` component rules
+(`.page-layout__banner[data-scheme=dark]` and siblings) — giving
+`_theme_plan`'s `[("base",""), ("dark","dark")]` shape. Post-T26,
+`_theme_scoped_scheme_keywords` adds `{"light","dark"}` from
+`html[data-theme=light]`/`html[data-theme=dark]` (trusted unconditionally,
+DOM presence or not), `scheme_kw` becomes `{"light","dark"}`, the gate fires
+for the first time, and `scopes` becomes `{"light","dark"}` — `_theme_plan`'s
+`[("light","light"), ("dark","dark")]` shape instead. The ground is
+unaffected because the light-dark() value itself was always going to resolve
+to its light branch here either way: the pre-T26 `"base"` build read it
+through `default_appearance` (`"light"`, since `scheme_kw` was never exactly
+`{"dark"}`), and the post-T26 `"light"`-scoped build reads it directly as its
+own theme's branch — same value, different route to it. A relabeling, not a
+color change, and arguably a more accurate one: MDN genuinely ships an
+explicit toggle mechanism, not only an OS-preference one, so naming its
+light palette `"light"`/`scope:"light"` matches how every other
+explicit-toggle two-theme site in this corpus is already labeled.
+
+**`default_appearance` is the change's other consumer, and was checked
+separately** — `scheme_kw` feeds both `_scopes_present` and
+`default_appearance`, and the corpus diff above ran in default (two-theme)
+mode, where a confirmed two-scope site never consults
+`default_appearance` at all. Re-run with `--no-themes` (which forces
+`extract()`'s single-palette path and *does* consult it) across all eight
+bundles: grounds are byte-identical before and after on every one, including
+`pseudo_selector_example.har` (`#efefec` both times — its `scheme_kw` is
+`{"light","dark"}` under both `--no-themes` and default mode, so
+`default_appearance` reads `"light"` either way, the same branch its actual
+two-theme build's `"light"` scope reads independently). No corpus bundle
+sits at the one input that would move `default_appearance` under this
+change — `scheme_kw == {"dark"}` and nothing else — pre-T26, so this is a
+clean check rather than a coincidence: `TestSelectorScopedColorScheme
+.test_a_single_selector_scoped_keyword_does_not_confirm_both` is what
+exercises that path, synthetically, since no corpus site does.
 
 Tests: `TestSelectorScopedColorScheme` (`tests/test_color.py`) — the fixture
 shape itself, confirmed from either captured state; and the negative case

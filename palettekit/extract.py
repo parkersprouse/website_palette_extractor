@@ -879,6 +879,13 @@ def _theme_scoped_scheme_keywords(sheets: list[Stylesheet],
     against, because nothing else can be scoped to the same theme by the
     same marker and disagree in a way ranking would resolve.
 
+    **Any theme-scoped declaration counts, page-level or component-level —
+    this function does not distinguish `html[data-theme="dark"]` from
+    `.navigation[data-scheme="dark"]`.** `mdn.har` exercises both shapes at
+    once and both contribute; no corpus site yet separates them, so whether
+    a component-only toggle should count the same as a page-level one is
+    untested rather than deliberately decided either way.
+
     Two designs were weighed at filing (see T26's own write-up): trust every
     theme-scoped declaration unconditionally, or DOM-match whichever scope
     the capture is actually in and treat only the *other* keyword's
@@ -886,13 +893,18 @@ def _theme_scoped_scheme_keywords(sheets: list[Stylesheet],
     the corpus that carries `color-scheme` at all — `pseudo_selector_example
     .har`, `mdn.har`, `pawelgrzybek.com__light_dark_example.har`,
     `tailwindcss.com.har` — the two produce identical `scheme_keywords` on
-    every one: every site that already confirms both keywords does so
-    through the unscoped path above and this function adds nothing, and the
-    one site this task was filed against (`pseudo_selector_example.har`)
-    confirms both either way. No corpus evidence distinguishes them, so the
-    simpler, symmetric design was taken rather than the one that would also
-    need a DOM-reach carve-out in `_page_specificity` for one selector but
-    not its sibling.
+    every one, so no corpus evidence distinguishes them and the simpler,
+    symmetric design was taken. This is not because every corpus site was
+    already confirmed two-themed through `_page_color_scheme`'s unscoped
+    path above — `mdn.har` was not; `:root { color-scheme: light }` beats
+    `html { color-scheme: light dark }` on specificity there, so the
+    unscoped path alone resolved to `"light"` only. It is because on every
+    site examined, whichever keyword the unscoped path left unconfirmed was
+    also the keyword some theme-scoped declaration stated on its own — so
+    trusting that declaration unconditionally (this design) and trusting it
+    only as the DOM-matched state's complement (the other design) land on
+    the same set either way. See T26's write-up in `PLAN.md` for the
+    per-site mechanism, printed rather than inferred.
     """
     found: set[str] = set()
     for sheet in sheets:

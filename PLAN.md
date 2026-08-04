@@ -877,6 +877,21 @@ Accuracy gaps left by phases 1–4:
       evidence, the design comparison that decided between the two options
       filing left open, and the one unpredicted corpus movement (a theme-id
       relabel on `mdn.har`, not a color change)
+- [x] **T27** — whole-repo quality sweep: documentation accuracy across every
+      `.md` file and the in-code docs, a bug hunt through the paths the
+      corpus never exercises, and the eight `python-*` review skills —
+      **landed 2026-08-03.** Six bugs, every one of them in `__main__.py` or
+      `images.py`, which were **the only two modules with no test file**;
+      both have one now (198 → 223 tests). The report could be corrupted by
+      the site it measures, `--formats` accepted anything and exited 0, a
+      negative `--limit` trimmed the wrong end silently, an unwritable `-o`
+      traced back, `images.analyse` crashed on tiny artwork, and
+      `build.py`'s vendoring check structurally could not see `six`. The
+      stale docs were the "two dependencies" and "`@property` not modelled"
+      claims (both untrue since T9/T22), plus a stale `example/` — the
+      second tracked artifact and the one with no rebuild rule, which
+      `CLAUDE.md` now has. See T27's own entry below, including the findings
+      that were **reviewed and deliberately rejected** as invariant-protected
 
 Repo and process:
 
@@ -3474,6 +3489,18 @@ the ones nobody could see. Both modules now have one (`tests/test_main.py`,
    archive and confirming the tightened check rejects it.
 7. **`example/` was stale**, the second tracked artifact and the one with no
    rebuild rule. See `CLAUDE.md`'s new "Regenerate `example/` too" section.
+8. **`CLAUDE.md`'s documented `python3 -m build` never built a wheel.** `-m`
+   puts the current directory first on `sys.path`, and this repo has a
+   `build.py` at its root, so from here that command resolves to *that file*
+   — it rebuilds `palettekit.pyz`, prints a success line, and writes no
+   `dist/` at all. It has been wrong for as long as `build.py` has existed
+   (T12), and it fails in the worst way: it looks like it worked. Confirmed
+   with `importlib.util.find_spec("build").origin`, and the line now reads
+   `pyproject-build`, the same tool's own console script, which nothing
+   shadows. Found only because the packaging path was re-run as a check on
+   this sweep's own edit to `palettekit/__init__.py` — the file
+   `[tool.hatch.version]` reads `__version__` from. (That edit is fine:
+   `pyproject-build` produces `palettekit-1.1.0` with all nine modules.)
 
 **Verified the project's own way.** All eight frozen bundles, all six output
 files each — 48 files — byte-identical before and after with `generated`

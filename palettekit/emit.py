@@ -1080,7 +1080,12 @@ def emit_html(doc: dict, pal: Palette) -> str:
         "__STATUS_TITLES__": json.dumps(STATUS_TITLES),
         "__STATUS_BLURBS__": json.dumps(STATUS_BLURBS, ensure_ascii=False),
     }
-    pattern = "|".join(re.escape(k) for k in fills)
+    # Longest first: `re` alternation is leftmost-first, not longest-match, so
+    # an alternation listing `__TITLE__` before `__TITLE_HTML__` would match
+    # the shorter one inside the longer and leave `_HTML` behind. The trailing
+    # `__` happens to prevent that for this particular set, which is exactly
+    # the kind of accident worth not relying on.
+    pattern = "|".join(re.escape(k) for k in sorted(fills, key=len, reverse=True))
     # A replacement is returned verbatim by the callback, so backslashes and
     # `\g<...>` inside a color value or selector are never read as group refs.
     return re.sub(pattern, lambda m: fills[m.group(0)], _HTML)

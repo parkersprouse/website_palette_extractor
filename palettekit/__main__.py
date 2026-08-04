@@ -26,6 +26,17 @@ from .sources import Bundle
 FORMATS = ("html", "json", "css", "scss", "ts", "tailwind")
 
 
+def requested_formats(spec: str) -> set[str]:
+    """Split a `--formats` value the one way it is ever split.
+
+    `_validate` decides what is acceptable and `main` decides what to write;
+    if they parsed the string separately, a change to the splitting rule
+    would leave the validator describing something other than what gets
+    written — the kind of duplication that only shows up once it diverges.
+    """
+    return {f.strip().lower() for f in spec.split(",") if f.strip()}
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="palettekit",
@@ -105,7 +116,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {problem}", file=sys.stderr)
         return 2
 
-    want = {f.strip().lower() for f in args.formats.split(",") if f.strip()}
+    want = requested_formats(args.formats)
 
     if args.images:
         ok, msg = images.available()
@@ -225,14 +236,12 @@ def _validate(args: argparse.Namespace) -> str | None:
     trimmed tokens off the *end* of the palette (`[:-5]` drops five), which
     looks like a smaller site rather than a rejected flag.
     """
-    unknown = sorted(
-        f for f in {f.strip().lower() for f in args.formats.split(",") if f.strip()}
-        if f not in FORMATS
-    )
+    want = requested_formats(args.formats)
+    unknown = sorted(f for f in want if f not in FORMATS)
     if unknown:
         return (f"unknown --formats value(s): {', '.join(unknown)}. "
                 f"Valid: {', '.join(FORMATS)}.")
-    if not {f.strip().lower() for f in args.formats.split(",") if f.strip()}:
+    if not want:
         return f"--formats is empty. Valid: {', '.join(FORMATS)}."
     if args.limit < 0:
         return f"--limit must be 0 or more, got {args.limit}."

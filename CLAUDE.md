@@ -80,9 +80,19 @@ python3 -m palettekit x.har --list-sources   # diagnose framework noise first
 
 pip install -e ".[dev]"                  # editable install + ruff/build/pytest
 pip install -e ".[images]"               # adds pillow+numpy for --images
-python3 -m build                         # wheel + sdist into dist/
+pyproject-build                          # wheel + sdist into dist/ (not `-m build`)
 python3 build.py                         # rebuild palettekit.pyz (see below)
 ```
+
+**`pyproject-build`, not `python3 -m build`** — and this is a silent trap, not
+a style preference. `-m` puts the current directory first on `sys.path`, and
+this repo has a `build.py` at its root, so from here `python3 -m build`
+resolves to **that file** rather than the installed `build` package: it
+rebuilds `palettekit.pyz`, prints a success line, and never writes `dist/` at
+all. Verified directly (`importlib.util.find_spec("build").origin` is
+`./build.py` from the repo root). `pyproject-build` is the same tool's own
+console script and is not shadowed. This line used to read `python3 -m build`
+and was wrong for as long as `build.py` has existed (`PLAN.md` T12).
 
 Installing exposes a `palettekit` console script (`[project.scripts]`), so the
 three ways to run it are `python3 -m palettekit`, `palettekit`, and the zipapp.

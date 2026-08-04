@@ -104,18 +104,20 @@ def analyse(images: list[bytes], k: int = 10, sample: int = 400,
 
 def _kmeans(x, k: int):
     import numpy as np
-    # Only the import is guarded. Wrapping `.fit()` in the same `except
-    # ImportError` would silently reroute a genuine sklearn failure into the
-    # numpy fallback, hiding a real error behind a slower code path that
-    # answers differently — and `_kmeans` is reached only after `analyse`
-    # has already clamped k, so there is no expected failure left to absorb.
+    # `.fit()` stays inside the `except ImportError`, deliberately, even
+    # though the import alone is what "is sklearn installed?" asks: sklearn
+    # defers some of its own scipy imports until fit time, so a half-broken
+    # scipy raises `ImportError` from inside `fit()` rather than from the
+    # import above. sklearn is only ever an accelerator here (`images-fast`);
+    # the numpy path below computes the same thing, so degrading to it is
+    # right and crashing a run whose palette is already complete is not.
+    # Anything that is *not* an ImportError still propagates.
     try:
         from sklearn.cluster import KMeans
-    except ImportError:
-        KMeans = None
-    if KMeans is not None:
         km = KMeans(n_clusters=k, n_init=6, random_state=0).fit(x)
         return km.cluster_centers_, np.bincount(km.labels_, minlength=k)
+    except ImportError:
+        pass
 
     rng = np.random.default_rng(0)
     centers = x[rng.choice(len(x), size=k, replace=False)].copy()

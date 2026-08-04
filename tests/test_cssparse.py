@@ -35,7 +35,7 @@ class TestCss(unittest.TestCase):
     def test_an_at_rule_nested_in_a_style_rule_keeps_the_enclosing_selector(self):
         """T6 (`PLAN.md`): native CSS nesting has no selector of its own.
 
-        `.a { color: red; @media (min-width:1px) { color: blue } }` — `blue`
+        `.a { color: red; @media (min-width:1px) { color: blue } }` – `blue`
         belongs to `.a`, exactly as if the `@media` wrapper weren't there. The
         old brace walker (and `_walk` until this fix) pushed an empty selector
         for every at-rule block regardless of nesting, so this declaration
@@ -46,7 +46,7 @@ class TestCss(unittest.TestCase):
         got = [(d.selector, d.prop, d.value) for d in sheet.declarations]
         self.assertEqual(got, [(".a", "color", "red"), (".a", "color", "blue")])
 
-        # A *top-level* at-rule still resets to no selector — a qualified
+        # A *top-level* at-rule still resets to no selector – a qualified
         # rule found inside it computes its own selector regardless.
         css2 = "@media (min-width:1px) { .b { color: green } }"
         sheet2 = parse_stylesheet(css2, "t")
@@ -60,7 +60,7 @@ class TestCss(unittest.TestCase):
         Simply propagating the enclosing rule's `theme` unchanged would fix
         the dropped-declaration bug but introduce its mirror image: an
         unscoped `.a` means this declaration would come back `theme == ""`,
-        which `_theme_plan` treats as belonging to *every* theme — inventing a
+        which `_theme_plan` treats as belonging to *every* theme – inventing a
         color the light theme never paints, the same failure invariant 13
         guards against from the other direction.
         """
@@ -73,7 +73,7 @@ class TestCss(unittest.TestCase):
         self.assertEqual(by_value["blue"].selector, ".a")
 
         # A selector-derived theme on the enclosing rule still wins over a
-        # nested media query — the enclosing rule already said which theme it
+        # nested media query – the enclosing rule already said which theme it
         # is, so the media scope doesn't get to override that.
         css2 = (".dark .a { color: red; "
                 "@media (prefers-color-scheme: light) { color: blue } }")
@@ -96,7 +96,7 @@ class TestCss(unittest.TestCase):
 
         `var_refs` used to be a regex over the serialized value with no token
         boundaries, so `content: "--foo"` counted as a reference to `--foo`
-        the same way `var(--foo)` would — invariant 9's mistake, recurring one
+        the same way `var(--foo)` would – invariant 9's mistake, recurring one
         step downstream of color reading, in the collection that decides
         `live` vs `saved` (invariant 10) rather than in `find_colors` itself.
         """
@@ -144,7 +144,7 @@ class TestCss(unittest.TestCase):
         )
         # No fallback and an `initial` value: nothing to substitute with.
         self.assertEqual(resolve_vars("var(--tw-gradient-via-stops)", table), "")
-        # Case and surrounding whitespace do not matter — it is a keyword.
+        # Case and surrounding whitespace do not matter – it is a keyword.
         self.assertEqual(
             resolve_vars("var(--a, #000)", {"--a": "  Initial  "}), "#000",
         )
@@ -162,7 +162,7 @@ class TestCss(unittest.TestCase):
         """A fallback is a whole value, so it can hold functions of its own.
 
         The non-greedy regex this replaced stopped at the first `)`, which is
-        the wrong one the moment the fallback contains a function — it cut the
+        the wrong one the moment the fallback contains a function – it cut the
         call short and left the rest of the declaration behind as an orphaned
         tail. ui.shadcn.com writes
         `background-image: var(--shimmer-image, linear-gradient(…))`, and what
@@ -196,7 +196,7 @@ class TestCss(unittest.TestCase):
         <the same stops written out>)`, and a `.via-*` utility defines the
         name. Cut at the first `)`, the call resolved from the table *and* the
         orphaned tail resolved as well, so every color in the fallback was
-        counted twice — 204 declarations across three corpus sites. The colors
+        counted twice – 204 declarations across three corpus sites. The colors
         were right and their weight was doubled, which is invisible in a hex
         set and visible in every ranking built from it.
         """
@@ -212,7 +212,7 @@ class TestCss(unittest.TestCase):
         Tailwind v4 minifies to
         `color-mix(in oklab,var(--color-white)var(--tw-shadow-alpha),transparent)`.
         Pasted together those give `#fff100%`, which the color scanner reads as
-        the hex `#fff100` — a bright yellow that appeared 18 times on
+        the hex `#fff100` – a bright yellow that appeared 18 times on
         ground.news and is painted nowhere on it. Two correct values and one
         missing space manufacture a whole color.
         """
@@ -338,8 +338,8 @@ class TestThemeScopes(unittest.TestCase):
               html:not([data-theme="light"]) { --body-bg: #0e1117; … }
             }
 
-        Read the marker as a scope and the dark theme's whole token block —
-        124 declarations of it, the ground among them — is filed under light.
+        Read the marker as a scope and the dark theme's whole token block –
+        124 declarations of it, the ground among them – is filed under light.
         Skipping the negation lets the rule fall through to the media query,
         which says dark, which is what it is.
 
@@ -354,7 +354,7 @@ class TestThemeScopes(unittest.TestCase):
         self.assertEqual(theme_scope("html:not(.dark)", ()), "")
         # A real marker outside the negation still scopes the rule.
         self.assertEqual(theme_scope(".dark .a:not(.light)", ()), "dark")
-        # Stripping must leave the negation intact — `html:not()` is not a
+        # Stripping must leave the negation intact – `html:not()` is not a
         # selector, and the ground would never be matched through it.
         self.assertEqual(strip_theme_scope('html:not([data-theme="light"])'),
                          'html:not([data-theme="light"])')
@@ -378,7 +378,7 @@ class TestThemeScopes(unittest.TestCase):
     def test_tailwind_v4_dark_variant_survives_the_split(self):
         """Tailwind v4 puts a comma inside the scope: `:where(.dark,.dark *)`.
 
-        Splitting there leaves `:where(, *)`, which matches nothing — so the
+        Splitting there leaves `:where(, *)`, which matches nothing – so the
         theme's own rules stop being recognised as the theme's, and its ground
         falls back to a guess. v3's `:is(.dark *)` has no comma, which is why
         this survived a site built on v3.
@@ -392,7 +392,7 @@ class TestThemeScopes(unittest.TestCase):
 
         The scope is stated by the `:is(.dark *)` beside it. Reading the name
         as the marker strips it out of the middle of the class and leaves
-        `\\:bg-x` — which then matches nothing, including the body's own class.
+        `\\:bg-x` – which then matches nothing, including the body's own class.
         """
         sel = r".dark\:bg-dark-primary:is(.dark *)"
         self.assertEqual(theme_scope(sel, ()), "dark")
@@ -409,7 +409,7 @@ class TestSupports(unittest.TestCase):
     """T23: `@supports` used to be read as though every block always applies.
 
     That's backwards for a `not (...)` fallback guarding a feature this tool
-    already treats as real browser behaviour (invariants 22-23) — exactly
+    already treats as real browser behaviour (invariants 22-23) – exactly
     pawelgrzybek.com's `@supports not (color: light-dark(white,black))`,
     which otherwise outranks the real `light-dark()` declaration on document
     order alone. See PLAN.md T23 and CLAUDE.md's `@supports` known limit.
@@ -432,7 +432,7 @@ class TestSupports(unittest.TestCase):
         self.assertTrue(supports_condition(_prelude("(--x: anything(1))")))
 
     def test_and_or_use_three_valued_logic(self):
-        # `not X or Y` isn't valid `@supports` grammar on its own — mixing
+        # `not X or Y` isn't valid `@supports` grammar on its own – mixing
         # `not`/`and`/`or` at the same level needs explicit disambiguating
         # parens (CSS Conditional Rules 3), same as `(not X) or Y` below.
         false_and_unknown = _prelude(
@@ -454,7 +454,7 @@ class TestSupports(unittest.TestCase):
         browsers that can't parse `light-dark()`, sitting after the real
         declaration in document order. Read at face value it wins last-wins
         over the real one; skipped, it never reaches `sheet.declarations` or
-        `sheet.var_refs` at all — not merely unrecorded as a color.
+        `sheet.var_refs` at all – not merely unrecorded as a color.
         """
         css = (
             ":root { --bg: light-dark(white, black); }"

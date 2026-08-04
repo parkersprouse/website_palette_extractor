@@ -292,8 +292,8 @@ something else.
   color a site declares rather than the one that won on some element.
 - **Scoped custom properties are modelled only as far as the captured page can
   prove.** When a `var()`'s consuming element is in the captured markup, the
-  real ancestor chain decides which definition applies to it. When it isn't —
-  a client-rendered page, or a HAR that never fetched the page using it — the
+  real ancestor chain decides which definition applies to it. When it isn't –
+  a client-rendered page, or a HAR that never fetched the page using it – the
   last definition in the document wins, which is a guess and is sometimes the
   wrong one. `@property` is read for `inherits` and `initial-value`; its
   `syntax` is not checked against the value stored.

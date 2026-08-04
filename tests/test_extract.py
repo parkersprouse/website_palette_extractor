@@ -60,7 +60,7 @@ class TestUtilityGround(unittest.TestCase):
             write_fixture(UTILITY_GROUND))))
 
     def test_utility_on_body_outranks_the_body_rule(self):
-        """`.bg-light-primary` beats `body {}` — and is what the page shows."""
+        """`.bg-light-primary` beats `body {}` – and is what the page shows."""
         themes = {t["id"]: t for t in self.doc()["themes"]}
         self.assertEqual(themes["base"]["ground"], "#eeefe9")
         # Reached by the right path: named for the class, not for `body`.
@@ -128,7 +128,7 @@ class TestCascade(unittest.TestCase):
     """`importance → layer → specificity → document order` (phase 3).
 
     Every case here is one the previous document-order-only resolution got
-    wrong, and none of them appears on the corpus — which is exactly why they
+    wrong, and none of them appears on the corpus – which is exactly why they
     are written out rather than left to a breadth check.
     """
 
@@ -141,7 +141,7 @@ class TestCascade(unittest.TestCase):
         """The limit phase 3 lifts, stated as the case that used to fail.
 
         The body carries `.bg-canvas`, and that utility is declared *before*
-        the `body {}` rule it competes with — the mirror image of ground.news,
+        the `body {}` rule it competes with – the mirror image of ground.news,
         where the utility happens to come last and document order agreed with
         specificity by luck. A class outranks an element, so `#eeefe9` is what
         the page shows; document order alone reports `#ffffff`.
@@ -184,7 +184,7 @@ class TestCascade(unittest.TestCase):
 
         Both blocks are unlayered-equal on every other term, and `base` is
         written last. It still loses, because the statement at the top reserved
-        `utilities` the later position — which is the entire reason a site
+        `utilities` the later position – which is the entire reason a site
         writes that line. Tailwind v4 opens with one.
         """
         html = """<!DOCTYPE html><html><head><style>
@@ -199,7 +199,7 @@ class TestCascade(unittest.TestCase):
         """The rule that makes importance more than a tiebreak.
 
         Among `!important` declarations the layer order runs backwards, so the
-        *earlier* layer wins — the opposite of the normal case immediately
+        *earlier* layer wins – the opposite of the normal case immediately
         above. This is why the cascade is all four terms or none: bolting
         importance on as a final tiebreak gets this exactly wrong.
 
@@ -232,8 +232,8 @@ class TestCascade(unittest.TestCase):
     def test_import_layer_reserves_a_position(self):
         """`@import url(...) layer(name);` reserves a position too (T8).
 
-        The imported sheet is never fetched — `sources.py` doesn't follow
-        `@import` — so it contributes no declarations of its own. But the
+        The imported sheet is never fetched – `sources.py` doesn't follow
+        `@import` – so it contributes no declarations of its own. But the
         position it will cascade at is claimed before `base` appears, the
         same way the statement form of `@layer` reserves one with no block
         behind it yet.
@@ -249,7 +249,7 @@ class TestCascade(unittest.TestCase):
 
         Per the T5/T15 corollary, `layer(...)` is found by walking
         `node.prelude`'s tokens for a `function` node named `layer`, not by
-        regexing the serialized prelude string — so a name with a dot in it
+        regexing the serialized prelude string – so a name with a dot in it
         (a sub-layer) still registers its parent too, the same as
         `@layer a.x {}` does.
         """
@@ -259,7 +259,7 @@ class TestCascade(unittest.TestCase):
         self.assertIn("utilities.sub", sheet.layers)
 
     def test_import_without_layer_registers_nothing(self):
-        """A plain `@import` still declares nothing — same as `@charset`."""
+        """A plain `@import` still declares nothing – same as `@charset`."""
         sheet = parse_stylesheet("@import url(x.css);", "s")
         self.assertEqual(sheet.layers, [])
 
@@ -267,7 +267,7 @@ class TestCascade(unittest.TestCase):
         """The one construct here with a hand-rolled uniqueness scheme.
 
         No corpus site uses an anonymous layer, so nothing else exercises
-        `_anonymous_layer`'s counter — and a collision would not raise, it
+        `_anonymous_layer`'s counter – and a collision would not raise, it
         would silently merge two layers and mis-order a palette on the first
         site that used them. Checked at two depths, and in the combinations
         that make the counter skip a value: a *named* layer inside an
@@ -319,8 +319,8 @@ class TestCascade(unittest.TestCase):
     def test_html_and_body_grounds_resolve_in_separate_pools(self):
         """T7: pooling `<html>` and `<body>` candidates together is luck.
 
-        Both rules are `(0, 0, 1)`, unimportant, unlayered — tied on every
-        cascade term this key has — so a single shared pool falls through to
+        Both rules are `(0, 0, 1)`, unimportant, unlayered – tied on every
+        cascade term this key has – so a single shared pool falls through to
         document order and picks whichever was declared last. Here that is
         `html`. A real browser paints `<body>`'s own background over the
         `<html>` canvas wherever the body covers it, which is the whole
@@ -339,7 +339,7 @@ class TestCascade(unittest.TestCase):
         """The case that actually demonstrates separate pools, not luck.
 
         `<html>`'s background is `!important`, more specific (an id) and
-        declared later — it would win a single shared pool on every cascade
+        declared later – it would win a single shared pool on every cascade
         term there is. It still loses, because `<body>` having any resolved
         background at all takes precedence over whatever `<html>` resolves
         to; the id and the `!important` never get to compete against it.
@@ -458,7 +458,7 @@ class TestChannelTriplets(unittest.TestCase):
 
     A bare triplet is not a color. It becomes one only when a color function
     assembles it at the point of use. Both halves of that are asserted here,
-    because the tempting "fix" — reading a color out of the bare form — would
+    because the tempting "fix" – reading a color out of the bare form – would
     invent colors the page never paints.
     """
 
@@ -533,7 +533,7 @@ class TestResolveByAncestry(unittest.TestCase):
     rejected same-element filter getting wrong: `.theme-neutral { --card:
     ... }` several levels above `.bg-card { background: var(--card) }`. A
     same-element filter tests whether `.theme-neutral` reaches `.bg-card`'s
-    own selector, which it never does — that shape is meant to be read
+    own selector, which it never does – that shape is meant to be read
     through inheritance, not by matching the same element.
     """
 
@@ -665,7 +665,7 @@ class TestNonInheritingAncestry(unittest.TestCase):
 
     Found on `ui.shadcn.com.har`: `--tw-ring-color`/`--tw-ring-shadow` (both
     registered non-inheriting) were resolving from an unrelated ancestor
-    12-14 levels up — a real bug, not a hypothetical one, this reproduces at
+    12-14 levels up – a real bug, not a hypothetical one, this reproduces at
     unit scale.
     """
 
@@ -684,7 +684,7 @@ class TestNonInheritingAncestry(unittest.TestCase):
                                         non_inheriting=True))
 
     def test_non_inheriting_still_sees_self(self):
-        """A value set on the consuming element itself is not "past self" —
+        """A value set on the consuming element itself is not "past self" –
         `inherits: false` only rules out an *ancestor's* definition, not the
         element's own."""
         html = '<html><body><span class="theme-neutral bg-card">x</span></body></html>'
@@ -713,10 +713,10 @@ class TestAncestryWiredIntoBuild(unittest.TestCase):
         """`.theme-blue` is declared *after* `.theme-neutral` in the CSS, so
         last-wins alone reports blue everywhere `--card` is consumed. The
         real element in this document sits under `.theme-neutral`, so the
-        honest answer is the neutral grey — last-wins gets this backwards
+        honest answer is the neutral grey – last-wins gets this backwards
         without the ancestry override.
 
-        `#1d4ed8` is expected to still appear in the palette — it is
+        `#1d4ed8` is expected to still appear in the palette – it is
         `.theme-blue`'s own token *definition*, a color-bearing declaration
         in its own right (invariant 10) regardless of what any consumer
         resolves to. What this test checks is which color `.bg-card`'s own
@@ -762,7 +762,7 @@ class TestAncestryWiredIntoBuild(unittest.TestCase):
         """Same shape, no written fallback. Confirmed-absent removes the
         property from this declaration's table entirely (the same route
         `initial` already takes, invariant 26) rather than substituting
-        last-wins' `none` — the declaration should paint nothing, not a
+        last-wins' `none` – the declaration should paint nothing, not a
         malformed value.
         """
         html = """<!DOCTYPE html><html><head><style>

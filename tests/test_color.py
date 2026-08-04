@@ -69,18 +69,18 @@ class TestParsing(unittest.TestCase):
 
     def test_a_color_function_nested_two_levels_deep_finds_nothing(self):
         """T17: the old `COLOR_TOKEN` regex tolerated exactly one level of
-        nested parens and failed closed past that — `rgb(min(calc(1 + 2), 3)
+        nested parens and failed closed past that – `rgb(min(calc(1 + 2), 3)
         0 0)` matched nothing, silently, rather than reading a wrong color.
 
         A `tinycss2` token walk delimits a `FunctionBlock` correctly no
         matter how deep its arguments nest, so the boundary itself is no
-        longer the reason this returns nothing — `min()`/`calc()` channel
+        longer the reason this returns nothing – `min()`/`calc()` channel
         values are still outside what `_num`/`_hue` evaluate, which is a
         separate, still-open gap (see `PLAN.md` T17's "Known limits" note).
         What matters here is that a color *after* the unreadable one is not
         swallowed along with it, the way an under-bounded scanner could.
 
-        Does not discriminate against the old regex — it already failed
+        Does not discriminate against the old regex – it already failed
         closed the same way for this exact shape, since the PLAN.md write-up
         that motivated T17 predicted no corpus site exercises the gap in a
         way that flips output. Kept as forward regression coverage for the
@@ -100,7 +100,7 @@ class TestParsing(unittest.TestCase):
         content is inline SVG markup, itself carrying `stroke=`/`fill=`
         attributes that look exactly like CSS color syntax. The old regex
         scanned the whole declaration value as flat text and read those as
-        real colors — the same class of mistake invariant 9 exists to
+        real colors – the same class of mistake invariant 9 exists to
         forbid for `content: "#fff"`, just one `url()` layer deeper than that
         invariant's own test reaches. A `url()`'s argument arrives as a
         `StringToken`, which the walk never opens, so nothing inside it is
@@ -112,7 +112,7 @@ class TestParsing(unittest.TestCase):
 
     def test_a_bare_url_does_not_read_its_filename_as_a_named_color(self):
         """T17, the corpus diff's other finding: ground.news links a
-        `bg-black.png` background image, unquoted — `url(.../bg-black.png)`.
+        `bg-black.png` background image, unquoted – `url(.../bg-black.png)`.
 
         `\\bblack\\b` matched the word inside the filename, the same way it
         would match a real `black` keyword sitting anywhere else in the
@@ -168,7 +168,7 @@ class TestColorMaths(unittest.TestCase):
 
 
 class TestColorMix(unittest.TestCase):
-    """`color-mix()` — the largest category of color this tool used to skip.
+    """`color-mix()` – the largest category of color this tool used to skip.
 
     The corpus shape by a wide margin is Tailwind's opacity modifier,
     `color-mix(in oklab, <color> <p>%, transparent)`, which is why the
@@ -179,7 +179,7 @@ class TestColorMix(unittest.TestCase):
         """Exact, and it has to be: buckets are keyed on the quantised hex.
 
         With the other alpha at zero the premultiplied algebra collapses to
-        "the first color, at `alpha * p`" — no interpolation happens at all.
+        "the first color, at `alpha * p`" – no interpolation happens at all.
         A round trip through OKLab would land ±1 off on some channels and
         invent palette entries out of rounding.
         """
@@ -228,12 +228,12 @@ class TestColorMix(unittest.TestCase):
             parse_color("color-mix(in srgb, #ff0000 30%, #0000ff)").hex)
 
     def test_a_mix_that_cannot_be_evaluated_yields_nothing(self):
-        """Not the arguments inside it — those are colors the page never paints.
+        """Not the arguments inside it – those are colors the page never paints.
 
         Every one of these has a perfectly readable color in it, and reporting
         that color would be the plausible-looking guess this module exists to
         refuse. `calc(50% - var(--x))` stays in this list even after T5 taught
-        `_mix_component` literal `calc()` arithmetic — a `var()` inside `calc()`
+        `_mix_component` literal `calc()` arithmetic – a `var()` inside `calc()`
         is outside the supported subset on purpose, same as everywhere else a
         `var()` in an unexpected place is refused rather than guessed at.
         """
@@ -251,7 +251,7 @@ class TestColorMix(unittest.TestCase):
         """T5: `calc()` percentages made of literal arithmetic now resolve.
 
         `calc(60 * 1%)` is the exact shape ui.shadcn.com ships across six
-        `.shimmer-color-*` declarations — corpus-driven, not a hypothetical.
+        `.shimmer-color-*` declarations – corpus-driven, not a hypothetical.
         Each assertion is checked against the same mix written as a plain
         percentage, so this tests the arithmetic rather than merely "some
         color came back".
@@ -278,7 +278,7 @@ class TestColorMix(unittest.TestCase):
         """`calc()` evaluation is a deliberately small subset, not a parser.
 
         Mixed units, a percentage multiplied by a percentage, and division by
-        a percentage are all outside CSS's own type rules for this position —
+        a percentage are all outside CSS's own type rules for this position –
         evaluating them would require guessing a unit conversion this tool has
         no basis for. Malformed `calc()` (unbalanced parens, trailing junk)
         stays unreadable too.
@@ -296,7 +296,7 @@ class TestColorMix(unittest.TestCase):
         """A grey has no hue, so mixing it must not sweep through hues.
 
         With the angle taken from the other color, interpolating in a polar
-        space is the same arithmetic as interpolating in its rectangular one —
+        space is the same arithmetic as interpolating in its rectangular one –
         which is exactly the property that says the carry-forward happened.
         Without it the grey's arbitrary 0 degrees is averaged in and the result
         comes out reddened.
@@ -342,7 +342,7 @@ class TestLightDark(unittest.TestCase):
     resolves to `light-dark(#fff,#18191b)`, and reading both branches into one
     palette made a site with two obvious themes look like it had one.
 
-    `color-scheme: light dark` (T10, `PLAN.md`) is in `PAGE` deliberately —
+    `color-scheme: light dark` (T10, `PLAN.md`) is in `PAGE` deliberately –
     without it a `light-dark()` site is not confirmed two-themed at all (see
     `TestLightDarkNeedsColorScheme` below), and this fixture exists to test
     that a *confirmed* one still is, not to test the confirmation itself.
@@ -370,20 +370,20 @@ class TestLightDark(unittest.TestCase):
         self.assertEqual([c.hex for c in got], ["#18191b"])
 
     def test_a_branch_that_will_not_parse_yields_nothing(self):
-        """Never the other branch — that is a color this theme does not use."""
+        """Never the other branch – that is a color this theme does not use."""
         self.assertEqual(find_colors("light-dark(currentcolor,#18191b)", "light"),
                          [])
         self.assertEqual(find_colors("light-dark(#fff)", "light"), [])
 
     def test_light_dark_alone_makes_a_site_two_themed(self):
-        """No media query, no theme class — the function is the whole scope."""
+        """No media query, no theme class – the function is the whole scope."""
         pal = extract.extract(sources.load_any(write_fixture(self.PAGE)))
         self.assertIsNotNone(pal.alternate)
         self.assertEqual((pal.theme_id, pal.alternate.theme_id),
                          ("light", "dark"))
         self.assertEqual(pal.ground.hex, "#ffffff")
         self.assertEqual(pal.alternate.ground.hex, "#18191b")
-        # And the ground is read, not inferred — nothing warns about a guess.
+        # And the ground is read, not inferred – nothing warns about a guess.
         self.assertEqual([w for w in pal.warnings if "inferred" in w], [])
 
     def test_each_theme_carries_only_its_own_branch(self):
@@ -400,12 +400,12 @@ class TestLightDarkNeedsColorScheme(unittest.TestCase):
     """T10 (`PLAN.md`): `light-dark()` alone is not proof of two themes.
 
     Invariant 23's own overreach caveat: the function resolves against the
-    *used* `color-scheme`, whose initial value is `normal` — light. A page
+    *used* `color-scheme`, whose initial value is `normal` – light. A page
     that writes `light-dark()` and never declares `color-scheme: light dark`
     (or `dark light`) renders the light branch always, whatever the OS says,
     and calling that page two-themed invents a palette it never shows.
 
-    No corpus site exercised the negative case until now — MDN and
+    No corpus site exercised the negative case until now – MDN and
     `pawelgrzybek.com`'s light/dark example both confirm both keywords, so
     both stay positive controls (`TestLightDark`, and the corpus check in
     `PLAN.md`/`CLAUDE.md`). These are synthetic because the gate itself needs
@@ -425,14 +425,14 @@ class TestLightDarkNeedsColorScheme(unittest.TestCase):
         self.assertEqual(pal.ground.hex, "#ffffff")
 
     def test_color_scheme_normal_stays_one_theme_reading_light(self):
-        """`normal` is the initial value — spelled out, not just absent."""
+        """`normal` is the initial value – spelled out, not just absent."""
         pal = extract.extract(
             sources.load_any(write_fixture(self._page("normal"))))
         self.assertIsNone(pal.alternate)
         self.assertEqual(pal.ground.hex, "#ffffff")
 
     def test_color_scheme_dark_alone_stays_one_theme_reading_dark(self):
-        """Confirmed dark-only, not light — the other half of the caveat."""
+        """Confirmed dark-only, not light – the other half of the caveat."""
         pal = extract.extract(
             sources.load_any(write_fixture(self._page("dark"))))
         self.assertIsNone(pal.alternate)
@@ -457,8 +457,8 @@ class TestSelectorScopedColorScheme(unittest.TestCase):
 
     `TestLightDarkNeedsColorScheme` above only ever confirms `color-scheme`
     through an *unscoped* declaration reaching the page via the cascade. A
-    real `[data-theme="dark"] { color-scheme: dark }` toggle — the fixture
-    the owner supplied for T24, `pseudo_selector_example.har` — is a
+    real `[data-theme="dark"] { color-scheme: dark }` toggle – the fixture
+    the owner supplied for T24, `pseudo_selector_example.har` – is a
     different shape: a static capture freezes one `data-theme` state, so the
     *other* keyword's rule structurally cannot DOM-match in the same
     capture. Before T26 this meant that gate could confirm at most one
@@ -489,7 +489,7 @@ class TestSelectorScopedColorScheme(unittest.TestCase):
         self.assertEqual(pal.alternate.ground.hex, "#202122")
 
     def test_a_single_selector_scoped_keyword_does_not_confirm_both(self):
-        """Only a `dark` toggle rule exists — still one theme, reading dark."""
+        """Only a `dark` toggle rule exists – still one theme, reading dark."""
         page = """<!DOCTYPE html><html data-theme="dark"><head><style>
           [data-theme="dark"] { color-scheme: dark; }
           :root { --page: light-dark(#ffffff, #18191b); }
@@ -505,7 +505,7 @@ class TestSelectorScopedColorScheme(unittest.TestCase):
         Trusting it the same way a selector-scoped declaration is trusted
         would let a single `@media (prefers-color-scheme: dark)` block
         confirm `dark` for every visitor, including one whose browser is not
-        in dark mode — the same overreach T10's own gate exists to prevent.
+        in dark mode – the same overreach T10's own gate exists to prevent.
         """
         page = """<!DOCTYPE html><html><head><style>
           @media (prefers-color-scheme: dark) { :root { color-scheme: dark; } }

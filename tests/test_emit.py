@@ -112,7 +112,7 @@ class TestEndToEnd(unittest.TestCase):
         """schemaVersion is the only intended addition to the key set.
 
         The fixture carries no image report, so `images` (conditional on
-        `pal.image_report`) is absent here — this is the unconditional set.
+        `pal.image_report`) is absent here – this is the unconditional set.
         """
         self.assertEqual(self.doc["schemaVersion"], 1)
         self.assertEqual(set(self.doc.keys()), {
@@ -127,8 +127,8 @@ class TestReportTemplateSubstitution(unittest.TestCase):
 
     `emit_html` used to fill the template with a chain of `str.replace`
     calls, each one rescanning everything the previous ones had already
-    written. `__DATA__` — the site's JSON, containing arbitrary selector text
-    — was substituted *before* four static placeholders, so a site whose CSS
+    written. `__DATA__` – the site's JSON, containing arbitrary selector text
+    – was substituted *before* four static placeholders, so a site whose CSS
     contained one of their names had it rewritten inside the data blob. The
     result is invalid JSON in a `<script type="application/json">` element,
     which means `JSON.parse` throws and the report renders nothing: invariant
@@ -206,7 +206,7 @@ class TestReportTemplateSubstitution(unittest.TestCase):
         """`re.sub` reads `\\g<0>` in a *replacement string* as a back-reference.
 
         The replacements are returned from a callback, which is never
-        scanned for those — but Tailwind-style escaped class names put real
+        scanned for those – but Tailwind-style escaped class names put real
         backslashes in selectors, so this is the shape that would break it.
         """
         _doc, html = self._report(

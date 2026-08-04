@@ -16,7 +16,7 @@ class TestPackaging(unittest.TestCase):
         whoever last bumped one of them to also bump the other.
 
         The exact-string comparison is deliberate, not a shortcut to
-        replace with a version parse — this project writes exactly one
+        replace with a version parse – this project writes exactly one
         floor string (">=3.11"), so matching it precisely is stricter
         than parsing would be.
         """

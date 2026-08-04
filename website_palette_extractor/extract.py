@@ -54,7 +54,7 @@ MUTED_CHROMA = 0.06
 # T19: how many real matched elements to name per usage. `match_count` is the
 # true total; this only bounds the sample kept for display, the same
 # "bounded number of them" PLAN.md's own sketch of this task calls for.
-# Kept small deliberately — measured against tailwindcss.com and
+# Kept small deliberately – measured against tailwindcss.com and
 # ui.shadcn.com, each `examples` entry can carry up to 6 usages, and each
 # sample string is itself bounded (`dom.element_signature`'s own `max_len`)
 # but not free; this is the other half of keeping the payload growth this
@@ -87,8 +87,8 @@ class Usage:
     important: bool = False
     layer: str = ""
     theme_media: bool = False
-    # Whether the declaration was written for this theme specifically — by
-    # either mechanism, selector or media (`bool(d.theme)`) — rather than
+    # Whether the declaration was written for this theme specifically – by
+    # either mechanism, selector or media (`bool(d.theme)`) – rather than
     # belonging to every theme by being unscoped. Not a cascade term; used
     # only by `detect_ground`'s html/body pooling (T7) to tell a real
     # theme-specific claim on `<html>` apart from an unscoped `<body>` rule
@@ -97,7 +97,7 @@ class Usage:
     # T18: does `scope_selector` match a real element in the captured
     # document? `True`/`False` mean it was actually tested; `None` means it
     # could not be (no captured HTML, or `dom.selector_reach`'s own "no
-    # basis" cases — see that function). `Entry.all_unmatched` only trusts
+    # basis" cases – see that function). `Entry.all_unmatched` only trusts
     # this when every usage in the entry got a determinate `False`; a `None`
     # anywhere in the mix leaves the entry `live`, same "refuse rather than
     # guess" contract as everywhere else this tool won't answer on no
@@ -105,14 +105,14 @@ class Usage:
     matched: bool | None = None
     # T19: how many real elements `scope_selector` actually reached, and a
     # bounded sample of which ones. `None` mirrors `matched`'s own "no basis"
-    # case rather than reading as zero — `match_count` is only ever an int
+    # case rather than reading as zero – `match_count` is only ever an int
     # when `matched` is determinate (`True` or `False`), never when it's
     # `None`. `match_samples` is capped at build time (see `_build`), not
     # here, so `Usage` stays a plain record of what was already decided.
     match_count: int | None = None
     match_samples: list[str] = field(default_factory=list)
     # T24: why `matched` is `None`, when it is. `dom.untestable_reason`'s two
-    # causes, plus a third this module alone knows about — no captured HTML
+    # causes, plus a third this module alone knows about – no captured HTML
     # at all, which never reaches `dom.selector_reach` to begin with.
     # `None` here whenever `matched` is determinate (`True`/`False`); never
     # consulted otherwise. See `Entry.all_dynamic_only` for why the three
@@ -164,7 +164,7 @@ class Entry:
     def all_unmatched(self) -> bool:
         """T18: every usage's selector was tested and matched nothing.
 
-        `u.matched is False` rather than `not u.matched`, on purpose — a
+        `u.matched is False` rather than `not u.matched`, on purpose – a
         `None` (no basis: untestable selector, or no captured HTML at all)
         must not read as "unmatched" just because it is falsy. One `None`
         anywhere in the usages means this entry stays whatever `_status_for`
@@ -177,7 +177,7 @@ class Entry:
     @property
     def all_dynamic_only(self) -> bool:
         """T24: does this color's `live` status rest entirely on ground that
-        can never be confirmed, by any capture however complete — not merely
+        can never be confirmed, by any capture however complete – not merely
         ground that hasn't been confirmed yet.
 
         Unanimous, the same pattern `all_unmatched` (invariant 27) already
@@ -187,11 +187,11 @@ class Entry:
         entry no longer rests entirely on interaction state.
 
         Checks `u.reach_reason == "dynamicState"` specifically, not "was
-        `matched` `None`" — deliberately narrower, per T24's own filing.
+        `matched` `None`" – deliberately narrower, per T24's own filing.
         `matched is None` also covers an uncompilable selector (a library
         coverage gap, T21's own territory: some other engine might answer
         it, so it is undertested, not unknowable) and a bare `.css` input
-        with no captured HTML at all (uninteresting here — the whole
+        with no captured HTML at all (uninteresting here – the whole
         document is unconfirmed, singling out one color would be noise).
         Both leave `reach_reason` as something other than `"dynamicState"`,
         so they correctly fail this check rather than falsely qualifying.
@@ -279,7 +279,7 @@ def collect_sheets(bundle: Bundle, include_third_party: bool = True,
                 consumed.add(match.url)
                 n += 1
 
-    # Anything fetched but not linked in the markup — injected at runtime, or
+    # Anything fetched but not linked in the markup – injected at runtime, or
     # a bare directory of CSS files. It applies, we just cannot place it.
     for asset in bundle.by_kind("css"):
         if asset.url in consumed:
@@ -362,7 +362,7 @@ def _match_href(href: str, base_url: str, css_by_url: dict):
 # it and only two: `detect_ground`, to pick the color the page sits on, and
 # `build_var_table`, to pick what a custom property resolves to. Everything
 # else about ordering a palette is `selector_weight`, which is a *usage
-# heuristic* and deliberately not this — invariant 2's warning is about that
+# heuristic* and deliberately not this – invariant 2's warning is about that
 # function, and the two do not conflict.
 
 
@@ -381,14 +381,14 @@ def layer_order(sheets: list[Stylesheet]) -> dict[str, int]:
 
     **`@import url(…) layer(x)` reserves `x`'s position (T8, `PLAN.md`), but
     the imported sheet itself is still not modelled**, because `@import` is
-    not followed at all — `cssparse._walk` registers the name straight off
+    not followed at all – `cssparse._walk` registers the name straight off
     the `layer(...)` `FunctionBlock` in the `@import`'s own prelude, the same
     way the `@layer a, b;` statement form reserves a position with no block
     yet to fill it. What's still missing is the *content*: the imported
     sheet is fetched separately if at all, and arrives with no memory of the
     layer it was imported into, so a site that layers exclusively through
     `@import` gets the position right but reads as contributing no
-    declarations to it — the same answer this gave before layers existed,
+    declarations to it – the same answer this gave before layers existed,
     just no longer silently dropping the reservation too.
     """
     seen: list[str] = []
@@ -411,7 +411,7 @@ def property_registrations(
 ) -> dict[str, tuple[str | None, str | None]]:
     """Map every `@property`-registered custom property to (inherits, initial).
 
-    T22 (`PLAN.md`). Global to the document like `layer_order`'s names — a
+    T22 (`PLAN.md`). Global to the document like `layer_order`'s names – a
     sheet re-registering the same property simply overrides an earlier one,
     with no cascade of its own (the spec gives `@property` no precedence
     rules beyond "later wins"), so a plain dict merge in document order is
@@ -431,8 +431,8 @@ def _layer_rank(layer: str, layers: dict[str, int], important: bool) -> int:
     earlier ones. For `!important` declarations the spec **reverses** the whole
     ordering: an earlier layer wins, and an unlayered important declaration is
     the weakest important one there is. That reversal is the reason importance
-    cannot be bolted on as a simple tiebreak — it changes what the next term
-    means — and it is why this is all four terms or none.
+    cannot be bolted on as a simple tiebreak – it changes what the next term
+    means – and it is why this is all four terms or none.
     """
     n = len(layers)
     if important:
@@ -444,14 +444,14 @@ def _cascade_key(d, specificity: tuple[int, int, int],
                  layers: dict[str, int]) -> tuple:
     """The full ordering key. Bigger wins.
 
-    Takes a `Declaration` or a `Usage` — both carry the same five terms, and
+    Takes a `Declaration` or a `Usage` – both carry the same five terms, and
     the two call sites hold one each.
 
     The theme term sits **between specificity and document order**, and that
     placement is the whole of what is left of invariant 2's theme addendum. A
     `prefers-color-scheme: dark` block writing `body { background: … }` has to
     beat a later unscoped `body` rule, because a browser applying the dark
-    theme applies it — but it has to *lose* to an unscoped `.bg-x` that the
+    theme applies it – but it has to *lose* to an unscoped `.bg-x` that the
     body actually carries, because a browser does that too. Putting the term
     above specificity would win the first case and get the second backwards.
 
@@ -472,8 +472,8 @@ def _cascade_key(d, specificity: tuple[int, int, int],
 def _page_element_tag(part: str) -> str | None:
     """Which element a `_PAGE_SEL` text match actually styles, or None.
 
-    A selector reads right to left — `html body` is body's rule, scoped to a
-    body that lives inside html — so the last token is the one being styled.
+    A selector reads right to left – `html body` is body's rule, scoped to a
+    body that lives inside html – so the last token is the one being styled.
     `:root` is the same element as `<html>` in a document with no shadow root.
     Returns None for anything `_PAGE_SEL` itself would refuse, which callers
     fall back to `matches_page_element` for.
@@ -502,7 +502,7 @@ def _page_specificity(selector: str, scope_selector: str,
     None means the rule does not reach `<html>` or `<body>` at all, and that is
     the cascade's own first step: only declarations from rules that match the
     element are ranked against each other. It is the reason invariant 19
-    survives phase 3 rather than dissolving into specificity — `:root` and
+    survives phase 3 rather than dissolving into specificity – `:root` and
     `[data-bs-theme=blue]` are *both* `(0, 1, 0)`, so specificity cannot
     separate them and never could. What separates them is that the document's
     `<html>` carries no `data-bs-theme=blue`, so Bootstrap's blue block is not
@@ -510,21 +510,21 @@ def _page_specificity(selector: str, scope_selector: str,
 
     Two selector strings go in, and the split is deliberate. Matching runs on
     `scope_selector`, the selector as it reads from inside its own theme, since
-    that is the form this tool's theme model recognises — `html.dark body` has
+    that is the form this tool's theme model recognises – `html.dark body` has
     to be seen as the dark theme's `body` rule. Specificity is read off the
     selector **as declared**, because that is what a browser counts: the marker
     is part of the selector and earns the theme its precedence. Keeping both is
     what makes a selector-scoped theme outrank what it overrides without any
     rule saying so.
 
-    `split_selector_list` yields the two lists in step — `strip_theme_scope`
-    emits one cleaned part per part it was given — so the parts pair up by
+    `split_selector_list` yields the two lists in step – `strip_theme_scope`
+    emits one cleaned part per part it was given – so the parts pair up by
     position. If they ever did not, the matched form is scored instead, which
     understates the theme rather than inventing precedence for it.
 
     `element` narrows the match to one of `"html"`/`"body"` (T7): passing None
     keeps the old either-element behaviour, which is what `build_var_table`
-    still wants — a custom property is not "the page's background", so there
+    still wants – a custom property is not "the page's background", so there
     is no body-over-html preference to apply to it. `detect_ground` is the one
     caller that needs the split, into two pools it resolves separately.
     """
@@ -556,7 +556,7 @@ def _var_populations(sheets: list[Stylesheet], theme: str,
     Factored out of `build_var_table` so `resolve_by_ancestry` (T9) can get
     at the off-page population's *candidate declarations*, which
     `build_var_table` itself collapses to last-wins and discards. Behaviour
-    for `build_var_table`'s own callers is unchanged — this is the same
+    for `build_var_table`'s own callers is unchanged – this is the same
     split, same iteration order, same last-wins-by-overwrite for the off-page
     side (`off_page[prop]` is a list in *declaration order*, so `[-1].value`
     reproduces what used to be a live dict overwrite).
@@ -580,11 +580,11 @@ def _var_populations(sheets: list[Stylesheet], theme: str,
                 current = rooted.get(d.prop)
                 if current is None or key > current[0]:
                     rooted[d.prop] = (key, d.value)
-    # A name can appear in both passes — off-page in the unscoped pass, then
+    # A name can appear in both passes – off-page in the unscoped pass, then
     # page-reaching once the theme's own rule is considered. `rooted` wins the
     # merge either way (`build_var_table` below), but T9's ancestry walk must
     # not treat a property as off-page-only when some definition of it *does*
-    # reach the page — that candidate set is a genuinely different question
+    # reach the page – that candidate set is a genuinely different question
     # (the cascade already answered it) and ancestry has no business
     # overriding a page-reaching answer.
     for name in rooted:
@@ -600,13 +600,13 @@ def _substitute_registered_initials(
 
     T22 (`PLAN.md`), invariant 26's own extension. `initial` on an
     *unregistered* custom property is the guaranteed-invalid value
-    `cssparse._resolve_var` already treats as absent — correct, because an
+    `cssparse._resolve_var` already treats as absent – correct, because an
     unregistered property has no defined value to reset to. But
     `@property --x { inherits: false; initial-value: #fff }` gives `initial`
     on `--x` a concrete, spec-defined value: it is not guaranteed-invalid at
     all, so `var(--x, fallback)` must substitute `#fff`, not the fallback and
-    not nothing. Rewriting the table here — once, before it ever reaches
-    `resolve_vars` — means `_resolve_var`'s existing "stored is literally
+    not nothing. Rewriting the table here – once, before it ever reaches
+    `resolve_vars` – means `_resolve_var`'s existing "stored is literally
     initial" branch never has to learn about registrations: by the time it
     runs, the table simply no longer says `initial` for a property that has
     a real one.
@@ -644,8 +644,8 @@ def build_var_table(sheets: list[Stylesheet], theme: str = "",
 
     Two populations, and the split between them is the cascade's first step
     rather than a heuristic. A definition whose rule **reaches the page
-    element** — `:root`, `html`, `body`, or a class the document actually
-    carries — is a candidate for what the page computes, and those are resolved
+    element** – `:root`, `html`, `body`, or a class the document actually
+    carries – is a candidate for what the page computes, and those are resolved
     against each other by the full cascade. A definition that reaches no page
     element is not a candidate at all, and the two never compete.
 
@@ -658,12 +658,12 @@ def build_var_table(sheets: list[Stylesheet], theme: str = "",
     changed here is only how the *page-reaching* set is resolved: by
     `importance → layer → specificity → order` instead of by last-wins.
 
-    Off-page definitions stay on last-wins, deliberately. They are a fallback —
-    a property consumed only by `.btn` is still worth resolving — and ranking
+    Off-page definitions stay on last-wins, deliberately. They are a fallback –
+    a property consumed only by `.btn` is still worth resolving – and ranking
     declarations that match different elements by specificity would be
     comparing things the cascade never compares. (T9's ancestry walk, where
     wired in, overrides this last-wins fallback for one specific consuming
-    declaration at a time — see `resolve_by_ancestry_kind` — never the table
+    declaration at a time – see `resolve_by_ancestry_kind` – never the table
     itself, which stays this shape for every other caller.)
 
     Theme scoping filters both populations: declarations scoped to any *other*
@@ -686,7 +686,7 @@ def resolve_by_ancestry(candidates: list, consumer_elements: list,
     --card: red }` meant to be read by an *ancestor's* descendants through
     inheritance, and `.shimmer-none { --shimmer-image: none }` meant to
     override a property on the *same* element a sibling utility sits on.
-    Nothing in the selector distinguishes them — the answer lives in the real
+    Nothing in the selector distinguishes them – the answer lives in the real
     document tree, specifically in whether the class a candidate targets is
     an ancestor of, or identical to, the element consuming the `var()`. That
     tree is `full_tree`'s (`dom.py`), not `page_elements`'s.
@@ -694,8 +694,8 @@ def resolve_by_ancestry(candidates: list, consumer_elements: list,
     The walk starts at the consumer element itself (self counts as its own
     nearest ancestor) and moves upward. At each level it asks which
     candidates match *this specific element*, cascade-resolves among any
-    that do — a level can have more than one candidate, the same as
-    `build_var_table`'s rooted pool does for the page element — and stops at
+    that do – a level can have more than one candidate, the same as
+    `build_var_table`'s rooted pool does for the page element – and stops at
     the first level with an answer, because a value set closer to the
     consumer always shadows one set further up; a real browser never looks
     past the nearest ancestor that sets the property. `candidates` must
@@ -704,13 +704,13 @@ def resolve_by_ancestry(candidates: list, consumer_elements: list,
 
     **A blanket selector (`*`) is not filtered out here the way
     `dom._is_blanket` filters it for page-level candidates.** At the
-    consumer's own element — the first level this walk checks — a `*`
+    consumer's own element – the first level this walk checks – a `*`
     candidate always matches, which would make it win outright over every
     real ancestor definition purely by walk order, the same mistake
     invariant 16 exists to prevent for the page element. Not yet decided
     whether the fix is the same one (test against a nondescript element) or
     something specific to inheritance, since a blanket rule *is* meaningfully
-    different here — every element inherits from it, which is arguably
+    different here – every element inherits from it, which is arguably
     correct rather than a false positive. Flagged rather than silently
     handled either way: no corpus site's `--card`-shaped case reaches this
     yet (Tailwind's own blanket-selector custom properties are non-color
@@ -718,12 +718,12 @@ def resolve_by_ancestry(candidates: list, consumer_elements: list,
     this is trusted on real color tokens.
 
     **One consuming declaration can paint several real elements with
-    genuinely different answers** — a `.bg-card` under one `.theme-neutral`
+    genuinely different answers** – a `.bg-card` under one `.theme-neutral`
     wrapper and another under `.theme-blue`. This function does not pick one
     arbitrarily: it returns the value only if every consumer element agrees,
     and `None` if they disagree. A caller wanting the *per-element* answers
     instead of one collapsed value needs different plumbing than this
-    function provides — see `PLAN.md` T9's own note on what remains before
+    function provides – see `PLAN.md` T9's own note on what remains before
     this is wired into `build_var_table`/`resolve_vars`'s single-table model,
     which assumes one resolved value per property per theme, not per element.
     """
@@ -739,26 +739,26 @@ def resolve_by_ancestry(candidates: list, consumer_elements: list,
 def _ancestry_winners(candidates: list, consumer_elements: list,
                       layers: dict[str, int],
                       non_inheriting: bool = False) -> list[str | None]:
-    """One winner per consumer element — `None` where no ancestor matches.
+    """One winner per consumer element – `None` where no ancestor matches.
 
     The walk itself, shared by `resolve_by_ancestry` (which collapses this to
     a single agreed value or refuses) and `resolve_by_ancestry_kind` (T9's
     pipeline wiring, which needs to tell "no candidate anywhere" apart from
-    "consumers disagree" — both collapse to the same `None` above, but only
+    "consumers disagree" – both collapse to the same `None` above, but only
     one of them is safe to treat as a confirmed answer).
 
     **`non_inheriting` stops the walk at the consumer element itself** (T22,
-    `PLAN.md`) — set when `@property` registers the property `inherits:
+    `PLAN.md`) – set when `@property` registers the property `inherits:
     false`. Real CSS inheritance never hands such a property down from an
     ancestor at all, so looking past self is answering a question the
     property's own registration says doesn't apply, and it is not merely
     theoretical: on `ui.shadcn.com.har`, `--tw-ring-color`/`--tw-ring-shadow`
     (both `inherits: false`) were resolving from an unrelated ancestor
-    12-14 levels up — some other element's `.ring-*` utility leaking onto a
-    descendant that carries no ring styling of its own — because the
+    12-14 levels up – some other element's `.ring-*` utility leaking onto a
+    descendant that carries no ring styling of its own – because the
     document-wide reset that would otherwise supply a same-element answer
     sits behind a selector list `cssselect2` cannot fully compile
-    (`*,:before,:after,::backdrop` — `::backdrop` is an unsupported
+    (`*,:before,:after,::backdrop` – `::backdrop` is an unsupported
     pseudo-element, and a single bad branch fails the whole list, a
     separate, undiagnosed gap; see `PLAN.md` T22's write-up). Restricting
     non-inheriting properties to self-only is the spec-correct fix
@@ -791,7 +791,7 @@ def resolve_by_ancestry_kind(candidates: list, consumer_elements: list,
                              non_inheriting: bool = False,
                              ) -> tuple[str, str | None]:
     """`resolve_by_ancestry`, but keeping the two outcomes it collapses to `None`
-    apart — `("value", v)`, `("absent", None)`, or `("disagree", None)`.
+    apart – `("value", v)`, `("absent", None)`, or `("disagree", None)`.
 
     T9's pipeline wiring (`_build`) needs this distinction and
     `resolve_by_ancestry` does not expose it, deliberately: that function's
@@ -799,17 +799,17 @@ def resolve_by_ancestry_kind(candidates: list, consumer_elements: list,
 
     **Only "value" and "absent" are safe to use as an override over
     last-wins.** "Absent" means every real consumer element was visited and
-    none has an ancestor (or itself) setting the property at all — a
+    none has an ancestor (or itself) setting the property at all – a
     confirmed answer, and last-wins is answering about the wrong element in
     that case, so it should lose. "Disagree" means two real elements
     genuinely resolve to two different values; today's single
     value-per-theme table has no way to hold both, so the honest move is to
-    leave last-wins alone rather than pick one arbitrarily — the same
+    leave last-wins alone rather than pick one arbitrarily – the same
     "refuse rather than guess" contract `resolve_by_ancestry` already keeps.
 
     **A consumer element with no ancestor match is not itself treated as
     disagreement** when at least one other consumer element resolves to a
-    real value — it is read as "no evidence from this element", not "this
+    real value – it is read as "no evidence from this element", not "this
     element votes for absence". `resolve_by_ancestry`'s own collapse already
     has this shape (`values` only ever collects non-`None` winners), so this
     keeps the two functions answering the same question the same way rather
@@ -835,7 +835,7 @@ def _page_color_scheme(sheets: list[Stylesheet], page: list[PageElement] | None,
 
     T10 (`PLAN.md`). `light-dark()` resolves against the *used* `color-scheme`,
     not against whatever the OS prefers, and a page that never declares one
-    renders the light branch regardless — see invariant 23's own overreach
+    renders the light branch regardless – see invariant 23's own overreach
     caveat. This reuses the exact page-reach-then-cascade machinery
     `build_var_table` uses for custom properties (invariant 19's
     `_page_specificity`/`_cascade_key`), applied to one ordinary property
@@ -845,7 +845,7 @@ def _page_color_scheme(sheets: list[Stylesheet], page: list[PageElement] | None,
     `prefers-color-scheme`/OS-driven site (MDN, pawelgrzybek.com) states its
     confirmation this way, and it is genuinely one page-level value with one
     cascade winner. A *selector*-theme-scoped `color-scheme` declaration
-    (`[data-theme="dark"] { color-scheme: dark }`) is a different shape —
+    (`[data-theme="dark"] { color-scheme: dark }`) is a different shape –
     see `_theme_scoped_scheme_keywords` below, which T26 (`PLAN.md`) added
     to cover it rather than folding it in here.
     """
@@ -869,7 +869,7 @@ def _theme_scoped_scheme_keywords(sheets: list[Stylesheet],
 
     T26 (`PLAN.md`, 2026-08-03). `_page_color_scheme` above only ever reads
     an *unscoped* `color-scheme` declaration through the cascade, because a
-    static HAR capture freezes one `data-theme` state — `[data-theme="light"]
+    static HAR capture freezes one `data-theme` state – `[data-theme="light"]
     { color-scheme: light }` structurally cannot DOM-match in the same
     capture that has `[data-theme="dark"]` on `<html>`. Gating on DOM reach
     the way the unscoped path does would make this confirmation permanently
@@ -882,11 +882,11 @@ def _theme_scoped_scheme_keywords(sheets: list[Stylesheet],
     (invariant 16's own DOM-reach requirement is about *page-background*
     candidates specifically, not about theme detection in general). A rule
     scoped to a theme by its own selector marker is a first-party statement
-    about that theme, cascade or no cascade — there is nothing to rank it
+    about that theme, cascade or no cascade – there is nothing to rank it
     against, because nothing else can be scoped to the same theme by the
     same marker and disagree in a way ranking would resolve.
 
-    **Any theme-scoped declaration counts, page-level or component-level —
+    **Any theme-scoped declaration counts, page-level or component-level –
     this function does not distinguish `html[data-theme="dark"]` from
     `.navigation[data-scheme="dark"]`.** `mdn.har` exercises both shapes at
     once and both contribute; no corpus site yet separates them, so whether
@@ -897,17 +897,17 @@ def _theme_scoped_scheme_keywords(sheets: list[Stylesheet],
     theme-scoped declaration unconditionally, or DOM-match whichever scope
     the capture is actually in and treat only the *other* keyword's
     declaration as CSS-only evidence. Checked against every declaration in
-    the corpus that carries `color-scheme` at all — `pseudo_selector_example
+    the corpus that carries `color-scheme` at all – `pseudo_selector_example
     .har`, `mdn.har`, `pawelgrzybek.com__light_dark_example.har`,
-    `tailwindcss.com.har` — the two produce identical `scheme_keywords` on
+    `tailwindcss.com.har` – the two produce identical `scheme_keywords` on
     every one, so no corpus evidence distinguishes them and the simpler,
     symmetric design was taken. This is not because every corpus site was
     already confirmed two-themed through `_page_color_scheme`'s unscoped
-    path above — `mdn.har` was not; `:root { color-scheme: light }` beats
+    path above – `mdn.har` was not; `:root { color-scheme: light }` beats
     `html { color-scheme: light dark }` on specificity there, so the
     unscoped path alone resolved to `"light"` only. It is because on every
     site examined, whichever keyword the unscoped path left unconfirmed was
-    also the keyword some theme-scoped declaration stated on its own — so
+    also the keyword some theme-scoped declaration stated on its own – so
     trusting that declaration unconditionally (this design) and trusting it
     only as the DOM-matched state's complement (the other design) land on
     the same set either way. See T26's write-up in `PLAN.md` for the
@@ -917,8 +917,8 @@ def _theme_scoped_scheme_keywords(sheets: list[Stylesheet],
     though `Declaration.theme` does not distinguish the two mechanisms
     (`theme_scope() = selector_theme(selector) or media_theme(at_rules)`).
     `@media (prefers-color-scheme: dark) { :root { color-scheme: dark } }`
-    is conditional — it only applies in a browser whose OS preference is
-    already dark — where a selector toggle like
+    is conditional – it only applies in a browser whose OS preference is
+    already dark – where a selector toggle like
     `[data-theme="dark"] { color-scheme: dark }` is an unconditional
     statement the page makes about itself regardless of what any browser
     prefers. Trusting the media-scoped shape the same way would let a single
@@ -941,7 +941,7 @@ def _theme_scoped_scheme_keywords(sheets: list[Stylesheet],
 def _scheme_keywords(value: str) -> set[str]:
     """`light`/`dark` tokens in a resolved `color-scheme` value, order-free.
 
-    `normal | [ light | dark | <custom-ident> ]+ && only?` per spec — plain
+    `normal | [ light | dark | <custom-ident> ]+ && only?` per spec – plain
     whitespace-separated keywords once `var()` is resolved, so a split is
     enough; `only` and any custom idents are simply not in the set this
     function looks for.
@@ -958,7 +958,7 @@ def _scopes_present(sheets: list[Stylesheet], table: dict[str, str],
     theme under a label promising something different.
 
     **`light-dark()` is the third theme mechanism** (phase 4), and unlike the
-    other two it is not a scope over declarations — it is a scope over one
+    other two it is not a scope over declarations – it is a scope over one
     value, written inline. A site using it and confirming both branches with
     `color-scheme: light dark` (or `dark light`) ships both themes, so a
     single `light-dark()` carrying color declares both, and the declaration
@@ -971,13 +971,13 @@ def _scopes_present(sheets: list[Stylesheet], table: dict[str, str],
 
     **`scheme_keywords` is the gate T10 (`PLAN.md`) added.** `light-dark()`
     resolves against the *used* `color-scheme`, whose initial value is
-    `normal` — light. A page that writes `light-dark()` and never confirms
+    `normal` – light. A page that writes `light-dark()` and never confirms
     both keywords renders the light branch always (or the dark one alone, if
-    it confirms only `dark` — see `extract()`'s `default_appearance`), and is
+    it confirms only `dark` – see `extract()`'s `default_appearance`), and is
     not two-themed; registering both scopes anyway would build a second
     palette for a theme the page never shows. `pawelgrzybek.com`'s
     light/dark example is the corpus site that finally exercises the
-    positive case — it declares `color-scheme:light dark` on `html`, so its
+    positive case – it declares `color-scheme:light dark` on `html`, so its
     two themes are confirmed, not just assumed the way MDN's always were.
     """
     found: set[str] = set()
@@ -990,7 +990,7 @@ def _scopes_present(sheets: list[Stylesheet], table: dict[str, str],
                 continue
             # A `light-dark()` usually arrives through a custom property rather
             # than written in place, so the substitution has to happen before
-            # the test — MDN's page rule reads `var(--color-background-page)`.
+            # the test – MDN's page rule reads `var(--color-background-page)`.
             resolved = resolve_vars(d.value, table)
             low = resolved.lower()
             if d.theme and d.theme not in found and _colors_of(resolved, d.theme):
@@ -1008,7 +1008,7 @@ def _theme_plan(scopes: set[str]) -> list[tuple[str, str]]:
     Unscoped declarations belong to every theme, so each palette is built from
     those plus one scope's worth of overrides. When both scopes are explicit
     neither set of unscoped rules is a theme on its own; when only one is, the
-    unscoped declarations *are* the other theme — which is how a dark-by-default
+    unscoped declarations *are* the other theme – which is how a dark-by-default
     site with a `.light` override is handled.
     """
     if not scopes:
@@ -1020,7 +1020,7 @@ def _theme_plan(scopes: set[str]) -> list[tuple[str, str]]:
 
 
 # A bare channel triplet: `0 0% 3.9%`, `217.2 91.2% 59.8%`, `255 0 0`, with an
-# optional `/ alpha`. Exactly three components — two would not be a color in
+# optional `/ alpha`. Exactly three components – two would not be a color in
 # any function, and allowing more invites false matches on ordinary lengths.
 _NUM = r"[+-]?(?:\d+\.?\d*|\.\d+)%?"
 _TRIPLET = re.compile(rf"^{_NUM}(?:\s+{_NUM}){{2}}(?:\s*/\s*{_NUM})?$")
@@ -1029,15 +1029,15 @@ _TRIPLET = re.compile(rf"^{_NUM}(?:\s+{_NUM}){{2}}(?:\s*/\s*{_NUM})?$")
 def _triplet_warning(sheets: list[Stylesheet], table: dict[str, str]) -> str:
     """Flag custom properties that hold channel triplets and are used raw.
 
-    The shadcn/ui convention stores a color as bare channels — `--background:
-    0 0% 3.9%` — to be assembled at the point of use as `hsl(var(--background))`.
+    The shadcn/ui convention stores a color as bare channels – `--background:
+    0 0% 3.9%` – to be assembled at the point of use as `hsl(var(--background))`.
     Wrapped like that it parses here and always has. Used directly, as
     `background-color: var(--background)`, it is not a color at all: the
     declaration is invalid and a browser computes it to `rgba(0,0,0,0)`, so the
     page paints nothing. Reading a color out of it would invent one the site
     never shows, which is the whole thing this tool exists not to do.
 
-    So the value is skipped, as any unparseable value is — but silently
+    So the value is skipped, as any unparseable value is – but silently
     skipping it leaves a site whose entire theme is written this way looking
     like an extraction failure. Naming it is the difference between "the tool
     is broken" and "these declarations paint nothing, here is why".
@@ -1069,7 +1069,7 @@ def _triplet_warning(sheets: list[Stylesheet], table: dict[str, str]) -> str:
         f"{len(names)} custom propert"
         f"{'y holds' if len(names) == 1 else 'ies hold'} a bare channel triplet "
         f"({shown}{more}) and {'is' if len(names) == 1 else 'are'} used directly "
-        f"in var() — for example `{example}: var({names[0]})`, which resolves to "
+        f"in var() – for example `{example}: var({names[0]})`, which resolves to "
         f"`{table[names[0]].strip()}`. That is not a color: a browser discards "
         f"the declaration and paints nothing there. Triplets only become colors "
         f"inside a color function, as `hsl(var({names[0]}))`, and are read "
@@ -1096,7 +1096,7 @@ def extract(bundle: Bundle, *, merge_threshold: float = 0.02,
     """Build the palette, or both palettes when the site ships two themes.
 
     Returns the default theme. A second one, when there is one, hangs off it as
-    `.alternate` — the whole pipeline is run again for it, because a theme has
+    `.alternate` – the whole pipeline is run again for it, because a theme has
     its own ground and everything from alpha flattening to contrast ratios is
     measured against that.
     """
@@ -1110,16 +1110,16 @@ def extract(bundle: Bundle, *, merge_threshold: float = 0.02,
     # The document's own <html>/<body>, so ground detection can tell a utility
     # class that paints the page from one that paints a card, and var()
     # resolution can tell a definition that reaches the page from one scoped to
-    # a theme nobody selected. None when there is no readable HTML at all — a
-    # bare .css input, say — in which case both fall back to selectors that
+    # a theme nobody selected. None when there is no readable HTML at all – a
+    # bare .css input, say – in which case both fall back to selectors that
     # merely read like page rules.
     page = None
     tree = None
     for asset in bundle.by_kind("html"):
         page = page_elements(asset.text)
         # `full_tree` (T9) answers a different question than `page_elements`
-        # — real ancestry below <html>/<body>, for `resolve_by_ancestry_kind`
-        # — so it has to come from the *same* asset `page` did, not just the
+        # – real ancestry below <html>/<body>, for `resolve_by_ancestry_kind`
+        # – so it has to come from the *same* asset `page` did, not just the
         # first HTML asset seen. `None` when `page` is too (no readable
         # HTML), in which case `_build` falls back to last-wins for every
         # off-page property, same as before this existed.
@@ -1128,7 +1128,7 @@ def extract(bundle: Bundle, *, merge_threshold: float = 0.02,
             break
 
     # The document's `@layer` order, which is a property of the document rather
-    # than of any one sheet — so it is resolved once, here, and handed to both
+    # than of any one sheet – so it is resolved once, here, and handed to both
     # places that rank declarations.
     layers = layer_order(sheets)
 
@@ -1144,7 +1144,7 @@ def extract(bundle: Bundle, *, merge_threshold: float = 0.02,
     # T10: which branch an unscoped build reads a `light-dark()` through, and
     # (via `_scopes_present`) whether a `light-dark()` site is confirmed
     # two-themed at all. Computed once, before `themes` is checked, because
-    # `default_appearance` feeds every `_build` call below regardless —
+    # `default_appearance` feeds every `_build` call below regardless –
     # `--no-themes` still has to pick a branch for a site that writes
     # `light-dark(): dark` and confirms only `color-scheme: dark`.
     #
@@ -1235,7 +1235,7 @@ def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
 
     # T9: an off-page custom property resolves by real inheritance for the
     # specific declaration consuming it, where the document's real tree gives
-    # a confident answer — see `resolve_by_ancestry_kind`. `wrapped_root` is
+    # a confident answer – see `resolve_by_ancestry_kind`. `wrapped_root` is
     # built once per theme rather than once per lookup: `elements_matching`
     # re-wraps the whole tree on every call, and PLAN.md's T9 blast-radius
     # measurement (2026-08-02) found that cost dominant (55s on
@@ -1251,7 +1251,7 @@ def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
                 if wrapped_root is not None else [])
         return consumer_cache[selector]
 
-    # T18: does this usage's own selector reach a real element at all — the
+    # T18: does this usage's own selector reach a real element at all – the
     # same hoisted `wrapped_root` as `consumers_of`, memoized the same way.
     # `None` (no captured HTML) rather than `[]`-style False when there is no
     # tree, matching `dom.selector_reach`'s own "no basis" contract instead
@@ -1267,7 +1267,7 @@ def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
 
     # T24: why `reach_of` came back `None`, for the one case worth naming
     # specifically (invariant 27/T18's "dynamic pseudo-class" shape). Only
-    # ever consulted when `reach_of` is already `None` — see `reach` below —
+    # ever consulted when `reach_of` is already `None` – see `reach` below –
     # so this stays a rare, memoized lookup rather than a per-declaration
     # cost. `dom.untestable_reason` only distinguishes "uncompilable" from
     # "dynamicState"; "no captured HTML at all" is this module's own third
@@ -1281,7 +1281,7 @@ def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
 
     # T19: the real elements backing `matchCount`/`examples[].matches` for a
     # usage `reach_of` found `True` for. **Deliberately not `consumers_of`**
-    # (T21, `PLAN.md`) despite the obvious-looking overlap — `consumers_of`
+    # (T21, `PLAN.md`) despite the obvious-looking overlap – `consumers_of`
     # backs T9's real-inheritance walk and must stay on `_compile_usable`'s
     # pseudo-refusing filter (see that function's docstring for why sharing
     # it here produced a false-confirmed `absent` on `tailwindcss.com.har`).
@@ -1297,7 +1297,7 @@ def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
         return match_cache[selector]
 
     # The bounded, formatted sample for `examples[].matches`, memoized by
-    # selector text the same way `match_cache` is — a selector reused across
+    # selector text the same way `match_cache` is – a selector reused across
     # many declarations (a shared utility class, say) would otherwise re-run
     # `element_signature` on the same elements once per declaration.
     sample_cache: dict[str, list[str]] = {}
@@ -1309,9 +1309,9 @@ def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
         return sample_cache[selector]
 
     # Which branch a `light-dark()` resolves to. A themed build (`scope` set)
-    # reads its own branch, same as always. An unscoped build — `--no-themes`,
+    # reads its own branch, same as always. An unscoped build – `--no-themes`,
     # or a themed run whose `light-dark()` usage was never confirmed
-    # two-themed (T10, `PLAN.md`) — reads `default_appearance`, which
+    # two-themed (T10, `PLAN.md`) – reads `default_appearance`, which
     # `extract()` computes from the page's own `color-scheme` and defaults to
     # light: what a browser does when the document says nothing about it.
     appearance = scope or default_appearance
@@ -1321,8 +1321,8 @@ def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
     # That pair is exactly what an author repeats to override something for a
     # theme, and without this the light `--bg: #fff` and the light `.card`
     # background both turn up in the dark palette as colors the dark theme
-    # never paints. It is not general specificity — `border` shorthand against
-    # a `border-color` override still slips through — but it removes the whole
+    # never paints. It is not general specificity – `border` shorthand against
+    # a `border-color` override still slips through – but it removes the whole
     # class of duplicates that matter here.
     shadowed: set[tuple[str, str]] = set()
     if scope:
@@ -1342,7 +1342,7 @@ def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
                 continue  # this theme overrides it
             if d.role == "other":
                 # `color-scheme` (T10) is the one declaration this codebase
-                # records that can never hold a color — it is read directly by
+                # records that can never hold a color – it is read directly by
                 # `_page_color_scheme`, not through this loop. Excluded here
                 # rather than left to fall out of `_colors_of` returning
                 # nothing, so it does not inflate `declarationsScanned`, which
@@ -1352,7 +1352,7 @@ def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
             n_decls += 1
             decl_table = table
             # Only worth asking when this declaration actually references an
-            # off-page-only property — the overwhelming majority reference
+            # off-page-only property – the overwhelming majority reference
             # nothing, or reference a page-reaching one the cascade already
             # resolved, and `var_refs` tokenizes the value to check, which
             # isn't free to do on every declaration in the document.
@@ -1372,7 +1372,7 @@ def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
                                 # T22: an ancestry-confirmed literal `initial`
                                 # is only "absent" if the property has no
                                 # `@property` registration to give it a real
-                                # value — same substitution
+                                # value – same substitution
                                 # `_substitute_registered_initials` applies
                                 # to the base table, needed again here
                                 # because this override is written fresh per
@@ -1389,7 +1389,7 @@ def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
                                          if k not in absent}
                             decl_table.update(overrides)
                     # No real consumer element found in the captured markup
-                    # at all ("no basis", PLAN.md T9 2026-08-02) — last-wins
+                    # at all ("no basis", PLAN.md T9 2026-08-02) – last-wins
                     # is the only answer there is, so `decl_table` stays
                     # `table` unchanged rather than being treated as absent.
             value = resolve_vars(d.value, decl_table)
@@ -1415,7 +1415,7 @@ def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
             # a bounded sample of which ones. `reach is False` already means
             # `selector_reach` ran `_compile_reachable` on this exact selector
             # against this exact root and found nothing, so
-            # `match_elements_of` is guaranteed `[]` — asking it again would
+            # `match_elements_of` is guaranteed `[]` – asking it again would
             # repeat that query for every distinct selector in the document.
             # Only a confirmed `True` is worth a second, sample-bearing
             # lookup; `None` (no basis to test at all) leaves both
@@ -1427,7 +1427,7 @@ def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
                 match_count, match_samples, reason = 0, [], None
             else:
                 # T24: no captured HTML at all reads `reason_of` a selector
-                # `dom.untestable_reason` never sees — this module's own
+                # `dom.untestable_reason` never sees – this module's own
                 # third cause, distinct from that function's two.
                 match_count, match_samples = None, []
                 reason = reason_of(sel) if wrapped_root is not None \
@@ -1510,7 +1510,7 @@ def _source_stats(sheets: list[Stylesheet]) -> list[dict]:
 
 # A chain of page-level elements is still the page: `html body` is where a
 # background belongs just as much as `body` is. Allowing the chain matters for
-# themes, because `html.dark body` normalises to `html body` — anchoring on a
+# themes, because `html.dark body` normalises to `html body` – anchoring on a
 # single element would drop the dark theme's own ground rule on the floor and
 # leave it inheriting the light one.
 _PAGE_SEL = re.compile(r"^\s*(?:html|body|:root)(?:\s+(?:html|body|:root))*\s*$",
@@ -1524,11 +1524,11 @@ def detect_ground(entries: list[Entry],
 
     Two steps, both the cascade's. **Which rules are candidates**: a selector
     qualifies if it *reads* like a page rule (`html`, `body`, `:root`) or if it
-    actually selects this document's `<html>` or `<body>` — which is how a
+    actually selects this document's `<html>` or `<body>` – which is how a
     utility framework paints the page, with `class="bg-light-primary"` on the
     body rather than a `body {}` rule (invariant 16). **Which candidate wins,
     within a pool**: `importance → layer → specificity → document order`, via
-    `_cascade_key` — see below for how the `<html>` and `<body>` pools
+    `_cascade_key` – see below for how the `<html>` and `<body>` pools
     themselves are then compared (T7).
 
     That second step used to be document order alone, which happened to be
@@ -1537,7 +1537,7 @@ def detect_ground(entries: list[Entry],
     outranks an element. A site whose element-matched utility came *earlier*
     than a competing `body` rule was read wrongly, and that documented limit is
     what phase 3 lifts. Ordering is still the last term, and still decides
-    every tie — which on the corpus is most of them.
+    every tie – which on the corpus is most of them.
 
     Matching runs on the selector as it reads inside its own theme, so
     `html.dark body` counts as the dark theme's page rule; scoring runs on the
@@ -1545,9 +1545,9 @@ def detect_ground(entries: list[Entry],
     browser. See `_page_specificity`.
 
     **Candidates matching `<html>` and ones matching `<body>` are resolved in
-    separate pools** (T7), because the cascade does too — it resolves each
-    element on its own. **Body's own winner is preferred over html's** —
-    resolved independently, then compared, rather than ranked together —
+    separate pools** (T7), because the cascade does too – it resolves each
+    element on its own. **Body's own winner is preferred over html's** –
+    resolved independently, then compared, rather than ranked together –
     because that is what painting order does: `<body>`'s own box paints over
     the `<html>` canvas wherever it covers it, which in practice is the whole
     viewport, and that holds however important or specific html's rule is.
@@ -1556,23 +1556,23 @@ def detect_ground(entries: list[Entry],
     specifically for this theme still earns the precedence invariant 16 gives
     it over an unscoped body rule that merely happens to also be present in
     this theme's build.** Tailwind v4's `dark:bg-gray-950` on `<html>` is
-    exactly this shape — dark-theme-scoped, competing against a `body {}` rule
+    exactly this shape – dark-theme-scoped, competing against a `body {}` rule
     that was never written with a theme in mind and applies to every theme
     because it applies to none in particular. Preferring body unconditionally
     there would silently prefer a rule that says nothing about the theme over
     one that is the theme, which is the same mistake invariant 16 itself
     exists to prevent, just relocated to the other pool. So body wins unless
     html's candidate is theme-scoped (`Usage.theme_scoped`, by either
-    mechanism — selector or media) **and body's is not**; found by a test
+    mechanism – selector or media) **and body's is not**; found by a test
     fixture built to demonstrate exactly this collision
-    (`test_tailwind_v4_shape_on_the_html_element`), not by the corpus — see
+    (`test_tailwind_v4_shape_on_the_html_element`), not by the corpus – see
     below. Within a pool the normal `importance → layer → specificity → order`
     key still decides the winner unchanged.
 
-    Not reachable on the corpus either way — every candidate on all four
+    Not reachable on the corpus either way – every candidate on all four
     frozen bundles targets `<body>` except one `<html>`-only candidate
     (tailwindcss.com's dark theme) with no competing `<body>` candidate to
-    prefer over or defer to — so this is insurance rather than an observed
+    prefer over or defer to – so this is insurance rather than an observed
     fix, like most of phase 3.
     """
     layers = layers or {}
@@ -1595,7 +1595,7 @@ def detect_ground(entries: list[Entry],
         return candidates
 
     # `max` keeps the first of equal keys, which matters because two colors
-    # read out of one declaration tie on every term this key has — a
+    # read out of one declaration tie on every term this key has – a
     # gradient's stops, say. It used to matter for `light-dark()` too, and
     # since phase 4 it does not: that resolves to the one color the theme
     # being built actually selects, which is how MDN's dark ground became
@@ -1627,8 +1627,8 @@ def _merge_near_duplicates(entries: list[Entry], threshold: float,
 
     Two decisions here matter more than they look:
 
-    Comparison happens on the *rendered* color — each value flattened over the
-    ground — because rgba(255,255,255,.02) and rgba(255,255,255,.03) are one
+    Comparison happens on the *rendered* color – each value flattened over the
+    ground – because rgba(255,255,255,.02) and rgba(255,255,255,.03) are one
     color as far as anyone looking at the page is concerned, even though their
     declared values differ.
 
@@ -1656,8 +1656,8 @@ def _merge_near_duplicates(entries: list[Entry], threshold: float,
     kept: list[Entry] = []
 
     def compatible(a: str, b: str) -> bool:
-        # A custom property has no role of its own — it takes the role of
-        # whatever consumes it — so it may merge into any of them.
+        # A custom property has no role of its own – it takes the role of
+        # whatever consumes it – so it may merge into any of them.
         return a == b or "token" in (a, b)
 
     for e in ordered:
@@ -1690,12 +1690,12 @@ def _status_for(entry: Entry, var_refs: set[str]) -> str:
     are worth keeping but are not on the page.
     inert: every use is a zero-length shadow, which paints nothing.
     unmatched (T18): every usage's selector was tested against the real
-    captured document and matched no element there — see `all_unmatched`.
+    captured document and matched no element there – see `all_unmatched`.
     Checked last and only after `saved` has already had its say: `saved`
     answers "does any `var()` call in the CSS ever name this custom
     property" (a check over the stylesheets' own reference graph, no DOM
     involved), which is a different, more specific diagnosis than "does this
-    declaration's selector reach a real element" — an already-`saved` entry
+    declaration's selector reach a real element" – an already-`saved` entry
     stays `saved` rather than being relabelled `unmatched`, and an
     already-`inert` one stays `inert` for the same reason `all_inert` is
     checked first: a value that paints nothing is worth saying so about
@@ -1715,11 +1715,11 @@ def _assign_groups(entries: list[Entry], ground: Color) -> None:
     """Sort each color into the family it will be named and displayed under.
 
     Kept apart from naming so that two themes can be grouped, then paired up,
-    then named — see `_align_names`.
+    then named – see `_align_names`.
     """
     # Grouping uses the rendered color, since that is what a reader sees, and a
-    # higher chroma bar than `is_neutral`. Tinted greys — the slate and zinc
-    # families every framework ships — sit around 0.03 and are greys doing a
+    # higher chroma bar than `is_neutral`. Tinted greys – the slate and zinc
+    # families every framework ships – sit around 0.03 and are greys doing a
     # grey's job; calling one "blue-2" because it is faintly cool is worse than
     # useless. Real brand colors sit far above this line.
     for e in entries:
@@ -1743,7 +1743,7 @@ def _align_names(base: Palette, alt: Palette) -> None:
     """Give one name to the token that plays the same part in each theme.
 
     Named independently the two palettes share nothing, and toggling the report
-    swaps one list of names for an unrelated one — which makes the comparison
+    swaps one list of names for an unrelated one – which makes the comparison
     the toggle exists to support impossible, and makes a `--c-ink-1` in the
     emitted CSS mean two different things in two blocks.
 
@@ -1754,8 +1754,8 @@ def _align_names(base: Palette, alt: Palette) -> None:
     backwards. Chroma pairs by hue first, since a brand color generally keeps
     its hue across themes and only shifts in lightness.
 
-    Only the alternate is renamed. Anything left unpaired — a theme with more
-    inks than its counterpart — keeps a name of its own from the naming pass
+    Only the alternate is renamed. Anything left unpaired – a theme with more
+    inks than its counterpart – keeps a name of its own from the naming pass
     that follows.
     """
     def rank(pal: Palette):
@@ -1767,7 +1767,7 @@ def _align_names(base: Palette, alt: Palette) -> None:
     for group in ("ground", "surface", "ink", "line", "neutral"):
         # strict=False on purpose: the two themes rarely have the same number of
         # colors in a group, and stopping at the shorter one is exactly the
-        # intent stated above — the surplus keeps its own name.
+        # intent stated above – the surplus keeps its own name.
         pairs = zip(
             sorted((e for e in base.entries if e.group == group), key=rank(base)),
             sorted((e for e in alt.entries if e.group == group), key=rank(alt)),
@@ -1800,7 +1800,7 @@ def _assign_names(entries: list[Entry], ground: Color) -> None:
 
     Names describe what a color is and where it sits, because a generated name
     like `color-7` tells the next reader nothing. Entries that already carry a
-    name — paired across themes by `_align_names` — are left alone, and the
+    name – paired across themes by `_align_names` – are left alone, and the
     names they hold are reserved so nothing else takes them.
     """
     counters: dict[str, int] = defaultdict(int)
@@ -1872,11 +1872,11 @@ def describe(entry: Entry, ground: Color) -> dict:
                 # `None` mirrors `Usage.matched`'s own "no basis to test"
                 # case (no captured HTML, or an untestable selector) rather
                 # than reading as zero. `matches` is a bounded sample of
-                # which real elements they were — omitted, not an empty
+                # which real elements they were – omitted, not an empty
                 # list, when there is nothing real to show.
                 "matchCount": u.match_count,
                 **({"matches": u.match_samples} if u.match_samples else {}),
-                # T24: why `matchCount` is `None`, when it is —
+                # T24: why `matchCount` is `None`, when it is –
                 # `"dynamicState"` (no resting state any capture could ever
                 # test), `"uncompilable"` (a library coverage gap, T21's
                 # territory), or `"noCapturedHtml"` (a bare `.css` input).
@@ -1900,9 +1900,9 @@ def describe(entry: Entry, ground: Color) -> dict:
         rec["mergedFrom"] = sorted(entry.merged_hexes)
     if entry.status == "live" and entry.all_dynamic_only:
         # T24: this color's `live` status rests entirely on a selector with
-        # no resting state — every usage is `:hover`/`:focus`/etc-only. Not
+        # no resting state – every usage is `:hover`/`:focus`/etc-only. Not
         # a status change (invariant 27's own "unconfirmed is not absent"
-        # reasoning still applies) — a transparency flag the report's
+        # reasoning still applies) – a transparency flag the report's
         # Caveats section and any JSON consumer can single this entry out
         # with, rather than a reader having to notice every example's
         # `reason` individually.
@@ -1914,7 +1914,7 @@ def describe(entry: Entry, ground: Color) -> dict:
         # property declared only inside a `:hover` rule and referenced
         # nowhere (`saved`). Without this gate that entry would carry
         # `dynamicOnly: true` while `renderCaveats()` names it as resting on
-        # unconfirmable ground the reader has "live" reason to doubt — a
+        # unconfirmable ground the reader has "live" reason to doubt – a
         # claim this flag has no business making about a color that was
         # never claimed live in the first place.
         rec["dynamicOnly"] = True

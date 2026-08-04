@@ -62,8 +62,8 @@ classifiers = [
 # <html>/<body> ancestry to be right; T9 needs a real element's *inheritance*
 # relationship to an ancestor several levels down, where a conforming tree
 # builder's implied-tag and misnesting handling actually matters). Core
-# install is pure Python — six and webencodings, the latter already a
-# transitive dependency via tinycss2 above — so PYTHON_FLOOR and build.py's
+# install is pure Python – six and webencodings, the latter already a
+# transitive dependency via tinycss2 above – so PYTHON_FLOOR and build.py's
 # vendoring model, which assumes no compiled wheels, are unaffected. PLAN.md
 # T9.
 dependencies = ["tinycss2>=1.5", "cssselect2>=0.9", "html5lib>=1.1"]
@@ -95,7 +95,7 @@ packages = ["website_palette_extractor"]
 [tool.hatch.build.targets.sdist]
 # Ship the tests and the docs. The reference fixture described in CLAUDE.md
 # lives in palettes/fleshandbonedesign.com/ and is deliberately *not* shipped:
-# there is no committed copy at all — `palettes` is .gitignore'd — so there is
+# there is no committed copy at all – `palettes` is .gitignore'd – so there is
 # nothing here to include or exclude.
 include = [
   "/CLAUDE.md",
@@ -141,7 +141,7 @@ ignore = [
 
 [tool.pytest.ini_options]
 # The suite is unittest-based; pytest discovers those classes natively, so both
-# `python3 -m unittest discover` and `pytest` work. Keep it that way — the
+# `python3 -m unittest discover` and `pytest` work. Keep it that way – the
 # plain stdlib invocation is what makes the tests runnable with no install at
 # all. tests/ is a package (has __init__.py) so both runners import modules as
 # `tests.test_x`, which is what makes `from .helpers import ...` resolve.

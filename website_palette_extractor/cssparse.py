@@ -1,6 +1,6 @@
 """A CSS reader, scoped to the job of finding colors.
 
-Tokenising is `tinycss2`'s job — it implements the CSS Syntax grammar, and this
+Tokenising is `tinycss2`'s job – it implements the CSS Syntax grammar, and this
 module only decides which of the declarations it hands back are worth keeping,
 which selector and at-rule context they carry, and which theme scopes them.
 
@@ -9,7 +9,7 @@ The split matters because the previous hand-rolled brace walker was an
 an escaped quote in a Tailwind selector masked past the following `{`; a
 statement `@charset` got glued onto the next rule's selector and cost Bootstrap
 its whole `:root` block; a comma inside `:where()` split one selector into two
-broken ones. Those looked like separate bugs and were one — see `PLAN.md` — and
+broken ones. Those looked like separate bugs and were one – see `PLAN.md` – and
 the fix for a class rather than its instances is to stop approximating.
 
 What is still this module's own is everything above the token stream: theme
@@ -94,7 +94,7 @@ _THEME_CLASS = re.compile(
 
 # The same marker wrapped in `:is()`/`:where()`, which is how Tailwind's `dark:`
 # variant actually states the scope: `.dark\:bg-x:is(.dark *)`. It has to come
-# off as a unit — removing just the `.dark` inside would leave `:is( *)` glued
+# off as a unit – removing just the `.dark` inside would leave `:is( *)` glued
 # to the selector, which then matches nothing downstream.
 _THEME_IS = re.compile(
     r":(?:is|where)\(\s*"
@@ -131,13 +131,13 @@ def _not_spans(selector: str) -> list[tuple[int, int]]:
         }
 
     Read the `[data-theme="light"]` as a scope and the dark theme's entire
-    token block is filed under *light* — 124 declarations of it, including the
+    token block is filed under *light* – 124 declarations of it, including the
     ground. Skipping the negation lets the rule fall through to the media
     query, which says dark, which is what it is.
 
     **A `:not()` inside an `:is()`/`:where()` is not modelled.** Blanking the
     inner negation splits the outer function across the span boundary, so
-    `strip_theme_scope('.x:is(.dark, :not(.light))')` leaves `:is( , …)` —
+    `strip_theme_scope('.x:is(.dark, :not(.light))')` leaves `:is( , …)` –
     the empty-functional-pseudo failure invariant 14 warns about. Left alone
     because it is unreachable on the corpus: of 1296 distinct themed selectors
     across the eight sites, including every Tailwind v4 shape, none nests a
@@ -208,7 +208,7 @@ def split_selector_list(selector: str) -> list[str]:
     three broken ones. Functional pseudo-classes made this load-bearing rather
     than pedantic: Tailwind v4 compiles its dark variant to
     `.dark\\:bg-x:where(.dark,.dark *)`, and splitting inside the `:where()`
-    leaves `:where(, *)` — a selector that matches nothing, so the theme's
+    leaves `:where(, *)` – a selector that matches nothing, so the theme's
     rules stop being recognised as the theme's.
 
     Attribute values are quoted and can contain commas too, so quotes and
@@ -258,7 +258,7 @@ def selector_theme(selector: str) -> str:
     the rule cannot be attributed to one theme, and saying so beats picking
     whichever marker was written first.
 
-    A marker inside `:not()` is not a scope — see `_not_spans`.
+    A marker inside `:not()` is not a scope – see `_not_spans`.
     """
     scopes = set()
     for part in split_selector_list(selector):
@@ -306,7 +306,7 @@ def strip_theme_scope(selector: str) -> str:
     `html body` describes the light one's, so the marker has to come off before
     the selector is weighted or matched against the page-level pattern.
     Without this, `selector_weight` scores a themed page rule as an ordinary
-    class and `detect_ground` never sees it at all — the dark theme then
+    class and `detect_ground` never sees it at all – the dark theme then
     silently inherits the light ground and every ratio reported for it is
     wrong.
 
@@ -345,8 +345,8 @@ class Declaration:
     # The first term of the cascade, read from the token stream rather than
     # string-matched.
     important: bool = False
-    # The second. The fully-qualified `@layer` name this declaration sits in —
-    # `a.b` for a layer nested in a layer — or "" for an unlayered declaration,
+    # The second. The fully-qualified `@layer` name this declaration sits in –
+    # `a.b` for a layer nested in a layer – or "" for an unlayered declaration,
     # which the spec ranks *above* every layer. The order the names themselves
     # cascade in is a property of the document rather than of one sheet, so it
     # is resolved in `extract.layer_order`.
@@ -383,12 +383,12 @@ class Stylesheet:
     var_refs: set[str] = field(default_factory=set)
     # `@layer` names in the order this sheet first mentions them, by either
     # form. Merged across sheets into one document-wide order by
-    # `extract.layer_order` — layer names are global, and a sheet that mentions
+    # `extract.layer_order` – layer names are global, and a sheet that mentions
     # `utilities` is talking about the same layer another sheet declared.
     layers: list[str] = field(default_factory=list)
     # `@property` registrations found in this sheet: name -> (inherits,
     # initial_value), both `None` when the descriptor was absent. Global to
-    # the document like `layers` — merged by `extract.property_registrations`.
+    # the document like `layers` – merged by `extract.property_registrations`.
     properties: dict[str, tuple[str | None, str | None]] = field(default_factory=dict)
 
 
@@ -404,11 +404,11 @@ def _var_ref_names(tokens) -> set[str]:
 
     A `FunctionBlock` named `var` is unambiguous regardless of what it sits
     inside, so recursing into every function/block's contents finds a `var()`
-    nested arbitrarily deep — including inside another `var()`'s own
+    nested arbitrarily deep – including inside another `var()`'s own
     fallback, which is why a call's own arguments are still recursed into
     after its name is read. This replaces a regex that matched any
     `--name`-shaped text anywhere in the serialized value, string literals
-    included — the exact class of mistake invariant 9 already ruled out for
+    included – the exact class of mistake invariant 9 already ruled out for
     color reading (`content: "--foo"` is not a reference to `--foo` either).
     """
     names = set()
@@ -447,7 +447,7 @@ def parse_stylesheet(css: str, source: str, origin: str = "",
     strings and comments cannot be mistaken for color (invariant 9), a comma
     inside `:where()` is not a selector separator (invariant 17), and a
     statement at-rule is consumed rather than glued to the next selector
-    (invariant 18). Their tests stay — they now guard this integration, which
+    (invariant 18). Their tests stay – they now guard this integration, which
     is exactly where a swap like this goes wrong.
     """
     sheet = Stylesheet(source=source, origin=origin, third_party=third_party,
@@ -470,7 +470,7 @@ def _qualify(parent: str, name: str) -> str:
 
 
 def _register_layer(sheet: Stylesheet, name: str) -> None:
-    """Note a layer's existence, and its ancestors' — order comes from this.
+    """Note a layer's existence, and its ancestors' – order comes from this.
 
     Registering `a.b` registers `a` first even if nothing named it, because a
     sub-layer cascades *inside* its parent and the parent has to hold a
@@ -487,14 +487,14 @@ def _anonymous_layer(sheet: Stylesheet, parent: str) -> str:
     """A name for `@layer { … }`, which creates a new layer every time.
 
     Two anonymous blocks are two layers, never the same one re-opened, so the
-    name has to be unique across the whole document — hence the sheet's
+    name has to be unique across the whole document – hence the sheet's
     position in it. The NUL keeps it from colliding with anything an author
     could write, and carries no dot, so `_register_layer` still splits the
     qualified name on parentage correctly.
 
     **The counter skips values, and that is not a bug.** It counts every
     registered name carrying a NUL, which includes a *named* layer nested in an
-    anonymous one — `@layer { @layer x {} }` registers `\\x000-0.x`. Uniqueness
+    anonymous one – `@layer { @layer x {} }` registers `\\x000-0.x`. Uniqueness
     only needs the count to rise between two calls, and it does: creating an
     anonymous layer always registers at least one new NUL-bearing name. Making
     it a true count of anonymous layers would be no more correct and one more
@@ -513,7 +513,7 @@ def _anonymous_layer(sheet: Stylesheet, parent: str) -> str:
 # not (...)` block is a fallback for browsers that lack a feature this tool
 # already treats as real (invariants 22-23 exist because `color-mix()` and
 # `light-dark()` are genuine evergreen-browser behaviour, not merely things
-# this parser understands) — the fallback then outranks the real value on
+# this parser understands) – the fallback then outranks the real value on
 # document order and nothing about its selector says it's conditional.
 #
 # The grammar (CSS Conditional Rules 3) is `not <in-parens> | <in-parens>
@@ -528,10 +528,10 @@ def _anonymous_layer(sheet: Stylesheet, parent: str) -> str:
 # richer than a single `<color>` (`background`'s a shorthand, `filter` takes
 # functions `parse_color` was never meant to read), so judging "unsupported"
 # from a failed color parse would confidently flag real, always-supported
-# CSS as absent — a regression worse than the bug this fixes. A leaf either
+# CSS as absent – a regression worse than the bug this fixes. A leaf either
 # confirms support (`True`) or admits it doesn't know (`None`, which the
 # caller treats as "supported", i.e. today's behaviour, unchanged). `False`
-# can only ever come from negating a confirmed `True` — which is exactly the
+# can only ever come from negating a confirmed `True` – which is exactly the
 # shape of `@supports not (color: light-dark(white,black))`.
 _PURE_COLOR_PROPERTIES = frozenset({
     "background-color", "color", "-webkit-text-fill-color",
@@ -551,7 +551,7 @@ def _supports_skip_ws(tokens: list, i: int) -> int:
 
 def _supports_declaration(prop: str, value_tokens: list) -> bool | None:
     if prop.startswith("--"):
-        # A custom property's value is opaque to `@supports` — any non-empty
+        # A custom property's value is opaque to `@supports` – any non-empty
         # token stream is a syntactically valid declaration.
         return True
     value = tinycss2.serialize(value_tokens).strip()
@@ -591,7 +591,7 @@ def _eval_supports_in_parens(tokens: list, i: int) -> tuple[bool | None, int]:
     if tok.type == "() block":
         return _eval_supports_paren_contents(tok.content), i + 1
     # A bare feature function (`selector(...)`) or anything else this grammar
-    # doesn't model — `<general-enclosed>` by another name. Unknown, not
+    # doesn't model – `<general-enclosed>` by another name. Unknown, not
     # unsupported.
     return None, i + 1
 
@@ -616,7 +616,7 @@ def _eval_supports_condition(tokens: list, i: int) -> tuple[bool | None, int]:
 
 
 def supports_condition(prelude: list) -> bool | None:
-    """Evaluate an `@supports` prelude. `None` means "cannot tell" — treated
+    """Evaluate an `@supports` prelude. `None` means "cannot tell" – treated
     as supported, i.e. the block is read, matching every `@supports` block's
     behaviour before this existed."""
     value, _ = _eval_supports_condition(prelude, 0)
@@ -629,7 +629,7 @@ def _walk(sheet: Stylesheet, nodes: list, source: str,
     """Record declarations, descending through nested rules and at-rule blocks.
 
     `selector` is the rule the current nodes sit inside, and `""` means there
-    is none — the body of an `@font-face`, or a top-level `@media` with no
+    is none – the body of an `@font-face`, or a top-level `@media` with no
     enclosing rule. Declarations there are read for their `var()` references
     but not kept.
 
@@ -637,12 +637,12 @@ def _walk(sheet: Stylesheet, nodes: list, source: str,
     (T6, `PLAN.md`): `.a { color: red; @media (min-width:1px) { color: blue }
     }` is native CSS nesting, and `blue` belongs to `.a` exactly as if the
     `@media` wrapper weren't there. So when `selector` is already set, it
-    carries straight through the at-rule rather than being reset — only a
+    carries straight through the at-rule rather than being reset – only a
     *top-level* at-rule resets to `""`, which is the brace walker's old
     behaviour and is still correct there: a qualified rule found inside it
     computes its own selector regardless of what's passed down.
 
-    **`theme`/`theme_media` are not simply carried through unchanged** —
+    **`theme`/`theme_media` are not simply carried through unchanged** –
     a nested `@media (prefers-color-scheme: dark)` still has to be *found* as
     a scope, the same way it would if the enclosing rule weren't there, or the
     fix above would silently turn a theme signal into an unscoped declaration
@@ -680,7 +680,7 @@ def _walk(sheet: Stylesheet, nodes: list, source: str,
             keyword = node.lower_at_keyword
             prelude = _norm(tinycss2.serialize(node.prelude))
             if node.content is None:
-                # A statement at-rule — `@charset`, `@import`, `@layer a, b;`.
+                # A statement at-rule – `@charset`, `@import`, `@layer a, b;`.
                 # It has no body and declares nothing; invariant 18 is now
                 # simply this branch.
                 if keyword == "layer":
@@ -694,11 +694,11 @@ def _walk(sheet: Stylesheet, nodes: list, source: str,
                 elif keyword == "import":
                     # `@import url(...) layer(name);` reserves a layer
                     # position too (T8, `PLAN.md`), same reasoning as the
-                    # statement form above — before the imported sheet is
+                    # statement form above – before the imported sheet is
                     # ever fetched (it isn't; `sources.py` doesn't follow
                     # `@import`), the position it will cascade at is already
                     # spoken for. Found by token type, not a regex over the
-                    # serialized prelude — the `layer(...)` piece is a
+                    # serialized prelude – the `layer(...)` piece is a
                     # `FunctionBlock` sitting directly in `node.prelude`,
                     # same as `_anonymous_layer`'s search for one.
                     for token in node.prelude:
@@ -711,7 +711,7 @@ def _walk(sheet: Stylesheet, nodes: list, source: str,
             if keyword == "property":
                 # `@property --x { syntax: "*"; inherits: false;
                 # initial-value: … }` registers metadata about a custom
-                # property, not a paintable declaration (T22, `PLAN.md`) — so
+                # property, not a paintable declaration (T22, `PLAN.md`) – so
                 # it is recorded onto `sheet.properties` and the block is not
                 # descended into as ordinary content, mirroring the statement
                 # at-rule branch above's "declares something, not paint"
@@ -733,7 +733,7 @@ def _walk(sheet: Stylesheet, nodes: list, source: str,
                 continue
             if keyword == "supports" and supports_condition(node.prelude) is False:
                 # A confirmed-unsupported `@supports` block (T23) never
-                # applies in the browser this tool models — not even for its
+                # applies in the browser this tool models – not even for its
                 # `var()` references, which is why this skips the block
                 # outright rather than merely not `_record`ing its
                 # declarations. A block this project can't confidently judge
@@ -749,7 +749,7 @@ def _walk(sheet: Stylesheet, nodes: list, source: str,
             if selector:
                 # A nested `@media (prefers-color-scheme: dark)` still has to
                 # be *found* as a theme scope, the same way it would if the
-                # enclosing rule weren't there — mirrors the qualified-rule
+                # enclosing rule weren't there – mirrors the qualified-rule
                 # branch's `scoped or media` below. A selector-derived theme
                 # (`.dark .a { @media {...} }`) still wins: the enclosing rule
                 # already said which theme it is.
@@ -765,7 +765,7 @@ def _record(sheet: Stylesheet, node, value: str, selector: str, source: str,
             at_rules: tuple[str, ...], theme: str, theme_media: bool,
             layer: str) -> None:
     prop = node.lower_name
-    # `color-scheme` carries no color of its own — it is kept only so T10
+    # `color-scheme` carries no color of its own – it is kept only so T10
     # (`PLAN.md`) can read it back with the same cascade machinery every other
     # page-reaching declaration gets, to confirm whether a `light-dark()` site
     # really renders both branches. `Declaration.role` falls through to
@@ -800,7 +800,7 @@ def _var_name_and_fallback(
     """A `var()` call's own arguments, split into its name and its fallback.
 
     `arguments` is already `tinycss2`'s flat top-level list for what sat
-    between the parens — a fallback's own nested functions and parens are
+    between the parens – a fallback's own nested functions and parens are
     single nodes in it, not raw text, so **the first top-level comma is just
     a `LiteralToken` sitting directly in this list**: no parenthesis-counting
     scanner is needed here the way `color.balanced_end` was needed to find
@@ -810,12 +810,12 @@ def _var_name_and_fallback(
     background-image: var(--shimmer-image, linear-gradient(…, color-mix(…) …))
     ```
 
-    is why that mattered at all — a non-greedy regex used to stop at the `)`
+    is why that mattered at all – a non-greedy regex used to stop at the `)`
     closing `calc(`, leaving a truncated fallback and an orphaned tail of the
     declaration. Structurally, that class of mistake cannot happen here.
 
     `None` when the shape isn't a custom-property name optionally followed by
-    `,` and a fallback — an empty call, a first argument that isn't a bare
+    `,` and a fallback – an empty call, a first argument that isn't a bare
     ident, or one not spelled `--…`. The caller leaves such a call exactly as
     written, which is what a regex miss used to do.
     """
@@ -845,11 +845,11 @@ def _resolve_var(node, table: dict[str, str], depth: int) -> list | None:
     `None` covers two different reasons, both left as "keep the call as
     written" by the caller: the call isn't shaped like a custom-property
     reference (`_var_name_and_fallback` above), or `depth` has already given
-    up on a chain that is circular or simply too deep — see `resolve_vars`.
+    up on a chain that is circular or simply too deep – see `resolve_vars`.
 
     **A stored value of the literal keyword `initial` is treated as absent,
     not substituted as text.** `initial` on a custom property is the
-    guaranteed-invalid value — a browser resolving `var(name, fallback)`
+    guaranteed-invalid value – a browser resolving `var(name, fallback)`
     against it uses the fallback, it does not paste in the four letters
     `initial`. Tailwind v4 guards every registered property this way for
     browsers with no `@property`: `--tw-gradient-via-stops: initial;`.
@@ -878,12 +878,12 @@ def _substitute_vars(nodes: list, table: dict[str, str], depth: int) -> list:
 
     A `var()` is unambiguous by function name regardless of what it sits
     inside, so recursing into every function/block's contents finds one
-    nested arbitrarily deep — including inside another `var()`'s own
-    fallback — the same shape `_var_ref_names` already walks the tree for.
+    nested arbitrarily deep – including inside another `var()`'s own
+    fallback – the same shape `_var_ref_names` already walks the tree for.
     One consequence of walking tokens rather than scanning text: a `var(`
     that is actually inside a `url(...)` or a quoted string is a single leaf
     token here (`URLToken`/`StringToken`), so it is correctly invisible to
-    this walk the way a browser would see it — not found by accident the way
+    this walk the way a browser would see it – not found by accident the way
     a bare substring scan could not tell the two cases apart. Not observed on
     the corpus (no declaration mixes `var(` and `url(` in the same value),
     but it is the honest reading of the grammar either way.
@@ -912,31 +912,31 @@ def resolve_vars(value: str, table: dict[str, str], depth: int = 0) -> str:
     Falls back to the declared default when a name is unknown, and gives up
     after a few levels so a circular definition cannot hang the run.
 
-    **Tokenized once with `tinycss2`, not scanned as text** — a `var()` call
+    **Tokenized once with `tinycss2`, not scanned as text** – a `var()` call
     is found as a `FunctionBlock` (`_substitute_vars`), its name and fallback
     are read from its own already-parsed `.arguments`
     (`_var_name_and_fallback`), and a resolved replacement is spliced in as
     *tokens*, not spliced text. That is what retires the hand-derived
     `_GLUE_LEFT`/`_GLUE_RIGHT` padding invariant 24 used to need: CSS
     substitutes tokens, and a token list re-serialized by `tinycss2.serialize`
-    is exactly that, using the library's own adjacency-aware rule — the same
+    is exactly that, using the library's own adjacency-aware rule – the same
     one that stops `:nth-child(3n+1)` from re-merging into `:nth-child(3n)`
-    — instead of a hand-derived character-class check of what may abut what.
+    – instead of a hand-derived character-class check of what may abut what.
 
     **That rule disambiguates with a `/**/`, which is then turned into a
     plain space.** A comment is the textually-correct fix and is also
     invisible to `tinycss2` itself on the next parse, but it is not invisible
     to this codebase's own regex-based color scanners downstream
-    (`color.COLOR_TOKEN`, `_split_component`, `_split_top`) — none of them
+    (`color.COLOR_TOKEN`, `_split_component`, `_split_top`) – none of them
     treat a `comment` token as insignificant the way whitespace is. Left as
     `/**/`, `color-mix(in oklab,var(--white)var(--alpha),transparent)`
     resolves to `#fff/**/100%`, and `_split_component` reads that as the
-    color text `#fff/**/` — which `parse_color` cannot parse — silently
+    color text `#fff/**/` – which `parse_color` cannot parse – silently
     losing the color rather than reading it correctly. **This is safe as a
     blind string replace, not merely convenient**: no stylesheet declaration
-    this project reads can contain a real comment in the first place —
+    this project reads can contain a real comment in the first place –
     `tinycss2.parse_stylesheet`/`parse_blocks_contents` are both called with
-    `skip_comments=True` throughout `cssparse.py` — so the only `/**/` that
+    `skip_comments=True` throughout `cssparse.py` – so the only `/**/` that
     can ever appear in `value` or in any stored table value is one this same
     replacement already turned to a space one recursion level down. Verified
     corpus-wide: `test_var_substitution_does_not_glue_two_tokens_into_one`
@@ -945,13 +945,13 @@ def resolve_vars(value: str, table: dict[str, str], depth: int = 0) -> str:
     **One structural pass, not a retry loop.** Each `var()`'s replacement is
     fully resolved before it is spliced in (`_resolve_var`'s own recursive
     call), so nothing produced by a substitution needs to be found again by
-    rescanning the result — unlike a text splice, which cannot tell a
+    rescanning the result – unlike a text splice, which cannot tell a
     substitution's own output from the text it landed next to. An earlier,
     text-based version of this function called `one_pass` up to four times to
     cover that case defensively; instrumented against all four frozen corpus
     bundles (`tailwindcss.com`, `ui.shadcn.com`, `ground.news`,
     `fleshandbonedesign.com`), the second pass never once changed a second
-    pass's input — every retry was pure convergence-checking overhead.
+    pass's input – every retry was pure convergence-checking overhead.
     """
     if depth > 8 or "var(" not in value:
         return value
@@ -1045,7 +1045,7 @@ def parse_inline_styles(html: str, source: str,
     masked = strip_comments(html)
     for m in re.finditer(r"""\bstyle\s*=\s*(["'])(.*?)\1""", masked, re.S | re.I):
         # A style attribute is a declaration list, so it goes through the same
-        # parser as everything else — `background:url(a;b)` has a semicolon in
+        # parser as everything else – `background:url(a;b)` has a semicolon in
         # it that is not a separator.
         decls = tinycss2.parse_blocks_contents(m.group(2), skip_comments=True,
                                                skip_whitespace=True)

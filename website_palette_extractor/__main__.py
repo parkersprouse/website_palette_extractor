@@ -1,4 +1,4 @@
-"""Website Palette Extractor — read a site's color palette, build a browsable page.
+"""Website Palette Extractor – read a site's color palette, build a browsable page.
 
     python3 -m website_palette_extractor <target> [-o outdir] [options]
 
@@ -20,7 +20,7 @@ from .cssparse import resolve_vars
 from .sources import Bundle
 
 # The outputs `--formats` accepts. Kept beside the writer block in `main()`
-# that consumes it — an unknown name used to be dropped silently, so
+# that consumes it – an unknown name used to be dropped silently, so
 # `--formats jsn` created an empty directory, printed an empty "wrote:" list
 # and exited 0, which reads exactly like a site with no colors in it.
 FORMATS = ("html", "json", "css", "scss", "ts", "tailwind")
@@ -32,7 +32,7 @@ def requested_formats(spec: str) -> set[str]:
     `_validate` decides what is acceptable and `main` decides what to write;
     if they parsed the string separately, a change to the splitting rule
     would leave the validator describing something other than what gets
-    written — the kind of duplication that only shows up once it diverges.
+    written – the kind of duplication that only shows up once it diverges.
     """
     return {f.strip().lower() for f in spec.split(",") if f.strip()}
 
@@ -80,7 +80,7 @@ def build_parser() -> argparse.ArgumentParser:
                         "(repeatable)")
     p.add_argument("--exclude", action="append", metavar="TEXT",
                    help="skip stylesheets whose source contains TEXT "
-                        "(repeatable) — useful for dropping a framework or "
+                        "(repeatable) – useful for dropping a framework or "
                         "site-builder bundle")
     p.add_argument("--list-sources", action="store_true",
                    help="list the stylesheets found, with their color counts, "
@@ -164,7 +164,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if not pal.entries:
         print("error: no colors found. If the target was a URL, the page may "
-              "style itself with JavaScript — try a HAR export instead.",
+              "style itself with JavaScript – try a HAR export instead.",
               file=sys.stderr)
         return 1
 

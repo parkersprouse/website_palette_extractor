@@ -2,7 +2,7 @@
 
 This module is reached only through `--images` and never contributes to the
 token set (invariant: it answers "is the palette in the stylesheet or in the
-artwork?"), which is why it went untested — and why a crash in it could take
+artwork?"), which is why it went untested – and why a crash in it could take
 down a run whose palette was already complete.
 
 Every test skips cleanly when Pillow/numpy are absent, so the suite still
@@ -32,9 +32,9 @@ class TestAnalyse(unittest.TestCase):
     def test_a_tiny_image_does_not_crash_the_run(self):
         """Fewer opaque pixels than clusters used to raise `ValueError`.
 
-        Both back-ends reject k > n rather than degrading — the numpy path
+        Both back-ends reject k > n rather than degrading – the numpy path
         seeds with `rng.choice(..., replace=False)` and sklearn refuses
-        `n_clusters > n_samples` — so a page whose only artwork is a tracking
+        `n_clusters > n_samples` – so a page whose only artwork is a tracking
         pixel or a spacer gif killed the run *after* the palette was built.
         k is clamped to the sample count now.
         """

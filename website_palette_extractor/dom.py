@@ -4,30 +4,30 @@ Ground detection has to know which rules actually land on the element the page
 is painted on, and a utility framework states that on the element rather than
 in the stylesheet. ground.news writes `<body class="… bg-light-primary
 dark:bg-dark-primary …">`, and those two utilities beat the `body {
-background-color: var(--background) }` rule in the site's own CSS — so the
+background-color: var(--background) }` rule in the site's own CSS – so the
 palette's ground is `#eeefe9`/`#262626`, not the `#ffffff`/`#0a0a0a` that
 `--background` resolves to.
 
 Nothing in the stylesheet distinguishes `.bg-light-primary` (on the body) from
 `.bg-dark-primary` (on some card); the class attribute is the only place that
-information exists. This is still reading CSS — it just reads which rules the
+information exists. This is still reading CSS – it just reads which rules the
 document selects, rather than assuming only `html`/`body`/`:root` can.
 
 **The matcher is `cssselect2`'s, over a real tree.** It used to be a regex over
 one compound selector, deliberately narrow because a hand-rolled matcher cannot
-be trusted past `.foo.bar[x=y]` — anything with a combinator, an `:is()` or an
+be trusted past `.foo.bar[x=y]` – anything with a combinator, an `:is()` or an
 unfamiliar pseudo-class simply failed to match and fell back to the
 `html|body|:root` pattern. That restriction is phase 2's to lift (`PLAN.md`):
 a spec matcher answers `.a:is(.b) > body`, `html:not([data-theme="light"])` and
 `.dark\\:bg-x` alike, and answers them the way a browser does.
 
 **Two trees, for two different questions.** `page_elements`' tree comes from
-the stdlib `html.parser` shim below (`_TreeBuilder`) — enough for
+the stdlib `html.parser` shim below (`_TreeBuilder`) – enough for
 `<html>`/`<body>` ancestry, which is the only structure that question can
 ask about. `full_tree` (T9, `PLAN.md`) uses `html5lib` instead, because a
-question about a real element several levels below the page element —
+question about a real element several levels below the page element –
 does this custom-property definition's selector match one of *its*
-ancestors — needs a conforming tree builder's implied-tag and misnesting
+ancestors – needs a conforming tree builder's implied-tag and misnesting
 handling to be right that far down, which `_TreeBuilder` deliberately isn't.
 """
 from __future__ import annotations
@@ -47,7 +47,7 @@ from .cssparse import split_selector_list
 _XHTML = "{http://www.w3.org/1999/xhtml}"
 
 # Elements that never have an end tag. Pushing one onto the open-element stack
-# would swallow everything after it as its children — `<meta>` in the head is
+# would swallow everything after it as its children – `<meta>` in the head is
 # enough to make `<body>` a descendant of `<head>`.
 _VOID = frozenset({
     "area", "base", "basefont", "br", "col", "embed", "frame", "hr", "img",
@@ -60,7 +60,7 @@ _SECTIONS = frozenset({"head", "body", "frameset"})
 
 
 class _TreeBuilder(HTMLParser):
-    """Real HTML in, `ElementTree` out — enough of one for selector matching.
+    """Real HTML in, `ElementTree` out – enough of one for selector matching.
 
     Deliberately not a conforming HTML5 tree builder. It does not insert
     implied tags, reparent misnested elements, or apply the in-body insertion
@@ -69,7 +69,7 @@ class _TreeBuilder(HTMLParser):
 
     That does not reach an answer here, because the only elements ever tested
     are `<html>` and `<body>`, and the only structure a selector can ask about
-    them is their ancestry — which is `<html>`, or nothing. Descendant
+    them is their ancestry – which is `<html>`, or nothing. Descendant
     combinators (`.flex .bg-light-primary`) and `:root` are decided from that
     chain alone. `html5lib` would be more faithful and buys nothing for this
     question; `lxml` is a C extension, which the pure-Python floor rules out.
@@ -84,7 +84,7 @@ class _TreeBuilder(HTMLParser):
         if tag in _SECTIONS:
             # The one implied end tag this shim owes: `<head>` and `<body>` are
             # children of `<html>`, always. `</head>` is optional and routinely
-            # omitted, and html.parser closes nothing on its own — so without
+            # omitted, and html.parser closes nothing on its own – so without
             # this the body nests *inside* the head, `html > body` stops
             # matching, and `head .foo` starts. Both are answers about the page
             # element's ancestry, which is the one thing this tree must get
@@ -132,14 +132,14 @@ class PageElement:
     attrs: dict = field(default_factory=dict)
     # The `cssselect2` view of the same element, carrying its position in the
     # tree. Everything a selector can ask beyond this element's own name and
-    # attributes — ancestry, `:root`, sibling position — is answered from here.
+    # attributes – ancestry, `:root`, sibling position – is answered from here.
     node: cssselect2.ElementWrapper | None = None
 
 
 def page_elements(html: str) -> list[PageElement] | None:
     """`<html>` and `<body>` as this document wrote them, or None.
 
-    None means the tags could not be read at all — a truncated or non-HTML
+    None means the tags could not be read at all – a truncated or non-HTML
     document. That is deliberately distinct from an element with no classes:
     the second says the body carries nothing, and the first says we do not
     know, and treating "unknown" as "nothing" would state a ground confidently
@@ -175,7 +175,7 @@ def full_tree(html: str) -> ET.Element | None:
     """The complete document tree, for questions `page_elements` can't answer.
 
     `_TreeBuilder` above is deliberately not a conforming tree builder below
-    `<html>`/`<body>` — see its own docstring — because the only structure a
+    `<html>`/`<body>` – see its own docstring – because the only structure a
     selector could ask about the page element is its ancestry, which is
     `<html>` or nothing. A question about a real element deeper in the
     document (T9: does this custom-property definition's selector match an
@@ -189,16 +189,16 @@ def full_tree(html: str) -> ET.Element | None:
     question"). It buys something now that the question has moved past
     `<html>`/`<body>`. `namespaceHTMLElements=False` matches plain tag names
     (`div`, not `{http://www.w3.org/1999/xhtml}div`) the way `cssselect2`
-    expects from `from_html_root` — verified directly, not assumed, against a
+    expects from `from_html_root` – verified directly, not assumed, against a
     selector reaching a nested element.
 
     Core install is pure Python: `six` and `webencodings` (the latter already
     a transitive dependency via `tinycss2`), so `PYTHON_FLOOR` and
-    `build.py`'s vendoring model — which assumes no compiled wheels — are
+    `build.py`'s vendoring model – which assumes no compiled wheels – are
     unaffected. `lxml`/`genshi`/`chardet` are optional extras this project
     does not install.
 
-    Returns `None` on non-string input rather than raising — checked directly:
+    Returns `None` on non-string input rather than raising – checked directly:
     `html5lib` is deliberately lenient about malformed *markup* (that is its
     whole design; there is no such thing as invalid HTML5 to it, empty string
     included, so `page_elements`' "unknown is not the same as absent"
@@ -217,12 +217,12 @@ def wrap_tree(root: ET.Element) -> cssselect2.ElementWrapper:
     """Wrap a `full_tree` root once, for callers that query it repeatedly.
 
     `ElementWrapper.from_html_root` walks and annotates the whole tree (parent
-    pointers, id index) up front, so it is real work — cheap for the one-shot
+    pointers, id index) up front, so it is real work – cheap for the one-shot
     callers `elements_matching` serves directly, but wasteful when T9's
     ancestry walk (`extract.resolve_by_ancestry`) needs the same tree queried
     once per distinct consumer selector, which is hundreds of times on a
     real site. Measured directly (`PLAN.md` T9, 2026-08-02): re-wrapping per
-    call was the dominant cost, not `html5lib`'s own parse — tailwindcss.com's
+    call was the dominant cost, not `html5lib`'s own parse – tailwindcss.com's
     479 distinct consumer selectors took 55s of wrapping against a parse cost
     too small to separate out. Callers that will look up more than one
     selector against the same tree should wrap once and pass the result to
@@ -237,7 +237,7 @@ def _compile_selector_parts(selector: str) -> tuple:
     """Compile a selector list branch by branch, so one bad branch costs only itself.
 
     T25 (`PLAN.md`). `cssselect2.compile_selector_list` fails the *whole*
-    list if any one branch is unparseable — it does not compile the good
+    list if any one branch is unparseable – it does not compile the good
     branches and skip the bad one:
 
     ```
@@ -250,11 +250,11 @@ def _compile_selector_parts(selector: str) -> tuple:
     with exactly this selector on every corpus bundle that carries
     `@property` (`ground.news.har`, `tailwindcss.com.har`,
     `ui.shadcn.com.har`), so compiling the list as one unit lost the leading
-    `*` branch too — the branch that should have answered every consumer's
+    `*` branch too – the branch that should have answered every consumer's
     `@property`-registered `initial-value` at its own element, immediately.
 
     `split_selector_list` (invariant 17) already exists for exactly this
-    shape — a selector list where one part is malformed — so each branch is
+    shape – a selector list where one part is malformed – so each branch is
     split and compiled on its own; a branch that raises is dropped rather
     than voiding the whole list. Each of the three callers below filters the
     survivors differently afterward (pseudo-elements, `never_matches`), so
@@ -262,13 +262,13 @@ def _compile_selector_parts(selector: str) -> tuple:
 
     Cached, the same reasoning as `selector_specificity`: `selector_matches`
     sits in T9's ancestry walk, called once per (consumer, ancestor,
-    candidate) — compiling a selector list from scratch there was already
+    candidate) – compiling a selector list from scratch there was already
     wasteful before this added a split and per-branch compile on top of the
     single `compile_selector_list` call it replaces. `lru_cache` itself only
     requires hashable *arguments*; the tuple return is a separate
     precaution, because a cached *list* would be one mutable object handed
     to every caller sharing this cache entry. None of the three callers
-    mutates what it gets back — and none may start to, including the
+    mutates what it gets back – and none may start to, including the
     compiled selector objects themselves, which are now shared across all
     three call sites rather than freshly compiled per caller.
 
@@ -276,13 +276,13 @@ def _compile_selector_parts(selector: str) -> tuple:
     have the identical try/except-the-whole-list shape and the identical
     bug, but were left out of T25's filing on purpose. For the one selector
     this bug is known to affect, `matches_page_element` is unaffected either
-    way — `*` is already refused as blanket (`_is_blanket`) and `:before`/
+    way – `*` is already refused as blanket (`_is_blanket`) and `:before`/
     `:after` are refused as pseudo-elements, so the surviving branches
     change nothing it reports. `selector_specificity` is not so lucky and
     the claim "changes nothing" would be false there: verified directly,
     `cssselect2.compile_selector_list(":before")[0].specificity` is
     `(0, 0, 1)`, not `(0, 0, 0)`, so fixing that call site would move its
-    answer for this selector — and `selector_specificity` feeds
+    answer for this selector – and `selector_specificity` feeds
     `_cascade_key` (invariant 21, `detect_ground`/`build_var_table`), an
     unmeasured blast radius this task did not sign up to predict. Left for
     its own task if a corpus case ever needs it.
@@ -304,10 +304,10 @@ def _compile_usable(selector: str) -> list | None:
     where every branch is a pseudo-element or a dynamic state `cssselect2`
     marks `never_matches`. A pseudo-element is excluded here on purpose, not
     merely by inheritance from `cssselect2`'s own `query_all` filtering
-    (which drops it independently — see `elements_matching_wrapped`'s
+    (which drops it independently – see `elements_matching_wrapped`'s
     docstring): this function backs T9's real-inheritance walk
     (`resolve_by_ancestry_kind`, `extract.consumers_of`), and a generated box
-    is not an element real inheritance can originate from or be asked about —
+    is not an element real inheritance can originate from or be asked about –
     see `_compile_reachable` for the different, narrower question T18/T19
     need answered instead, and T21's own write-up (`PLAN.md`) for why the two
     must not share a filter despite looking like the same refusal.
@@ -344,29 +344,29 @@ def _compile_reachable(selector: str) -> list | None:
     only an annotation for the caller about a generated box `cssselect2`
     cannot itself represent as a tree node. Reach against `.card::after`'s
     base compound `.card` is exactly the question `selector_reach`/
-    `reach_elements` answer — whether the class the rule is written for is on
-    the page — and refusing it lumped a real, testable rule in with
+    `reach_elements` answer – whether the class the rule is written for is on
+    the page – and refusing it lumped a real, testable rule in with
     `:hover`'s genuine unanswerability.
 
     **Deliberately not shared with `_compile_usable`, despite the near-
     identical bodies.** T9's ancestry walk (`extract.consumers_of`, backed by
-    `_compile_usable`) asks a different question — which real element a
+    `_compile_usable`) asks a different question – which real element a
     declaration's *value* directly applies to, the element real CSS
-    inheritance could originate from — and a generated box is not that
+    inheritance could originate from – and a generated box is not that
     element. Sharing this filter with `elements_matching_wrapped` was T21's
     first draft and was wrong: `dom.selector_matches` (T9's own candidate
     matcher, used by `_ancestry_winners`) still refuses pseudo-elements
     unconditionally and was never meant to change, so a pseudo-element
     consumer would make T9 walk real ancestors for a property whose only
     real setters are *also* pseudo-element-scoped and therefore invisible to
-    that walk — producing a confirmed `"absent"` (which overrides last-wins
+    that walk – producing a confirmed `"absent"` (which overrides last-wins
     per `resolve_by_ancestry_kind`'s own contract) for a property that is
     genuinely set, just not through a selector `selector_matches` can see.
     Caught on `tailwindcss.com.har`: `.after\\:inset-ring:after`'s
     `--tw-inset-ring-color` resolved to a wrong last-wins guess (`#00a6f4ff`,
     Tailwind's alphabetically-last `.inset-ring-*` utility, painted nowhere
-    on the page) before this split, and to nothing at all — a false
-    `"absent"` — in the shared-filter draft, dropping a real, page-painted
+    on the page) before this split, and to nothing at all – a false
+    `"absent"` – in the shared-filter draft, dropping a real, page-painted
     color. Splitting the filter restores the original last-wins answer for
     that declaration (still not exact, but not a fabricated non-answer
     either) and leaves it as a documented gap rather than a regression;
@@ -385,13 +385,13 @@ def reach_elements(selector: str,
     """The real elements `selector_reach` tested this selector against (T19).
 
     Backs `matchCount`/`matches` for a usage `selector_reach` found `True`
-    for — including a pseudo-element usage, whose base compound is what gets
+    for – including a pseudo-element usage, whose base compound is what gets
     reported (T21, `PLAN.md`): the right unit, since a generated box isn't a
     separate node this tool could name even if it wanted to.
 
     **Not `wrapped_root.query_all(*usable)`.** `cssselect2`'s own `query_all`
     re-filters its arguments through `ElementWrapper._compile`, which drops
-    any selector with `pseudo_element is not None` a *second* time —
+    any selector with `pseudo_element is not None` a *second* time –
     independently of, and after, `_compile_reachable`'s own filtering above.
     That means a pseudo-element branch this function deliberately keeps
     usable so it can be tested against its base compound would silently
@@ -414,19 +414,19 @@ def selector_reach(selector: str,
 
     T18 (`PLAN.md`): three answers, not two, and the caller has to keep them
     apart rather than treating "no basis" as a `False`. `True` and `False`
-    both mean the selector compiled and was actually tested — the difference
+    both mean the selector compiled and was actually tested – the difference
     is only whether anything in the document matched. `None` means the
     question could not be asked at all: uncompilable, or every branch is a
     dynamic state `cssselect2` marks `never_matches` (see `_compile_reachable`,
     shared with `reach_elements`). A pseudo-element branch is tested against
-    its *base compound* instead of being refused (T21, `PLAN.md`) —
+    its *base compound* instead of being refused (T21, `PLAN.md`) –
     `.card::after` answers whatever `.card` itself answers. This is a
-    deliberately different filter than `elements_matching_wrapped`'s — see
+    deliberately different filter than `elements_matching_wrapped`'s – see
     `_compile_reachable`'s own docstring for why the two must not share one.
 
     Collapsing `None` into `False` is the specific mistake this function
     exists to prevent. `.old-class:hover` and a genuinely-dead `.old-class`
-    both make `reach_elements` return `[]` — that function's empty-list
+    both make `reach_elements` return `[]` – that function's empty-list
     contract does not distinguish "tested, matched nothing" from "could not
     test the resting-state question at all" (`:hover` has no resting state to
     test), because none of its existing callers needed that distinction.
@@ -438,7 +438,7 @@ def selector_reach(selector: str,
     `reach_elements` does and for the same reason (T21, `PLAN.md`):
     `wrapped_root.query_all(*usable)` would silently re-drop any
     pseudo-element branch through `cssselect2`'s own internal filtering,
-    independently of `_compile_reachable` above — see that function's
+    independently of `_compile_reachable` above – see that function's
     docstring for the direct verification. `any(...)` over a generator
     expression short-circuits on the first match, so a selector that reaches
     something near the start of the document does not pay for walking the
@@ -454,27 +454,27 @@ def selector_reach(selector: str,
 def untestable_reason(selector: str) -> str:
     """Why `selector_reach` answered `None` for this selector (T24, `PLAN.md`).
 
-    Only meaningful once `selector_reach` has already answered `None` — this
+    Only meaningful once `selector_reach` has already answered `None` – this
     recomputes `_compile_selector_parts` to tell apart the two causes that
     answer collapses into, on purpose (see its own docstring: keeping `None`
     a single tri-state value there, rather than a fourth outcome, is
     deliberate). `selector_reach` is `None` exactly when `_compile_reachable`
     finds no usable branch, which happens two structurally different ways:
 
-    - `"uncompilable"` — nothing in the list compiled at all
+    - `"uncompilable"` – nothing in the list compiled at all
       (`_compile_selector_parts` returns an empty tuple). A library/parser
       coverage gap, the same flavor as T21/T25: a different selector engine
       might answer this selector, so it is undertested, not permanently
       unknowable.
-    - `"dynamicState"` — every branch that *did* compile is a dynamic
+    - `"dynamicState"` – every branch that *did* compile is a dynamic
       pseudo-class `cssselect2` marks `never_matches` (`:hover`, `:focus`,
       `:target`, …). A pseudo-element branch would have stayed usable
-      instead of being filtered out here (T21 — its base compound is real,
+      instead of being filtered out here (T21 – its base compound is real,
       testable evidence), so reaching this branch means every surviving
       selector genuinely has no resting state any capture could test: not
       undertested, structurally unanswerable.
 
-    Callers must only invoke this after `selector_reach` returns `None` —
+    Callers must only invoke this after `selector_reach` returns `None` –
     it does not itself re-derive that determination.
     """
     compiled = _compile_selector_parts(selector)
@@ -485,33 +485,33 @@ def element_signature(node: cssselect2.ElementWrapper, *, depth: int = 3,
                       max_len: int = 50) -> str:
     """A short, human-readable label for one real matched element (T19).
 
-    Not a selector — a diagnostic for `examples`, naming *which* element among
+    Not a selector – a diagnostic for `examples`, naming *which* element among
     several a rule reached rather than restating the rule. `tag#id.class`,
     with up to `depth` immediate ancestors chained by `>` for the cases that
     matter most: a `.card` rule that lands on three different cards is only
     distinguishable by where each one sits, not by its own attributes, which
     are identical by construction. Bounded to the closest ancestors rather
-    than the full path to `<html>` — the root end of a long chain is rarely
+    than the full path to `<html>` – the root end of a long chain is rarely
     what disambiguates a sibling from another; the immediate ones are.
 
-    `max_len` is a hard cap on the whole string, not a per-part budget —
+    `max_len` is a hard cap on the whole string, not a per-part budget –
     class *count* is not a reliable proxy for length. Tailwind v4's own
     generated font classes on tailwindcss.com
     (`inter_6a166f28-module__775SPq__variable`, several per element) run
     past 200 characters on a single class, so capping "the first N classes"
     would still have let one pathological site blow up every `examples`
     payload. Measured directly, uncapped: `tailwindcss.com`'s JSON grew 38%
-    (1.57MB → 2.17MB) and its report grew 46% — the report is not just the
+    (1.57MB → 2.17MB) and its report grew 46% – the report is not just the
     JSON's home, it embeds the identical `to_document()` output verbatim
     (invariant 11), so a payload regression here is a report regression too,
     on every site, not only pathological ones. This `max_len` plus
     `extract.MATCH_SAMPLES` capped at 2 (its own docstring) bring
     `tailwindcss.com` down to +19% JSON / +18% report and `ui.shadcn.com` to
-    +17% JSON / +15% report — real growth for real new data, not the near-
+    +17% JSON / +15% report – real growth for real new data, not the near-
     doubling the uncapped version produced.
 
     `node.ancestors` is already computed and cached during `wrap_tree`, so
-    walking it here is free — no new tree traversal, matching `wrap_tree`'s
+    walking it here is free – no new tree traversal, matching `wrap_tree`'s
     own reasoning for why `resolve_by_ancestry_kind` and `selector_reach`
     share one wrapped root instead of re-wrapping per call.
     """
@@ -534,22 +534,22 @@ def elements_matching(selector: str,
     General-purpose, unlike `matches_page_element`: that function is deliberately
     narrow to "is this a statement about the page's resting appearance" and
     refuses pseudo-elements, dynamic states, and blanket selectors on purpose.
-    This one answers a different, plainer question — where in the real
-    document does this selector actually land — so it filters only what
+    This one answers a different, plainer question – where in the real
+    document does this selector actually land – so it filters only what
     `cssselect2` itself cannot evaluate (a pseudo-element styles a generated
     box, not a real element; `never_matches` has no interaction state to test
     against), and leaves the rest, including `*`, to the caller's judgment.
-    Reach — whether a pseudo-element rule's *base compound* is on the page —
+    Reach – whether a pseudo-element rule's *base compound* is on the page –
     is a deliberately different question, answered by `reach_elements`
     instead (T21, `PLAN.md`); see `_compile_reachable`'s docstring for why
     this function does not answer it too.
 
     A selector `cssselect2` cannot compile returns no matches rather than
-    raising, the same contract every other matcher in this module keeps —
+    raising, the same contract every other matcher in this module keeps –
     `strip_theme_scope` can hand callers something invalid, and real CSS
     carries pseudo-classes no library knows.
 
-    Wraps the tree fresh on every call — fine for a one-shot lookup, wasteful
+    Wraps the tree fresh on every call – fine for a one-shot lookup, wasteful
     for a caller checking many selectors against the same document. See
     `wrap_tree`/`elements_matching_wrapped` for that case.
     """
@@ -561,12 +561,12 @@ def selector_matches(selector: str,
                      ) -> tuple[int, int, int] | None:
     """This selector's specificity against one specific real element, or None.
 
-    None means the selector does not match here at all — the same "no
+    None means the selector does not match here at all – the same "no
     answer" contract `_page_specificity` (`extract.py`) keeps for
     `<html>`/`<body>`, generalised to any real element T9's ancestry walk
     visits. A selector list takes the highest specificity among the parts
     that actually match this element, mirroring `selector_specificity`'s own
-    rule for a list scored as a whole — the two functions answer different
+    rule for a list scored as a whole – the two functions answer different
     questions (that one has no element to test against; this one does) and
     would otherwise silently disagree on a list where only one branch matches.
     """
@@ -584,7 +584,7 @@ def _probe_element() -> cssselect2.ElementWrapper:
     """A nondescript element in a throwaway document.
 
     No classes, no attributes, no name any stylesheet targets, sitting inside a
-    `<body>` inside a root — so a descendant combinator anchored on the page
+    `<body>` inside a root – so a descendant combinator anchored on the page
     reaches it. Built element by element rather than parsed, because the only
     XML parser in reach is the stdlib one and nothing untrusted should ever
     meet it. (Real documents go through `html.parser`, which has no entity
@@ -604,7 +604,7 @@ def _is_blanket(sel) -> bool:
     """Does this selector land on everything, rather than on the page element?
 
     `*`, `:root *`, `body *` and `*, ::before, ::after` all *do* select
-    `<html>` or `<body>`, so a real matcher says yes to them — and saying yes
+    `<html>` or `<body>`, so a real matcher says yes to them – and saying yes
     is wrong here. Two reasons, and they agree:
 
     A blanket rule makes no statement about the page element. Invariant 19
@@ -614,11 +614,11 @@ def _is_blanket(sel) -> bool:
     nothing by the argument that rule exists for.
 
     And it inverts the cascade. The universal selector is the weakest thing in
-    CSS — it loses to every class — so promoting it above class-scoped
+    CSS – it loses to every class – so promoting it above class-scoped
     definitions gets the precedence backwards. Measured, on the corpus: this
     is how Tailwind v4 writes its reset (`* { --tw-gradient-from: #0000;
     --tw-ring-offset-color: #fff; … }`), and promoting it made that reset beat
-    every utility that sets those properties to a real color — 11 named colors
+    every utility that sets those properties to a real color – 11 named colors
     on ground.news collapsing to `#0000`/`#fff`, colors the site never paints.
     MDN's `light-dark()` polyfill fails the same way from `:root *`, taking
     `--color-background-page` from a light/dark pair to the dark branch alone.
@@ -654,7 +654,7 @@ def selector_specificity(selector: str) -> tuple[int, int, int]:
     ends up worse than plain document order.
 
     A selector list takes the highest of its members. That is not the cascade's
-    own rule — the cascade scores whichever selector matched — so callers that
+    own rule – the cascade scores whichever selector matched – so callers that
     know which one matched should ask about that one. `extract._page_specificity`
     does, per part.
 
@@ -677,25 +677,25 @@ def matches_page_element(selector: str,
     Three kinds of selector are refused, and all three are rules rather than
     accidents of the library:
 
-    A selector carrying a **pseudo-element** — `body::after` — styles a box the
+    A selector carrying a **pseudo-element** – `body::after` – styles a box the
     element generates, not the element. A background declared there does not
     paint the page.
 
-    A selector standing on a **dynamic state** — `:hover`, `:focus`,
-    `:focus-within`, `:target`, `:visited` — describes what the page looks like
+    A selector standing on a **dynamic state** – `:hover`, `:focus`,
+    `:focus-within`, `:target`, `:visited` – describes what the page looks like
     while something is happening to it, and the ground is what it looks like at
     rest. `cssselect2` marks exactly these `never_matches`, since it has no
     interaction state to evaluate them against; skipping them here says the
     same thing on purpose instead of inheriting it.
 
-    A selector that lands on **everything** — `*`, `:root *` — genuinely does
+    A selector that lands on **everything** – `*`, `:root *` – genuinely does
     select the page element and still says nothing about it. See `_is_blanket`,
     which is the one place a real matcher needed reining in rather than letting
     loose.
 
     A selector `cssselect2` cannot compile is False rather than an error. That
     is required, not defensive: `strip_theme_scope` can hand this an `:is( ,
-    …)` — the unmodelled nesting `cssparse._not_spans` documents — and CSS in
+    …)` – the unmodelled nesting `cssparse._not_spans` documents – and CSS in
     the wild carries pseudo-classes no library knows (`:dir()` today). Either
     would raise. Failing to match is the same answer the narrow matcher gave
     for anything it did not understand, and it defers to `_PAGE_SEL`.

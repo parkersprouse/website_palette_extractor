@@ -1,7 +1,7 @@
 """The CLI: argument validation, exit codes, and what gets written.
 
 `__main__.py` had no tests at all before this module, and every bug the
-2026-08-03 sweep found in it was a *silent* one — a bad flag accepted and then
+2026-08-03 sweep found in it was a *silent* one – a bad flag accepted and then
 quietly doing something other than what it said, or a real failure arriving as
 a traceback instead of the `error: …`/exit-code pair every other failure in
 `main` uses. Those are exactly the failures a test suite that only ever calls
@@ -42,7 +42,7 @@ class TestArgumentValidation(unittest.TestCase):
 
         The writer block matches format names with `in want`, so an
         unrecognised one simply never matched a branch: an empty output
-        directory, an empty "wrote:" list, and a success code — which reads
+        directory, an empty "wrote:" list, and a success code – which reads
         exactly like a site that legitimately has no colors.
         """
         code, _out, err = run(self.page, "--formats", "jsn", "-o", self.out)

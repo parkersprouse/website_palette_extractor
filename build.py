@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""Build website_palette_extractor.pyz — the vendored, single-file zipapp.
+"""Build website_palette_extractor.pyz – the vendored, single-file zipapp.
 
-A zipapp carries no dependency metadata, so every runtime dependency —
+A zipapp carries no dependency metadata, so every runtime dependency –
 `tinycss2`, `cssselect2` and `html5lib`, plus the two transitive ones
-they pull in, `webencodings` and `six` — has to be vendored into the
+they pull in, `webencodings` and `six` – has to be vendored into the
 staging directory, or the .pyz only works on a machine that happens to
 have them installed already (PLAN.md T1). zipapp also refuses a source
 tree that already has a top-level __main__.py, hence the shim.
 
     python3 build.py
 
-Rebuild whenever anything under website_palette_extractor/ changes — CLAUDE.md's
-"Rebuild the zipapp before a work session is finished" — and verify
+Rebuild whenever anything under website_palette_extractor/ changes – CLAUDE.md's
+"Rebuild the zipapp before a work session is finished" – and verify
 with an interpreter that has none of the dependencies installed; every
 interpreter on a dev machine has them, which is exactly what let the
 tracked artifact go four phases stale before (PLAN.md T1).
@@ -33,7 +33,7 @@ from pathlib import Path
 # module of its own, so `sys.executable -m pip` cannot be the only path.
 # Which one actually runs is environment-dependent, so a build made without
 # uv on PATH may resolve marginally different wheel versions than one with
-# it — both still honor the >= constraints, so this doesn't affect output.
+# it – both still honor the >= constraints, so this doesn't affect output.
 _UV = shutil.which("uv")
 
 ROOT = Path(__file__).parent.resolve()
@@ -43,7 +43,7 @@ ROOT = Path(__file__).parent.resolve()
 # half-rename break *silently*: `SHIM` is a string compiled only when the built
 # .pyz runs, so a stale import inside it passes `_verify`, passes any smoke test
 # on the build machine (the old package is still importable there), and fails
-# only on a clean interpreter — verbatim the T1 failure this file exists to
+# only on a clean interpreter – verbatim the T1 failure this file exists to
 # prevent. Renamed from `palettekit` on 2026-08-03.
 PACKAGE = "website_palette_extractor"
 OUTPUT = ROOT / f"{PACKAGE}.pyz"
@@ -67,7 +67,7 @@ def _required_packages() -> tuple[str, ...]:
     """Every top-level importable name the archive must contain.
 
     Derived from [project.dependencies] rather than a second hardcoded
-    list — otherwise a dependency added there gets vendored by pip but
+    list – otherwise a dependency added there gets vendored by pip but
     silently skipped by this check, the exact drift reading the
     dependency list from one place was meant to prevent.
 
@@ -75,7 +75,7 @@ def _required_packages() -> tuple[str, ...]:
     appear in pyproject.toml: `webencodings` (tinycss2's) and `six`
     (html5lib's). Both are imported at runtime, so a .pyz missing either
     one fails on a clean interpreter exactly like a missing direct
-    dependency — which is the whole failure `_verify` exists to catch.
+    dependency – which is the whole failure `_verify` exists to catch.
     """
     names = (_NAME_SPLIT.split(req, maxsplit=1)[0] for req in _dependencies())
     return (PACKAGE, "webencodings", "six", *names)
@@ -97,7 +97,7 @@ def _verify() -> None:
     """Structural check, not a subprocess smoke test.
 
     Running the built .pyz on this interpreter would pass whether or not
-    vendoring happened — site-packages is still on sys.path, and a dev
+    vendoring happened – site-packages is still on sys.path, and a dev
     machine has these installed regardless. Asserting the packages are
     physically inside the archive is what actually catches a skipped
     vendoring step.

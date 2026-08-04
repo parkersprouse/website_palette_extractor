@@ -73,7 +73,7 @@ def load_har(path: str, want_images: bool = False) -> Bundle:
         raise RuntimeError(
             f"{path} is not valid JSON (line {e.lineno}, column {e.colno}). "
             f"Re-export it from the browser with 'Save all as HAR with "
-            f"content' — a partial or truncated download will fail here."
+            f"content' – a partial or truncated download will fail here."
         ) from e
     except OSError as e:
         raise RuntimeError(f"Could not open {path}: {e}") from e

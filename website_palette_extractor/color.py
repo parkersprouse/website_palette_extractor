@@ -4,8 +4,8 @@ Everything downstream depends on this being right, so the conversions are the
 published matrices rather than approximations, and parsing refuses to guess:
 a value it doesn't understand returns None instead of a plausible-looking color.
 
-Reuses `tinycss2`'s tokenizer where a sub-value needs real CSS tokenization —
-a `calc()` body, currently — rather than re-deriving CSS numeric syntax and
+Reuses `tinycss2`'s tokenizer where a sub-value needs real CSS tokenization –
+a `calc()` body, currently – rather than re-deriving CSS numeric syntax and
 paren/function nesting by hand. Defer to a library already in the dependency
 set for anything it already does correctly; hand-roll only what it can't do
 (the arithmetic and CSS-type-checking `calc()` evaluation itself, which no
@@ -230,7 +230,7 @@ def oklab_to_color(L: float, a: float, b: float, alpha: float = 1.0) -> Color:
     )
 
 
-# CIE Lab, which CSS specifies on a D50 white point — unlike OKLab above, and
+# CIE Lab, which CSS specifies on a D50 white point – unlike OKLab above, and
 # unlike sRGB, which is D65. Both conversions are needed, so the constants are
 # spelled out rather than folded together: the D50 white point, the Bradford
 # adaptation to D65, and D65 XYZ to linear sRGB, each as given in CSS Color 4.
@@ -250,8 +250,8 @@ _XYZ_TO_LINEAR_SRGB = (
 )
 
 # The two above run sRGB-ward, which is all a parser ever needed. `color-mix()`
-# has to go the other way as well — a mix declared `in lab` means converting
-# both arguments *into* Lab — so these are their inverses, as given in CSS
+# has to go the other way as well – a mix declared `in lab` means converting
+# both arguments *into* Lab – so these are their inverses, as given in CSS
 # Color 4's sample code. `test_lab_and_xyz_round_trip` asserts they really are
 # inverses rather than trusting the transcription.
 _LINEAR_SRGB_TO_XYZ = (
@@ -274,7 +274,7 @@ def lab_to_color(L: float, a: float, b: float, alpha: float = 1.0) -> Color:
     """CIE Lab (D50, as CSS defines it) to sRGB.
 
     Worth having because Tailwind v4 and friends now ship `lab()` alongside a
-    hex fallback, and the `lab()` form is written second — so on a modern build
+    hex fallback, and the `lab()` form is written second – so on a modern build
     it is the one that wins the cascade, and skipping it loses the color
     outright rather than falling back.
     """
@@ -293,7 +293,7 @@ def lab_to_color(L: float, a: float, b: float, alpha: float = 1.0) -> Color:
 
 
 def color_to_lab(c: Color) -> tuple[float, float, float]:
-    """sRGB to CIE Lab (D50) — the inverse of `lab_to_color`."""
+    """sRGB to CIE Lab (D50) – the inverse of `lab_to_color`."""
     xyz = _apply(_D65_TO_D50, xyz_d65_of(c))
     ratio = [xyz[i] / _D50[i] for i in range(3)]
     f = [_cbrt(t) if t > _EPSILON else (_KAPPA * t + 16.0) / 116.0
@@ -545,7 +545,7 @@ def _hsl_to_rgb(h: float, s: float, l: float) -> tuple[float, float, float]:
 # ------------------------------------------------------- interpolation spaces
 #
 # `color-mix(in <space>, …)` is defined as interpolation *in a named space*, so
-# mixing needs each space in both directions — the public conversions above only
+# mixing needs each space in both directions – the public conversions above only
 # ever ran sRGB-ward, because parsing only ever needed that. These are
 # unrounded on purpose: `Color.hsl()` and `Color.oklch()` round for display, and
 # rounding a coordinate before interpolating it puts the result off by a whole
@@ -570,7 +570,7 @@ def _hsl_of(c: Color) -> tuple[float, float, float]:
 
 
 def _polar(rect: tuple[float, float, float]) -> tuple[float, float, float]:
-    """(L, a, b) to (L, C, H°) — the shape `oklch` and `lch` interpolate in."""
+    """(L, a, b) to (L, C, H°) – the shape `oklch` and `lch` interpolate in."""
     lightness, a, b = rect
     return (lightness, math.hypot(a, b),
             math.degrees(math.atan2(b, a)) % 360.0)
@@ -689,8 +689,8 @@ def mix_colors(space: str, c1: Color, p1: float, c2: Color, p2: float,
     Hue is excluded from that, having no zero to scale toward.
 
     The zero-alpha short circuit is not an optimisation, it is accuracy. The
-    corpus shape by a wide margin is Tailwind's opacity modifier —
-    `color-mix(in oklab, <color> 25%, transparent)` — and the premultiplied
+    corpus shape by a wide margin is Tailwind's opacity modifier –
+    `color-mix(in oklab, <color> 25%, transparent)` – and the premultiplied
     algebra collapses there exactly: with the other alpha zero, every weighted
     coordinate is the first color's own, and the result is that color at
     `alpha * p1`. Running it through OKLab and back instead lands ±1 off on
@@ -715,7 +715,7 @@ def mix_colors(space: str, c1: Color, p1: float, c2: Color, p2: float,
     v1, v2 = list(to_space(c1)), list(to_space(c2))
     if hue_i is not None:
         # A grey's hue angle is arbitrary, so it is treated as missing and
-        # takes the other color's — otherwise mixing a grey with a blue sweeps
+        # takes the other color's – otherwise mixing a grey with a blue sweeps
         # through hues neither of them has.
         if powerless(v1) and not powerless(v2):
             v1[hue_i] = v2[hue_i]
@@ -738,19 +738,19 @@ def balanced_end(text: str, start: int) -> int:
     """Index just past the `)` closing the `(` at `start`, or -1.
 
     Quotes and escapes are honoured because a function argument can hold either
-    — `url("a)b")` closes nothing.
+    – `url("a)b")` closes nothing.
 
     Used by `_mix_component` below to bound a `calc()` percentage's closing
     paren, which needs a character offset into the already-isolated percentage
     text rather than a token list. `cssparse.resolve_vars` used to need this
-    too, for the same reason — finding `var(--x, <fallback with parens>)`'s
-    closing paren by hand — until T16 (`PLAN.md`) replaced that whole call
+    too, for the same reason – finding `var(--x, <fallback with parens>)`'s
+    closing paren by hand – until T16 (`PLAN.md`) replaced that whole call
     with a structural read of `tinycss2`'s own already-parsed `var()`
     arguments. `find_colors`'s own `_whole_value_spans` was the other caller,
     until T17 (`PLAN.md`) replaced the whole regex-plus-`balanced_end` pair
     with a `tinycss2` token walk (`_collect_colors`): a `FunctionBlock`
     already knows where it ends regardless of how deeply its own arguments
-    nest, which needed no character-offset scanner at all — unlike
+    nest, which needed no character-offset scanner at all – unlike
     `COLOR_TOKEN`'s separate function-call regex, which had its own
     hand-bounded one-level nesting allowance rather than calling this.
     """
@@ -782,8 +782,8 @@ def _split_top(body: str) -> list[str]:
     """Split on the commas that separate arguments, not the ones inside them.
 
     Tokenized with `tinycss2` rather than hand-rolled depth-counting: it
-    already groups parens/brackets and quoted strings — with their own escape
-    rules — into single tokens, so a top-level comma is just a `LiteralToken`
+    already groups parens/brackets and quoted strings – with their own escape
+    rules – into single tokens, so a top-level comma is just a `LiteralToken`
     sitting directly in the flat top-level list. `serialize` reconstructs the
     original text losslessly, which is what makes round-tripping through
     tokens here safe rather than lossy.
@@ -804,7 +804,7 @@ _PERCENT = re.compile(r"^([+-]?(?:\d+\.?\d*|\.\d+))%$")
 
 
 def _is_percentage_like(tok) -> bool:
-    """A literal percentage, or a `calc()` call — the other percentage-typed
+    """A literal percentage, or a `calc()` call – the other percentage-typed
     thing `<color> <percentage>?` can hold in this position."""
     return tok.type == "percentage" or (
         tok.type == "function" and tok.lower_name == "calc"
@@ -817,9 +817,9 @@ def _split_component(text: str) -> tuple[str, str] | None:
     Tokenized rather than scanned by hand: a percentage is typed directly
     (`PercentageToken`) by `tinycss2` regardless of whether whitespace
     separates it from a preceding color, so the minified-CSS case this used to
-    hand-scan for — ground.news ships
+    hand-scan for – ground.news ships
     `color-mix(in oklab,var(--ring)50%,transparent)`, and `var(--ring)50%` has
-    no boundary a `split()` can find — is just "is the first or last token a
+    no boundary a `split()` can find – is just "is the first or last token a
     percentage (or a `calc()` standing in for one)."
 
     A percentage may also be written first, which the spec allows and nothing
@@ -849,9 +849,9 @@ _CALC_CALL = re.compile(r"^calc\(", re.I)
 def _calc_tokens(body: str) -> list:
     """A `calc()` body's meaningful tokens, via `tinycss2`'s own tokenizer.
 
-    `tinycss2` already tokenizes CSS numeric syntax correctly — percentages,
+    `tinycss2` already tokenizes CSS numeric syntax correctly – percentages,
     a unit split cleanly off a dimension, scientific notation, a leading sign
-    folded into the number — and groups nested parens into a
+    folded into the number – and groups nested parens into a
     `ParenthesesBlock` and nested functions into a `FunctionBlock`. Re-deriving
     any of that by hand (as an earlier version of this function did, with a
     regex) duplicates work the tokenizer this project already depends on does
@@ -946,7 +946,7 @@ def eval_calc_percentage(body: str) -> float | None:
     """Evaluate a `calc()` body restricted to literal percentage arithmetic.
 
     Tokenizing is `tinycss2`'s job (`_calc_tokens`); this is the part no CSS
-    library does for you — walking the token tree with CSS's own type rules
+    library does for you – walking the token tree with CSS's own type rules
     for `calc()` (matched at each operator above) and refusing anything
     outside that: `var()`, a unit other than `%`, nested `min()`/`max()`,
     percent×percent, division by a percentage. `None` rather than a guess,
@@ -975,7 +975,7 @@ def _mix_component(text: str, appearance: str) -> tuple[Color, float | None] | N
     as "no color" would throw the declaration away.
 
     A `calc()` percentage evaluates when it is literal arithmetic (T5); outside
-    that subset — a `var()` inside it, mixed units — it makes the whole mix
+    that subset – a `var()` inside it, mixed units – it makes the whole mix
     unreadable rather than defaulting. Guessing 50% would print a color the
     page does not paint.
     """
@@ -1034,7 +1034,7 @@ def parse_color_mix(body: str, appearance: str) -> Color | None:
     # Percentage normalisation, CSS Color 5. An omitted percentage is whatever
     # the other one leaves over; both omitted is an even mix. When both are
     # written and fall short of 100% the shortfall is not padded with either
-    # color — it scales the result's alpha, which is how
+    # color – it scales the result's alpha, which is how
     # `color-mix(in oklab, red 30%, blue 30%)` comes out translucent.
     if p1 is None and p2 is None:
         p1 = p2 = 50.0
@@ -1054,7 +1054,7 @@ def parse_color_mix(body: str, appearance: str) -> Color | None:
 
 
 def parse_light_dark(body: str, appearance: str) -> Color | None:
-    """`light-dark(A, B)` — whichever branch the palette being built selects.
+    """`light-dark(A, B)` – whichever branch the palette being built selects.
 
     Not a color function so much as a theme choice written inline, which is why
     it belongs to this tool rather than being skipped: a theme is already the
@@ -1070,7 +1070,7 @@ def parse_light_dark(body: str, appearance: str) -> Color | None:
 
 # Function names `find_colors` reads as an ordinary color, dispatched through
 # `parse_color`'s own `_FUNC` branch once a `FunctionBlock` isolates them.
-# `color-mix`/`light-dark` are not in this set — see `_collect_colors` below,
+# `color-mix`/`light-dark` are not in this set – see `_collect_colors` below,
 # which dispatches them to their own parsers and never recurses into either.
 _COLOR_FUNCS = frozenset({
     "rgb", "rgba", "hsl", "hsla", "oklch", "oklab", "color", "lab", "lch",
@@ -1081,18 +1081,18 @@ def _collect_colors(tokens, appearance: str, out: list[Color]) -> None:
     """Recursively walk a token list, appending every color found to `out`.
 
     T17 (`PLAN.md`): a `FunctionBlock` already groups its arguments correctly
-    no matter how many parens they nest — `tinycss2` resolved that nesting
-    when it tokenized — so `rgb(min(calc(1 + 2), 3) 0 0)` is one token here,
+    no matter how many parens they nest – `tinycss2` resolved that nesting
+    when it tokenized – so `rgb(min(calc(1 + 2), 3) 0 0)` is one token here,
     not a boundary a regex has to guess the end of. That is what closes the
     old `COLOR_TOKEN` regex's known gap: it tolerated exactly one level of
     nested parens and failed closed (found nothing) past that.
 
     `color-mix()`/`light-dark()` are evaluated as a unit and not recursed into
     (invariants 22-23): the colors written inside them are not colors the page
-    paints — the mix, or the branch the theme selects, is. A known color
+    paints – the mix, or the branch the theme selects, is. A known color
     function's own arguments are not recursed into either, since a channel is
-    a number, not a nested color. Everything else — a gradient, a shadow, an
-    unrecognised function — is recursed into, because a color can appear
+    a number, not a nested color. Everything else – a gradient, a shadow, an
+    unrecognised function – is recursed into, because a color can appear
     anywhere inside those. A bare `( … )` grouping (as `calc()` can contain)
     is walked the same way, through `.content` rather than `.arguments`.
 
@@ -1134,7 +1134,7 @@ def _collect_colors(tokens, appearance: str, out: list[Color]) -> None:
 def find_colors(value: str, appearance: str = "light") -> list[Color]:
     """Pull every color out of a declaration value, in order.
 
-    Tokenized once with `tinycss2` (T17) rather than scanned twice as text —
+    Tokenized once with `tinycss2` (T17) rather than scanned twice as text –
     `_whole_value_spans` used to re-scan the same string a second time to find
     `color-mix()`/`light-dark()` spans ahead of the general token scan; a
     single walk (`_collect_colors`) now finds and dispatches both in one pass,
@@ -1144,15 +1144,15 @@ def find_colors(value: str, appearance: str = "light") -> list[Color]:
     `color-mix()` and `light-dark()` are evaluated as a unit rather than
     walked into, because they are functions *of* colors: the two hexes in
     `light-dark(#fff, #18191b)` are one color, chosen by the theme, and the
-    arguments to a `color-mix()` are not colors the page paints — the mix is.
+    arguments to a `color-mix()` are not colors the page paints – the mix is.
 
     **A call this tool cannot evaluate contributes nothing, rather than falling
     back to the arguments inside it.** `color-mix(in oklch, #b4d455 calc(50% -
     var(--x)), transparent)` has a readable hex in it and that hex is not on
     the page; reporting it would be exactly the plausible-looking guess this
     module exists to refuse. A `calc()` percentage that is literal arithmetic
-    — `calc(60 * 1%)` — evaluates instead (`eval_calc_percentage`, T5); this
-    remains visible only at the per-declaration level — see `PLAN.md` phase 4
+    – `calc(60 * 1%)` – evaluates instead (`eval_calc_percentage`, T5); this
+    remains visible only at the per-declaration level – see `PLAN.md` phase 4
     and T5.
     """
     tokens = tinycss2.parse_component_value_list(value, skip_comments=True)

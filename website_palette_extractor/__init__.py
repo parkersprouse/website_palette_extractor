@@ -1,4 +1,4 @@
-"""website_palette_extractor — read a website's color palette out of its stylesheets.
+"""website_palette_extractor – read a website's color palette out of its stylesheets.
 
 Command line:
 
@@ -37,7 +37,7 @@ __all__ = [
 
 # The single source of truth for the supported floor (PLAN.md T2). Checked
 # against pyproject.toml's requires-python by test_pyproject_floor_matches_
-# python_floor, and read by __main__.main()'s version guard — the zipapp
+# python_floor, and read by __main__.main()'s version guard – the zipapp
 # carries no requires-python metadata of its own, so that guard is the only
 # thing standing between an old interpreter and a crash deep in extract.py's
 # zip(strict=) calls (PLAN.md T1).

@@ -39,7 +39,7 @@ class TestPageElement(unittest.TestCase):
             # The same utility sitting on some other element.
             ".bg-dark-primary": False,
             # A descendant of the body is not the body. Still false, but now
-            # because the body is not a descendant of itself — not because
+            # because the body is not a descendant of itself – not because
             # combinators are refused wholesale.
             ".flex .bg-light-primary": False,
             ".flex > .x": False,
@@ -65,7 +65,7 @@ class TestPageElement(unittest.TestCase):
             self.assertIs(matches_page_element(sel, els), True, sel)
 
     def test_a_blanket_rule_is_not_a_statement_about_the_page(self):
-        """`*` selects `<html>` and tells you nothing — see `dom._is_blanket`.
+        """`*` selects `<html>` and tells you nothing – see `dom._is_blanket`.
 
         Tailwind v4 writes its reset this way. Counting it as page-level lets
         `* { --tw-ring-offset-color: #fff }` outrank every utility that sets
@@ -76,14 +76,14 @@ class TestPageElement(unittest.TestCase):
             self.assertIs(matches_page_element(sel, els), False, sel)
         # The probe element is built once at import and shared by every call.
         # `cssselect2` caches ancestry and sibling lookups on a wrapper as it
-        # answers, so ask again — with a real match in between — and make sure
+        # answers, so ask again – with a real match in between – and make sure
         # nothing about it drifts. A probe that quietly starts matching turns
         # `_is_blanket` off and restores the inversion it exists to prevent.
         self.assertIs(matches_page_element(".bg-light-primary", els), True)
         self.assertIs(matches_page_element("*", els), False)
 
     def test_a_selector_that_will_not_compile_is_false_not_an_error(self):
-        """Required, not defensive — two known shapes reach here.
+        """Required, not defensive – two known shapes reach here.
 
         `strip_theme_scope` can emit `:is( , …)` for the nesting
         `cssparse._not_spans` documents as unmodelled, and real CSS carries
@@ -102,7 +102,7 @@ class TestPageElement(unittest.TestCase):
         """None means "could not tell", which is not "carries no classes"."""
         self.assertIsNone(page_elements("no html here"))
         self.assertIs(matches_page_element(".bg-light-primary", None), False)
-        # Read, and genuinely bare — the reference fixture's shape.
+        # Read, and genuinely bare – the reference fixture's shape.
         bare = page_elements('<html><body style="opacity:0">')
         self.assertEqual([e.classes for e in bare], [frozenset(), frozenset()])
 
@@ -110,7 +110,7 @@ class TestPageElement(unittest.TestCase):
         """No implied-tag insertion, so the void elements have to be right.
 
         Treat `<meta>` as needing a close tag and `<body>` becomes a child of
-        `<head>` — at which point `head > *` and `.flex .x` start matching it.
+        `<head>` – at which point `head > *` and `.flex .x` start matching it.
         """
         els = page_elements(
             '<!DOCTYPE html>\n<HTML LANG=en>\n<head><meta charset=utf-8>'
@@ -124,7 +124,7 @@ class TestPageElement(unittest.TestCase):
 
 
 class TestFullTree(unittest.TestCase):
-    """T9's `html5lib`-backed tree — real structure below `<html>`/`<body>`."""
+    """T9's `html5lib`-backed tree – real structure below `<html>`/`<body>`."""
 
     HTML = ('<html><body><div class="theme-neutral">'
             '<p><span class="bg-card">x</span></p></div>'

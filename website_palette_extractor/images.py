@@ -1,7 +1,7 @@
 """Optional: check whether a page's imagery actually carries any color.
 
-This never feeds the CSS token set. It answers a different question — "is the
-palette in the stylesheet or in the artwork?" — which is worth asking before
+This never feeds the CSS token set. It answers a different question – "is the
+palette in the stylesheet or in the artwork?" – which is worth asking before
 trusting a stylesheet-only reading of a visually rich site.
 
 Requires Pillow and numpy. scikit-learn is used when present; without it a

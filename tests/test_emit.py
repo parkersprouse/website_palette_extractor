@@ -181,6 +181,27 @@ class TestReportTemplateSubstitution(unittest.TestCase):
                 r'id="palette-data">(.*?)</script>', html, re.S).group(1)
             self.assertNotIn(placeholder, html.replace(blob, ""))
 
+    def test_template_declares_no_unknown_placeholder(self):
+        """A stray `__FOO__` in report_template.html is not caught above.
+
+        `test_every_placeholder_is_still_filled` only asserts the *known*
+        placeholders got substituted; `re.sub`'s pattern is built from
+        `fills`' own keys (emit._HTML's construction), so a placeholder-shaped
+        token the template introduces without a matching `fills` entry simply
+        never matches and passes straight through into the shipped report --
+        silently, the same failure mode invariant 11 exists to rule out for
+        anything a *site* writes. This is the template-authoring side of that
+        same guarantee: catch it here rather than in whatever report happens
+        to render it first.
+        """
+        found = set(re.findall(r"__[A-Z_]+__", emit._HTML))
+        known = {
+            "__TITLE__", "__TITLE_HTML__", "__SUBTITLE__", "__UI_THEMES__",
+            "__DATA__", "__GROUP_TITLES__", "__GROUP_BLURBS__",
+            "__STATUS_TITLES__", "__STATUS_BLURBS__",
+        }
+        self.assertEqual(found, known)
+
     def test_a_backslash_in_site_content_is_not_read_as_a_group_reference(self):
         """`re.sub` reads `\\g<0>` in a *replacement string* as a back-reference.
 

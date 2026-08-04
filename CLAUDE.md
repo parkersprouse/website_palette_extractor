@@ -276,13 +276,56 @@ sources.py   →  cssparse.py  →  extract.py  →  emit.py
 | `dom.py` | 718 | `html.parser` → `ElementTree` shim, `cssselect2` matching of `<html>`/`<body>`, specificity, plus `full_tree`/`elements_matching`/`wrap_tree` (T9: real DOM below the page element), `selector_reach` (T18: does a selector match anything, real/none/untestable), `element_signature` (T19: a short label for one real matched element), `_compile_selector_parts` (T25: one bad selector-list branch costs only itself), and `untestable_reason` (T24: which of the two causes made `selector_reach` answer `None`) |
 | `sources.py` | 292 | `load_har` / `load_url` / `load_paths` → `Bundle` |
 | `extract.py` | 1921 | `extract()`, the cascade, per-theme `_build`, ground, merging, statuses, naming, `resolve_by_ancestry`/`resolve_by_ancestry_kind` (T9, non-inheriting-aware since T22), `Entry.all_unmatched` (T18), per-usage `match_count`/`match_samples` (T19), `_page_color_scheme`/`_scopes_present`'s confirmation gate (T10), `_theme_scoped_scheme_keywords` (T26), `property_registrations` (T22), `Entry.all_dynamic_only`/`Usage.reach_reason` (T24) |
-| `emit.py` | 1086 | Emitters; `_HTML` is the report template (T20: status sub-headings, T24: always-present Caveats section) |
+| `emit.py` | 503 | Emitters; `_HTML` loads the report template off disk (T28) rather than holding it as a string (T20: status sub-headings, T24: always-present Caveats section) |
+| `report_template.html` | 606 | The interactive report's structural HTML/CSS/JS, `__PLACEHOLDER__`-marked (T28) — a real `.html` file, not a Python string, so it gets editor/linter support |
 | `images.py` | 163 | Optional image quantisation, not part of the token set; `analyse` clamps k to the sample count (fewer opaque pixels than clusters used to raise) |
 | `__main__.py` | 321 | CLI; `main()` guards `PYTHON_FLOOR` before anything else, then `_validate` rejects bad `--formats`/negative numerics before any work |
 
 `emit.to_document(palette)` returns the dict the JSON file holds — that dict is
 the public data contract. The HTML report consumes the same dict, inlined into
 a `<script type="application/json">`.
+
+**The report template lives in `report_template.html`, not a triple-quoted
+string in `emit.py` (T28, `PLAN.md`, landed 2026-08-04).** `emit_html()` is
+unchanged — it still does one `re.sub` pass over `_HTML` filling in the same
+nine `__PLACEHOLDER__` names, and still returns a fully self-contained string.
+**Only the template's *source* moved; invariant 11's guarantee (the emitted
+report opens from `file://`, no `<link>`, no `fetch()`) is about the output,
+which this does not touch.**
+
+`_HTML` is now loaded via `importlib.resources.files(__package__)`, not a path
+relative to `__file__`. That distinction is load-bearing rather than a style
+choice: a `__file__`-relative open() works from a checkout and from an
+installed wheel and fails only inside `website_palette_extractor.pyz`, where
+the package lives inside a zip archive and there is no filesystem path to
+open — exactly the "passes on the build machine, fails everywhere else"
+failure shape `build.py`'s own dependency-vendoring check exists to catch
+(see "Rebuild the zipapp", below). `importlib.resources` reads through the
+zip loader correctly instead. Verified directly against a clean-interpreter
+`.pyz` run, not assumed from the stdlib docs; `build.py`'s `_verify()` also
+asserts `website_palette_extractor/report_template.html` is physically
+present in the archive, the same shape as its `six.py`-vs-package-directory
+check — `shutil.copytree` already carries the file along with everything
+else under the package, so this is insurance against a future staging change
+rather than a fix for an observed gap.
+
+Checked at the level this change actually operates on: the **HTML output**,
+not the JSON (JSON is untouched by a template-source move, so a green JSON
+diff would say nothing about the one thing that could break). Module,
+console-script, and clean-3.11-interpreter zipapp runs against the same
+input produced byte-identical HTML (`generated` timestamp normalised out,
+same reason the JSON identity check does), and matched the previously
+-committed `example/index.html` exactly — confirming the file move changed
+no emitted byte. `wheel`/`sdist` builds both carry `report_template.html`
+without any added packaging config; hatchling's `packages = [...]` wheel
+strategy includes non-`.py` files under the package directory by default —
+verified by unzipping a built wheel, not assumed. Test:
+`test_template_declares_no_unknown_placeholder` (`tests/test_emit.py`) — a
+placeholder-shaped token the template introduces without a matching `fills`
+entry in `emit.py` would otherwise pass through into the shipped report
+silently, since `re.sub`'s pattern is built from `fills`' own keys; this
+catches it at the template-authoring end instead. Required to fail against a
+template carrying a stray `__BOGUS_PLACEHOLDER__` before being trusted.
 
 **It is a versioned contract, since `PLAN.md` T3.** A top-level
 `schemaVersion` (`emit.SCHEMA_VERSION`, currently `1`) is separate from

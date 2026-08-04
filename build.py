@@ -81,6 +81,18 @@ def _required_packages() -> tuple[str, ...]:
     return (PACKAGE, "webencodings", "six", *names)
 
 
+# emit.py reads this at runtime via importlib.resources, not a path relative
+# to __file__ -- the latter would work in the checkout and in site-packages
+# and fail only inside this archive, where the package lives in a zip and
+# there's no filesystem path to open(). shutil.copytree in main() below
+# already carries the file into the staging dir with everything else under
+# website_palette_extractor/, so this is belt-and-suspenders the same way
+# the six.py story below is: the archive *could* lose a non-.py file to some
+# future staging change without any of the dependency-vendoring checks
+# noticing, since none of them look inside PACKAGE itself.
+_REQUIRED_DATA_FILES = (f"{PACKAGE}/report_template.html",)
+
+
 def _verify() -> None:
     """Structural check, not a subprocess smoke test.
 
@@ -103,6 +115,7 @@ def _verify() -> None:
         # test, so it has to accept both shapes.
         if not any(n == f"{pkg}.py" or n.startswith(f"{pkg}/") for n in names)
     ]
+    missing += [f for f in _REQUIRED_DATA_FILES if f not in names]
     if missing:
         raise RuntimeError(
             f"{OUTPUT.name} is missing vendored dependency/dependencies: "

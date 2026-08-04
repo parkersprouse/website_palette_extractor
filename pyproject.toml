@@ -131,7 +131,10 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# The report template is one long HTML string; wrapping it would corrupt output.
+# No longer the report template -- that moved to report_template.html, which
+# ruff doesn't lint anyway. What's left over 88 columns is two doc comments
+# whose length comes from `website_palette_extractor.__version__`'s own name;
+# not worth wrapping mid-identifier.
 "website_palette_extractor/emit.py" = ["E501"]
 # Tests assert on long literal color values and selectors.
 "tests/*.py" = ["E501"]

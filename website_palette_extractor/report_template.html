@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__ · palette</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+__UI_THEMES__
+  body {
+    margin: 0; padding: 2rem 1.5rem 5rem;
+    background: var(--ui-ground); color: var(--ui-body);
+    font-family: "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
+    font-size: 15px; line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1060px; margin: 0 auto; }
+  a { color: var(--ui-strong); }
+  code, .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+
+  header { border-bottom: 1px solid var(--ui-line); padding-bottom: 1.4rem;
+           margin-bottom: 2rem; }
+  h1 { margin: 0 0 .35rem; font-size: clamp(1.7rem, 5vw, 2.9rem);
+       font-weight: 700; letter-spacing: -.03em; color: var(--ui-strong); }
+  h1 .dot { color: var(--ui-accent); }
+  .sub { margin: 0; max-width: 68ch; color: var(--ui-body); }
+
+  .stats { display: flex; flex-wrap: wrap; gap: 1.4rem; margin-top: 1rem;
+           font-size: .8rem; color: var(--ui-muted); }
+  .stats b { color: var(--ui-strong); font-weight: 700; }
+
+  .controls { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center;
+              margin-bottom: 2rem; }
+  .controls label { font-size: .8rem; color: var(--ui-muted); margin-right: .2rem; }
+  .seg { display: inline-flex; border: 1px solid var(--ui-line); }
+  .seg button {
+    appearance: none; background: none; border: 0; cursor: pointer;
+    font: inherit; font-size: .78rem; padding: .34rem .7rem;
+    color: var(--ui-muted); border-right: 1px solid var(--ui-line);
+  }
+  .seg button:last-child { border-right: 0; }
+  .seg button[aria-pressed="true"] { background: var(--ui-strong);
+                                     color: var(--ui-ground); font-weight: 700; }
+  .seg button:focus-visible { outline: 2px solid var(--ui-accent);
+                              outline-offset: -2px; }
+  .seg.cap button { text-transform: capitalize; }
+  [hidden] { display: none !important; }
+
+  section { margin-bottom: 2.6rem; }
+  h2 { font-size: .72rem; font-weight: 700; letter-spacing: .14em;
+       text-transform: uppercase; color: var(--ui-muted); margin: 0 0 .2rem; }
+  .blurb { margin: 0 0 1rem; font-size: .86rem; color: var(--ui-muted);
+           max-width: 62ch; }
+
+  h3.status-heading { font-size: .66rem; font-weight: 700; letter-spacing: .1em;
+       text-transform: uppercase; color: var(--ui-muted); margin: 1.2rem 0 .15rem; }
+  h3.status-heading:first-of-type { margin-top: .3rem; }
+  .status-blurb { margin: 0 0 .6rem; font-size: .78rem; color: var(--ui-muted);
+                  max-width: 60ch; }
+
+  .grid { display: grid; gap: 10px;
+          grid-template-columns: repeat(auto-fill, minmax(198px, 1fr)); }
+
+  .sw { appearance: none; border: 1px solid var(--ui-line); background: none;
+        padding: 0; text-align: left; font: inherit; color: inherit;
+        cursor: pointer; display: flex; flex-direction: column; position: relative; }
+  .sw:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
+  .sw:hover { border-color: var(--ui-strong); }
+
+  .chip { height: 80px; border-bottom: 1px solid var(--ui-line);
+          position: relative; }
+  .chip.alpha {
+    background-image:
+      linear-gradient(45deg, var(--ui-checker) 25%, transparent 25%,
+                      transparent 75%, var(--ui-checker) 75%),
+      linear-gradient(45deg, var(--ui-checker) 25%, transparent 25%,
+                      transparent 75%, var(--ui-checker) 75%);
+    background-size: 12px 12px; background-position: 0 0, 6px 6px;
+  }
+  .chip .fill { position: absolute; inset: 0; }
+  .tag { position: absolute; top: .45rem; right: .45rem; font-size: .58rem;
+         font-weight: 700; letter-spacing: .09em; text-transform: uppercase;
+         padding: .16rem .38rem; background: var(--ui-ground);
+         color: var(--ui-muted); border: 1px solid var(--ui-line); }
+  .tag.inert { color: var(--ui-accent); border-color: var(--ui-accent); }
+
+  .meta { padding: .55rem .65rem .65rem; }
+  .name { font-weight: 700; color: var(--ui-strong); letter-spacing: -.01em;
+          word-break: break-word; }
+  .val { font-size: .78rem; color: var(--ui-muted); text-transform: lowercase;
+         word-break: break-all; margin-top: .1rem; }
+  .role { font-size: .74rem; color: var(--ui-muted); margin-top: .3rem; }
+  .cr { font-size: .7rem; color: var(--ui-muted); margin-top: .25rem; }
+  .cr.warn { color: var(--ui-accent); }
+
+  details.detail { margin-top: 1.4rem; border: 1px solid var(--ui-line); }
+  details.detail summary { cursor: pointer; padding: .6rem .8rem;
+    font-size: .78rem; letter-spacing: .1em; text-transform: uppercase;
+    font-weight: 700; color: var(--ui-muted); }
+  details.detail summary:focus-visible { outline: 2px solid var(--ui-accent);
+                                         outline-offset: -2px; }
+  .detail-body { padding: 0 .8rem .8rem; font-size: .8rem; }
+  table { width: 100%; border-collapse: collapse; font-size: .78rem; }
+  th, td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid
+           var(--ui-line); vertical-align: top; }
+  th { color: var(--ui-muted); font-weight: 700; }
+
+  .warn-box { border: 1px solid var(--ui-accent); padding: .8rem 1rem;
+              margin-bottom: 1.6rem; font-size: .84rem; }
+  .warn-box h3 { margin: 0 0 .4rem; font-size: .72rem; letter-spacing: .1em;
+                 text-transform: uppercase; color: var(--ui-accent); }
+  .warn-box ul { margin: 0; padding-left: 1.1rem; color: var(--ui-muted); }
+
+  /* T24: always-present, unlike .warn-box -- explains the category even on
+     a site that triggers none of it, the same way STATUS_BLURBS explains
+     every status regardless of which ones a given palette has. Neutral
+     border rather than --ui-accent: this is a standing limit of the method,
+     not a site-specific problem to flag. */
+  .caveat-box { border: 1px solid var(--ui-line); padding: .8rem 1rem;
+                margin-bottom: 1.6rem; font-size: .84rem; color: var(--ui-muted); }
+  .caveat-box h3 { margin: 0 0 .4rem; font-size: .72rem; letter-spacing: .1em;
+                   text-transform: uppercase; color: var(--ui-strong); }
+  .caveat-box p { margin: 0 0 .5rem; max-width: 64ch; }
+  .caveat-box ul { margin: 0; padding-left: 1.1rem; }
+
+  .pairs { display: grid; gap: 8px;
+           grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
+  .pair { border: 1px solid var(--ui-line); padding: .7rem .8rem; }
+  .pair .demo { font-size: 1.02rem; font-weight: 600; }
+  .pair .lab { font-size: .68rem; margin-top: .35rem; opacity: .75; }
+
+  footer { margin-top: 2.6rem; padding-top: 1.2rem;
+           border-top: 1px solid var(--ui-line); font-size: .78rem;
+           color: var(--ui-muted); }
+
+  #toast { position: fixed; left: 50%; bottom: 1.4rem;
+    transform: translate(-50%, 160%); background: var(--ui-toast-bg);
+    color: var(--ui-toast-fg); font-weight: 700; font-size: .84rem;
+    padding: .5rem 1rem; transition: transform .18s ease-out; z-index: 50; }
+  #toast.show { transform: translate(-50%, 0); }
+  @media (prefers-reduced-motion: reduce) {
+    #toast { transition: none; }
+  }
+  @media (max-width: 480px) { body { padding: 1.25rem 1rem 4rem; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>__TITLE_HTML__<span class="dot">.</span></h1>
+  <p class="sub">__SUBTITLE__</p>
+  <div class="stats" id="stats"></div>
+</header>
+
+<div id="warnings"></div>
+
+<div class="controls">
+  <label id="theme-label" hidden>Theme</label>
+  <div class="seg cap" role="group" aria-labelledby="theme-label" id="theme"
+       hidden></div>
+  <label id="fmt-label">Copy as</label>
+  <div class="seg" role="group" aria-labelledby="fmt-label" id="fmt"></div>
+  <label id="show-label" style="margin-left:auto">Show</label>
+  <div class="seg" role="group" aria-labelledby="show-label" id="filter"></div>
+</div>
+
+<div id="groups"></div>
+
+<section id="pairs-section">
+  <h2>Contrast</h2>
+  <p class="blurb">Every extracted color against the ground, at body size.
+     Ratios below 4.5:1 are marked — that is the WCAG AA floor for normal text.</p>
+  <div class="pairs" id="pairs"></div>
+</section>
+
+<details class="detail">
+  <summary>Where each color came from</summary>
+  <div class="detail-body">
+    <table id="prov"><thead><tr>
+      <th>Token</th><th>Value</th><th>Score</th><th>Uses</th>
+      <th>Seen in</th>
+    </tr></thead><tbody></tbody></table>
+  </div>
+</details>
+
+<details class="detail">
+  <summary>Extraction report</summary>
+  <div class="detail-body" id="report"></div>
+</details>
+
+<div id="caveats"></div>
+
+<footer id="footer"></footer>
+</div>
+
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script type="application/json" id="palette-data">__DATA__</script>
+<script>
+(function () {
+  "use strict";
+  var doc = JSON.parse(document.getElementById("palette-data").textContent);
+
+  var GROUP_TITLES = __GROUP_TITLES__;
+  var GROUP_BLURBS = __GROUP_BLURBS__;
+  var GROUP_ORDER = ["ground", "surface", "ink", "line", "neutral", "chroma"];
+  var STATUS_TITLES = __STATUS_TITLES__;
+  var STATUS_BLURBS = __STATUS_BLURBS__;
+  var STATUS_ORDER = ["live", "saved", "inert", "unmatched"];
+
+  var fmt = "hex";
+  var filter = "live";
+
+  /* Always at least one entry, so everything below has one code path whether
+     or not the site shipped a second theme. Each carries its own ground, and
+     every contrast figure in it was measured against that ground — which is
+     why switching themes redraws rather than recolours. */
+  var THEMES = doc.themes;
+  var themeIx = 0;
+
+  /* A report about two themes should open in the one the reader is set up
+     for, exactly as the site itself would. */
+  if (THEMES.length > 1 && window.matchMedia) {
+    var want = window.matchMedia("(prefers-color-scheme: dark)").matches
+      ? "dark" : "light";
+    for (var i = 0; i < THEMES.length; i++) {
+      if (THEMES[i].appearance === want) { themeIx = i; break; }
+    }
+  }
+
+  function theme() { return THEMES[themeIx]; }
+
+  function applyTheme() {
+    /* Swaps the report's own reading colors. The swatches are redrawn by
+       render(), since their values and ratios differ per theme. */
+    document.documentElement.setAttribute("data-pk-theme", theme().id);
+  }
+
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+
+  function valueFor(c) {
+    if (fmt === "declared") {
+      return c.source ? c.source.declaredAs : c.hex;
+    }
+    return c.css[fmt] || c.hex;
+  }
+
+  function visible() {
+    return theme().colors.filter(function (c) {
+      return filter === "all" ? true : c.status === "live";
+    });
+  }
+
+  /* ---------- stats ---------- */
+  var stats = document.getElementById("stats");
+  function stat(label, value) {
+    var s = el("span");
+    s.appendChild(el("b", null, String(value)));
+    s.appendChild(document.createTextNode(" " + label));
+    stats.appendChild(s);
+  }
+  function renderStats() {
+    stats.textContent = "";
+    var t = theme();
+    stat("tokens", t.colors.length);
+    stat("declarations scanned", t.stats.declarationsScanned);
+    stat("stylesheets", t.stats.stylesheets);
+    stat("distinct colors before merge", t.stats.distinctColors);
+  }
+
+  /* ---------- warnings ---------- */
+  if (doc.warnings && doc.warnings.length) {
+    var box = el("div", "warn-box");
+    box.appendChild(el("h3", null, "Read this before trusting the palette"));
+    var ul = el("ul");
+    doc.warnings.forEach(function (w) { ul.appendChild(el("li", null, w)); });
+    box.appendChild(ul);
+    document.getElementById("warnings").appendChild(box);
+  }
+
+  /* ---------- controls ---------- */
+  if (THEMES.length > 1) {
+    var themeHost = document.getElementById("theme");
+    /* Label by appearance, which is what a reader recognises. When both
+       themes land on the same side of the light/dark line the appearance is
+       no longer a distinction, so fall back to the rule that defines each —
+       two buttons both reading "dark" would be worse than no toggle. */
+    var sameLook = THEMES[0].appearance === THEMES[1].appearance;
+    THEMES.forEach(function (t, i) {
+      var b = el("button", null, sameLook ? t.id : t.appearance);
+      b.setAttribute("aria-pressed", String(i === themeIx));
+      b.addEventListener("click", function () {
+        themeIx = i;
+        themeHost.querySelectorAll("button").forEach(function (x, j) {
+          x.setAttribute("aria-pressed", String(j === themeIx));
+        });
+        applyTheme();
+        render();
+      });
+      themeHost.appendChild(b);
+    });
+    themeHost.hidden = false;
+    document.getElementById("theme-label").hidden = false;
+  }
+
+  var FORMATS = [["hex", "hex"], ["rgb", "rgb"], ["hsl", "hsl"],
+                 ["oklch", "oklch"], ["declared", "as declared"]];
+  var fmtHost = document.getElementById("fmt");
+  FORMATS.forEach(function (f) {
+    var b = el("button", null, f[1]);
+    b.setAttribute("aria-pressed", String(f[0] === fmt));
+    b.addEventListener("click", function () {
+      fmt = f[0];
+      fmtHost.querySelectorAll("button").forEach(function (x, i) {
+        x.setAttribute("aria-pressed", String(FORMATS[i][0] === fmt));
+      });
+      render();
+    });
+    fmtHost.appendChild(b);
+  });
+
+  var FILTERS = [["live", "rendered only"], ["all", "everything found"]];
+  var filtHost = document.getElementById("filter");
+  FILTERS.forEach(function (f) {
+    var b = el("button", null, f[1]);
+    b.setAttribute("aria-pressed", String(f[0] === filter));
+    b.addEventListener("click", function () {
+      filter = f[0];
+      filtHost.querySelectorAll("button").forEach(function (x, i) {
+        x.setAttribute("aria-pressed", String(FILTERS[i][0] === filter));
+      });
+      render();
+    });
+    filtHost.appendChild(b);
+  });
+
+  /* ---------- swatches ---------- */
+  function swatch(c) {
+    var btn = el("button", "sw");
+    btn.setAttribute("aria-label", "Copy " + valueFor(c) + " — " + c.name);
+    btn.title = c.usedIn.join(", ");
+
+    var chip = el("div", "chip" + (c.source ? " alpha" : ""));
+    var fill = el("div", "fill");
+    fill.style.background = c.source ? c.source.declaredAs : c.hex;
+    chip.appendChild(fill);
+
+    if (c.status !== "live") {
+      var tag = el("span", "tag " + c.status, c.status);
+      chip.appendChild(tag);
+    }
+
+    var meta = el("div", "meta");
+    meta.appendChild(el("div", "name", c.name));
+    meta.appendChild(el("div", "val mono", valueFor(c)));
+    meta.appendChild(el("div", "role", c.role + " · " + c.occurrences +
+      (c.occurrences === 1 ? " use" : " uses")));
+
+    var cr = el("div", "cr mono" + (c.contrastOnGround < 4.5 ? " warn" : ""),
+      c.contrastOnGround.toFixed(2) + ":1 · " + c.wcagOnGround);
+    meta.appendChild(cr);
+
+    btn.appendChild(chip);
+    btn.appendChild(meta);
+    btn.addEventListener("click", function () { copy(valueFor(c)); });
+    return btn;
+  }
+
+  function render() {
+    var host = document.getElementById("groups");
+    host.textContent = "";
+    var cols = visible();
+
+    var byGroup = {};
+    cols.forEach(function (c) {
+      (byGroup[c.group] = byGroup[c.group] || []).push(c);
+    });
+
+    GROUP_ORDER.forEach(function (g) {
+      var list = byGroup[g];
+      if (!list || !list.length) return;
+      var sec = el("section");
+      sec.appendChild(el("h2", null, GROUP_TITLES[g] || g));
+      sec.appendChild(el("p", "blurb", GROUP_BLURBS[g] || ""));
+
+      /* T20: sub-group by status so a reader can see *why* a swatch isn't
+         live without leaving the section — a per-status heading and one-line
+         description, right beside the colors it explains. Skipped when the
+         section is purely live (the default "rendered only" view, and any
+         section with nothing else to explain), so the common case renders
+         exactly as before. */
+      var byStatus = {};
+      list.forEach(function (c) {
+        (byStatus[c.status] = byStatus[c.status] || []).push(c);
+      });
+      var statusesPresent = Object.keys(byStatus);
+      var showStatusHeadings =
+        statusesPresent.length > 1 || statusesPresent[0] !== "live";
+
+      STATUS_ORDER.forEach(function (s) {
+        var sub = byStatus[s];
+        if (!sub || !sub.length) return;
+        if (showStatusHeadings) {
+          sec.appendChild(el("h3", "status-heading", STATUS_TITLES[s] || s));
+          sec.appendChild(el("p", "status-blurb", STATUS_BLURBS[s] || ""));
+        }
+        var grid = el("div", "grid");
+        sub.forEach(function (c) { grid.appendChild(swatch(c)); });
+        sec.appendChild(grid);
+      });
+      host.appendChild(sec);
+    });
+
+    renderStats();
+    renderPairs(cols);
+    renderProv(cols);
+    renderReport();
+    renderFooter();
+    renderCaveats();
+  }
+
+  function renderPairs(cols) {
+    var host = document.getElementById("pairs");
+    host.textContent = "";
+    cols.forEach(function (c) {
+      var d = el("div", "pair");
+      /* The active theme's ground, not the document's — the ratio printed
+         beside each sample was measured against this exact background. */
+      d.style.background = theme().ground;
+      var demo = el("div", "demo", "Sample text");
+      demo.style.color = c.source ? c.source.declaredAs : c.hex;
+      var lab = el("div", "lab mono",
+        c.name + " · " + c.contrastOnGround.toFixed(2) + ":1 · " + c.wcagOnGround);
+      lab.style.color = c.source ? c.source.declaredAs : c.hex;
+      d.appendChild(demo);
+      d.appendChild(lab);
+      host.appendChild(d);
+    });
+  }
+
+  function renderProv(cols) {
+    var tb = document.querySelector("#prov tbody");
+    tb.textContent = "";
+    cols.forEach(function (c) {
+      var tr = el("tr");
+      tr.appendChild(el("td", "mono", c.name));
+      tr.appendChild(el("td", "mono", valueFor(c)));
+      tr.appendChild(el("td", "mono", String(c.score)));
+      tr.appendChild(el("td", "mono", String(c.occurrences)));
+      var ex = (c.examples || []).slice(0, 3).map(function (e) {
+        var s = e.selector + " { " + e.property + " }";
+        if (typeof e.matchCount === "number") {
+          s += " (" + e.matchCount + (e.matchCount === 1 ? " match" : " matches") + ")";
+        }
+        return s;
+      }).join("  ·  ");
+      tr.appendChild(el("td", "mono", ex));
+      tb.appendChild(tr);
+    });
+  }
+
+  /* ---------- report ---------- */
+  var rep = document.getElementById("report");
+
+  function renderReport() {
+    rep.textContent = "";
+    var t = theme();
+    var dl = el("table");
+    var tbody = el("tbody");
+    function row(k, v) {
+      var tr = el("tr");
+      tr.appendChild(el("th", null, k));
+      tr.appendChild(el("td", "mono", v));
+      tbody.appendChild(tr);
+    }
+    row("Source", doc.source || "(local files)");
+    if (THEMES.length > 1) {
+      row("Theme", t.id + " (" + t.appearance + ")" +
+          (t.scope ? " \u2014 from rules scoped to " + t.scope : " \u2014 " +
+           "from rules belonging to no theme"));
+    }
+    row("Ground", t.ground + "  (" + t.groundSource + ")");
+    row("Generated", doc.generated);
+    row("Custom properties", t.stats.customProperties + " declared, " +
+        t.stats.customPropertiesReferenced + " referenced");
+    if (doc.images) {
+      row("Images sampled", doc.images.imageCount + " (" +
+          doc.images.neutralSharePct + "% of pixels visually neutral)");
+    }
+    dl.appendChild(tbody);
+    rep.appendChild(dl);
+
+    if (t.stats.sources && t.stats.sources.length) {
+      rep.appendChild(el("p", null, "Stylesheets read:"));
+      var st = el("table");
+      var sh = el("thead");
+      var shr = el("tr");
+      ["Source", "Declarations", "Third party"].forEach(function (h) {
+        shr.appendChild(el("th", null, h));
+      });
+      sh.appendChild(shr);
+      st.appendChild(sh);
+      var stb = el("tbody");
+      t.stats.sources.forEach(function (s) {
+        var tr = el("tr");
+        tr.appendChild(el("td", "mono", s.source));
+        tr.appendChild(el("td", "mono", String(s.declarations)));
+        tr.appendChild(el("td", "mono", s.thirdParty ? "yes" : "no"));
+        stb.appendChild(tr);
+      });
+      st.appendChild(stb);
+      rep.appendChild(st);
+    }
+  }
+
+  /* ---------- footer ---------- */
+  function renderFooter() {
+    var f = document.getElementById("footer");
+    f.textContent =
+      "Ground " + theme().ground + ". Values are read from the site's " +
+      "stylesheets, not sampled from pixels. Non-live statuses are labelled " +
+      "and described next to the colors they apply to, above. " +
+      (THEMES.length > 1
+        ? "The site ships two themes; each was extracted separately, so every " +
+          "ratio above is measured against that theme's own ground. "
+        : "") +
+      "Colors themselves are not copyrightable, but fonts and images on the " +
+      "source page are licensed separately.";
+  }
+
+  /* ---------- caveats ---------- */
+  /* T24: always present, unlike #warnings -- explains the category even when
+     this theme has no example of it, then names the entries it does have.
+     Per-theme (dynamicOnly is a per-color flag), so it lives in render()
+     rather than the one-time #warnings block above. */
+  function renderCaveats() {
+    var host = document.getElementById("caveats");
+    host.textContent = "";
+    var box = el("div", "caveat-box");
+    box.appendChild(el("h3", null, "What “live” can't promise"));
+    box.appendChild(el("p", null,
+      "A color is marked live once this tool can show its selector on the " +
+      "page it captured. A selector written only for an interaction state " +
+      "— :hover, :focus, and the like — has no resting state to " +
+      "capture: the state doesn't exist until someone is actually " +
+      "interacting, so no capture, however complete, can confirm or rule " +
+      "it out. Those colors stay live — unconfirmed is not the same " +
+      "as absent — but nothing here has verified they render."));
+    var dyn = theme().colors.filter(function (c) { return c.dynamicOnly; });
+    if (dyn.length) {
+      var p2 = el("p", null, dyn.length === 1
+        ? "One color in this theme rests entirely on that kind of rule:"
+        : dyn.length + " colors in this theme rest entirely on that kind " +
+          "of rule:");
+      box.appendChild(p2);
+      var ul = el("ul");
+      dyn.forEach(function (c) {
+        ul.appendChild(el("li", null, c.name + " (" + c.hex + ")"));
+      });
+      box.appendChild(ul);
+    }
+    host.appendChild(box);
+  }
+
+  /* ---------- copy ---------- */
+  var toast = document.getElementById("toast");
+  var timer;
+  function copy(text) {
+    var done = function (ok) {
+      toast.textContent = ok ? "Copied " + text : text;
+      toast.classList.add("show");
+      clearTimeout(timer);
+      timer = setTimeout(function () { toast.classList.remove("show"); }, 1400);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { done(true); },
+                                               function () { done(false); });
+    } else {
+      var ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "absolute";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      var ok = false;
+      try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+      document.body.removeChild(ta);
+      done(ok);
+    }
+  }
+
+  applyTheme();
+  render();
+})();
+</script>
+</body>
+</html>

@@ -23,8 +23,10 @@ execute either. The cheap check after touching the name anywhere is
 grep -rin palettekit $(git ls-files | grep -v '\.pyz$')
 ```
 
-which should return **only the four lines that document the rename itself** —
-two here, two at the top of `PLAN.md`. Anything else is a half-rename.
+which should return **only the five lines that document the rename itself** —
+two here, two at the top of `PLAN.md`, and one in `build.py` (`PACKAGE`'s own
+comment, which also explains why that name is centralised there rather than
+hardcoded). Anything else is a half-rename.
 
 **Work directly on `main`, set by the owner 2026-07-26.** No feature branches
 for task completion — commit to `main` as work lands.

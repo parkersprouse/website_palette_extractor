@@ -1,4 +1,4 @@
-# palettekit
+# Website Palette Extractor
 
 Extract the color palette a website actually uses, and render it as a
 self-contained interactive page.
@@ -15,34 +15,34 @@ only required if you want to use `--images`.
 
 If using `uv` (_recommended_):
 ```bash
-uv run -m palettekit site.har --images -o "palettes/site"      # from a HAR export (best)
-uv run -m palettekit https://example.com --images -o "palettes/site"
-uv run -m palettekit ./saved-page/ --images -o "palettes/site" # local html/css
+uv run -m website_palette_extractor site.har --images -o "palettes/site"      # from a HAR export (best)
+uv run -m website_palette_extractor https://example.com --images -o "palettes/site"
+uv run -m website_palette_extractor ./saved-page/ --images -o "palettes/site" # local html/css
 open palettes/site/index.html
 ```
 
 If using the system's available Python binary:
 ```bash
-python3 -m palettekit site.har --images -o "palettes/site"      # from a HAR export (best)
-python3 -m palettekit https://example.com --images -o "palettes/site"
-python3 -m palettekit ./saved-page/ --images -o "palettes/site" # local html/css
+python3 -m website_palette_extractor site.har --images -o "palettes/site"      # from a HAR export (best)
+python3 -m website_palette_extractor https://example.com --images -o "palettes/site"
+python3 -m website_palette_extractor ./saved-page/ --images -o "palettes/site" # local html/css
 open palettes/site/index.html
 ```
 
-There is also `palettekit.pyz`, the same program as one file:
+There is also `website_palette_extractor.pyz`, the same program as one file:
 
 ```bash
-uv run palettekit.pyz site.har --images -o "palettes/site"
+uv run website_palette_extractor.pyz site.har --images -o "palettes/site"
 # or
-python3 palettekit.pyz site.har --images -o "palettes/site"
+python3 website_palette_extractor.pyz site.har --images -o "palettes/site"
 ```
 
-Or install it, which puts a `palettekit` command on your path:
+Or install it, which puts a `website-palette-extractor` command on your path:
 
 ```bash
 pip install .              # core: pulls in tinycss2 + cssselect2 + html5lib
 pip install ".[images]"    # adds pillow + numpy for --images
-palettekit site.har -o "palettes/site"
+website-palette-extractor site.har -o "palettes/site"
 ```
 
 ## Input: prefer a HAR
@@ -75,7 +75,7 @@ The page lets you switch the copy format between hex, rgb, hsl, oklch and
 as-declared, toggle unrendered colors, and see the selector each color came
 from. Click any swatch to copy it.
 
-**The JSON is a versioned, public API** – `palettekit.emit.to_document()`
+**The JSON is a versioned, public API** – `website_palette_extractor.emit.to_document()`
 returns the same dict the file holds, and it carries a top-level
 `schemaVersion` (currently `1`). That is a separate number from the package
 version in `pyproject.toml`: the package version tracks the tool, the schema
@@ -234,14 +234,14 @@ component framework can contribute hundreds of colors that have nothing to do
 with the design.
 
 ```bash
-uv run -m palettekit site.har --list-sources
+uv run -m website_palette_extractor site.har --list-sources
 ```
 
 lists every stylesheet in cascade order with its color count, so you can see
 the split, then:
 
 ```bash
-uv run -m palettekit site.har --exclude bootstrap --exclude cdn.example.com
+uv run -m website_palette_extractor site.har --exclude bootstrap --exclude cdn.example.com
 ```
 
 Third-party stylesheets are down-weighted by default rather than dropped;
@@ -326,7 +326,7 @@ anything yourself.
 
 It was generated using the following command:
 ```bash
-uv run -m palettekit parkersprouse.me.har --images -o example
+uv run -m website_palette_extractor parkersprouse.me.har --images -o example
 ```
 
 I've included the `.har` in case you want to run it yourself.
@@ -347,7 +347,7 @@ the same [`tests/`](./tests/) package
 [`tests/test_emit.py`](./tests/test_emit.py), [`tests/test_sources.py`](./tests/test_sources.py),
 [`tests/test_images.py`](./tests/test_images.py), [`tests/test_main.py`](./tests/test_main.py),
 [`tests/test_packaging.py`](./tests/test_packaging.py) – one per module in
-[`palettekit/`](./palettekit/), plus one for the packaging metadata).
+[`website_palette_extractor/`](./website_palette_extractor/), plus one for the packaging metadata).
 
 223 tests covering the color maths, cascade ordering, theme scoping, ground
 detection, the merge rules, the status classifications, the CLI's argument

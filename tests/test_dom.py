@@ -1,7 +1,7 @@
 """The html.parser -> ElementTree shim and cssselect2 page-element matching."""
 import unittest
 
-from palettekit.dom import (
+from website_palette_extractor.dom import (
     element_signature,
     elements_matching,
     full_tree,

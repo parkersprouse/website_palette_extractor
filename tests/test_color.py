@@ -1,8 +1,8 @@
 """Color parsing, color-space maths, color-mix(), and light-dark()."""
 import unittest
 
-from palettekit import extract, sources
-from palettekit.color import (
+from website_palette_extractor import extract, sources
+from website_palette_extractor.color import (
     contrast_ratio,
     delta_ok,
     find_colors,
@@ -313,7 +313,7 @@ class TestColorMix(unittest.TestCase):
 
     def test_lab_and_xyz_round_trip(self):
         """The inverse matrices are transcribed, so assert they are inverses."""
-        from palettekit.color import (
+        from website_palette_extractor.color import (
             Color,
             color_to_lab,
             lab_to_color,

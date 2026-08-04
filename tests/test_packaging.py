@@ -3,7 +3,7 @@ import tomllib
 import unittest
 from pathlib import Path
 
-from palettekit import PYTHON_FLOOR
+from website_palette_extractor import PYTHON_FLOOR
 
 
 class TestPackaging(unittest.TestCase):
@@ -11,7 +11,7 @@ class TestPackaging(unittest.TestCase):
         """PLAN.md T1/T2: one number, not two copies that can drift.
 
         __main__.main()'s version guard and build.py both read
-        palettekit.PYTHON_FLOOR; this is what keeps that constant honest
+        website_palette_extractor.PYTHON_FLOOR; this is what keeps that constant honest
         against pyproject.toml's requires-python instead of trusting
         whoever last bumped one of them to also bump the other.
 

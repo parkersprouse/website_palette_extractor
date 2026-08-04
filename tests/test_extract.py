@@ -2,11 +2,11 @@
 import re
 import unittest
 
-from palettekit import emit, extract, sources
-from palettekit.color import contrast_ratio, find_colors, parse_color
-from palettekit.cssparse import parse_stylesheet, resolve_vars
-from palettekit.dom import elements_matching, full_tree
-from palettekit.extract import layer_order
+from website_palette_extractor import emit, extract, sources
+from website_palette_extractor.color import contrast_ratio, find_colors, parse_color
+from website_palette_extractor.cssparse import parse_stylesheet, resolve_vars
+from website_palette_extractor.dom import elements_matching, full_tree
+from website_palette_extractor.extract import layer_order
 
 from .helpers import (
     CLASS_THEMES,

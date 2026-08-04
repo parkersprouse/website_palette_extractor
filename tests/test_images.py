@@ -11,7 +11,7 @@ passes on a core install.
 import io
 import unittest
 
-from palettekit import images
+from website_palette_extractor import images
 
 HAVE_IMAGES, _WHY = images.available()
 

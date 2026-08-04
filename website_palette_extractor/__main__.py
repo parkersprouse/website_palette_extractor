@@ -1,6 +1,6 @@
-"""palettekit — extract a site's color palette and build a browsable page.
+"""Website Palette Extractor — read a site's color palette, build a browsable page.
 
-    python3 -m palettekit <target> [-o outdir] [options]
+    python3 -m website_palette_extractor <target> [-o outdir] [options]
 
 <target> is a .har export, an http(s) URL, or a local .html/.css file or
 directory. A HAR is the most reliable input: it is what the browser actually
@@ -39,16 +39,21 @@ def requested_formats(spec: str) -> set[str]:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="palettekit",
+        # The installed console script, which is hyphenated; the underscored
+        # form in the examples below is the *import package*, which `-m` needs.
+        prog="website-palette-extractor",
         description="Extract a color palette from a website's styles and "
                     "render it as an interactive page.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "examples:\n"
-            "  python3 -m palettekit site.har -o palette\n"
-            "  python3 -m palettekit https://example.com -o palette\n"
-            "  python3 -m palettekit site.har --images --all\n"
-            "  python3 -m palettekit ./saved-page/ -o out --prefix brand\n"
+            "  python3 -m website_palette_extractor site.har -o palette\n"
+            "  python3 -m website_palette_extractor https://example.com -o palette\n"
+            "  python3 -m website_palette_extractor site.har --images --all\n"
+            "  python3 -m website_palette_extractor ./page/ -o out --prefix brand\n"
+            "\n"
+            "installed, the same thing is spelled:\n"
+            "  website-palette-extractor site.har -o palette\n"
         ),
     )
     p.add_argument("target", help=".har file, URL, or local html/css path")
@@ -105,7 +110,8 @@ def main(argv: list[str] | None = None) -> int:
     if sys.version_info < PYTHON_FLOOR:
         have = ".".join(map(str, sys.version_info[:3]))
         need = ".".join(map(str, PYTHON_FLOOR))
-        print(f"error: palettekit requires Python {need}+ (running {have}).",
+        print(f"error: website-palette-extractor requires Python {need}+ "
+              f"(running {have}).",
               file=sys.stderr)
         return 1
 

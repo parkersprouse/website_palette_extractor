@@ -17,7 +17,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 
-from palettekit import __main__ as cli
+from website_palette_extractor import __main__ as cli
 
 from .helpers import FIXTURE, write_fixture
 

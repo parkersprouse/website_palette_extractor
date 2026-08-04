@@ -3,8 +3,8 @@ import unittest
 
 import tinycss2
 
-from palettekit.color import find_colors
-from palettekit.cssparse import (
+from website_palette_extractor.color import find_colors
+from website_palette_extractor.cssparse import (
     is_inert_shadow,
     parse_stylesheet,
     resolve_vars,

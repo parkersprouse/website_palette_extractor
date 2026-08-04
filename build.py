@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build palettekit.pyz — the vendored, single-file zipapp.
+"""Build website_palette_extractor.pyz — the vendored, single-file zipapp.
 
 A zipapp carries no dependency metadata, so every runtime dependency —
 `tinycss2`, `cssselect2` and `html5lib`, plus the two transitive ones
@@ -10,7 +10,7 @@ tree that already has a top-level __main__.py, hence the shim.
 
     python3 build.py
 
-Rebuild whenever anything under palettekit/ changes — CLAUDE.md's
+Rebuild whenever anything under website_palette_extractor/ changes — CLAUDE.md's
 "Rebuild the zipapp before a work session is finished" — and verify
 with an interpreter that has none of the dependencies installed; every
 interpreter on a dev machine has them, which is exactly what let the
@@ -37,11 +37,20 @@ from pathlib import Path
 _UV = shutil.which("uv")
 
 ROOT = Path(__file__).parent.resolve()
-OUTPUT = ROOT / "palettekit.pyz"
+
+# The import package name, in one place. Everything else here that mentions the
+# project by name is derived from it, because the pieces that would break on a
+# half-rename break *silently*: `SHIM` is a string compiled only when the built
+# .pyz runs, so a stale import inside it passes `_verify`, passes any smoke test
+# on the build machine (the old package is still importable there), and fails
+# only on a clean interpreter — verbatim the T1 failure this file exists to
+# prevent. Renamed from `palettekit` on 2026-08-03.
+PACKAGE = "website_palette_extractor"
+OUTPUT = ROOT / f"{PACKAGE}.pyz"
 
 SHIM = (
     "import sys\n"
-    "from palettekit.__main__ import main\n"
+    f"from {PACKAGE}.__main__ import main\n"
     "sys.exit(main())\n"
 )
 
@@ -69,7 +78,7 @@ def _required_packages() -> tuple[str, ...]:
     dependency — which is the whole failure `_verify` exists to catch.
     """
     names = (_NAME_SPLIT.split(req, maxsplit=1)[0] for req in _dependencies())
-    return ("palettekit", "webencodings", "six", *names)
+    return (PACKAGE, "webencodings", "six", *names)
 
 
 def _verify() -> None:
@@ -96,15 +105,15 @@ def _verify() -> None:
     ]
     if missing:
         raise RuntimeError(
-            f"palettekit.pyz is missing vendored dependency/dependencies: "
+            f"{OUTPUT.name} is missing vendored dependency/dependencies: "
             f"{missing}"
         )
 
 
 def main() -> int:
-    with tempfile.TemporaryDirectory(prefix="palettekit-build-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="wpe-build-") as tmp:
         stage = Path(tmp)
-        shutil.copytree(ROOT / "palettekit", stage / "palettekit")
+        shutil.copytree(ROOT / PACKAGE, stage / PACKAGE)
         (stage / "__main__.py").write_text(SHIM, encoding="utf-8")
 
         install = (

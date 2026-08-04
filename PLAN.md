@@ -2,6 +2,22 @@
 
 Status: **all four phases landed 2026-07-26.** Written 2026-07-26.
 
+> **Naming note, 2026-08-03.** The project was called **`palettekit`** for the
+> whole period this document records. It was renamed to **Website Palette
+> Extractor** (`website_palette_extractor` as the import package,
+> `website-palette-extractor` as the console script and distribution) on
+> 2026-08-03, by owner decision, and **every mention below has been rewritten
+> to the new name** — including inside entries describing work that happened
+> under the old one.
+>
+> That is deliberate and it is the one kind of edit this append-only document
+> accepts: a name is a fact about what a thing is *called*, not a claim about
+> what happened, so updating it changes no finding, no measurement and no
+> conclusion. Nothing else in the historical entries was touched. If you are
+> reading an old commit message, an old `.pyz`, or anything outside this
+> repository, expect to see `palettekit` there instead. See `CLAUDE.md`'s
+> naming table at the top for which of the three forms belongs where.
+
 **The migration is done; the work it left behind is not.** See
 [Outstanding work](#outstanding-work) below — ~~fourteen tasks, three of them
 decisions the owner has since settled~~ ~~nineteen as of 2026-08-02~~
@@ -472,7 +488,7 @@ stated.**
 
 > **Outcome.** 93 tests (78 unchanged, none of their assertions edited, plus
 > `TestColorMix` of nine, `TestLightDark` of five, and one in `TestCss`), all
-> fifteen run against the stashed `palettekit/` and required to fail there.
+> fifteen run against the stashed `website_palette_extractor/` and required to fail there.
 > `ruff` clean, **reference fixture byte-identical** to a fresh run of the
 > previous commit, 3.10 identical to 3.14, module / console-script / zipapp
 > JSON identical. 895 `color-mix()` declarations and 70 `light-dark()` ones now
@@ -707,7 +723,7 @@ Decided by the owner 2026-07-26, ready to build:
 
 - [x] **T1** — rebuild the zipapp (vendored deps + a `sys.version_info` guard),
       and make rebuilding it part of finishing a session — **landed
-      2026-07-26**. `palettekit.PYTHON_FLOOR` guards `main()` before anything
+      2026-07-26**. `website_palette_extractor.PYTHON_FLOOR` guards `main()` before anything
       else; `python3 build.py` (T12) rebuilds and vendors; verified against an
       interpreter with neither dependency installed
 - [x] **T2** — raise the Python floor to 3.11 — **landed 2026-07-26**. All
@@ -900,7 +916,7 @@ Repo and process:
       entry below for the owner's reasoning
 - [x] **T12** — `Makefile` or `build.py` for the zipapp incantation —
       **landed 2026-07-26** as `build.py`
-- [x] **T13** — move `test_palettekit.py` into `tests/`, split by module —
+- [x] **T13** — move `test_website_palette_extractor.py` into `tests/`, split by module —
       **landed 2026-07-27**. See T13's own write-up below
 - [x] **T14** — fixture corpus of small committed HTML files per site
       archetype — **closed 2026-08-03, owner decision: satisfied by what's
@@ -1037,14 +1053,14 @@ decided; the work is described, not re-argued.
 >   (the two-theme site) and on `fleshandbonedesign.com.har --images` (the
 >   reference fixture: ground `#151515`, 20 tokens, one theme, no warnings —
 >   all unmoved), each diffed with `generated` dropped.
-> - **Fault 2 (crashes under an old interpreter)** — `palettekit.PYTHON_FLOOR =
+> - **Fault 2 (crashes under an old interpreter)** — `website_palette_extractor.PYTHON_FLOOR =
 >   (3, 11)` in `__init__.py` is the one place the floor lives; `main()`
 >   checks it before `build_parser()` runs, so a version guard fires at
 >   start-up rather than the failure surfacing four calls deep in
 >   `_align_names`. Confirmed both directions: `uv run --python 3.10
->   --no-project python palettekit.pyz ground.news.har …` now prints `error:
->   palettekit requires Python 3.11+ (running 3.10.20).` and exits 1 — no
->   `TypeError`; `uv run --python 3.11 --no-project python palettekit.pyz
+>   --no-project python website_palette_extractor.pyz ground.news.har …` now prints `error:
+>   website_palette_extractor requires Python 3.11+ (running 3.10.20).` and exits 1 — no
+>   `TypeError`; `uv run --python 3.11 --no-project python website_palette_extractor.pyz
 >   fleshandbonedesign.com.har …` (neither dependency installed) runs clean and
 >   reproduces the fixture anchors.
 > - **Fault 3 (falsified identity check)** — no longer falsified; see above.
@@ -1068,7 +1084,7 @@ decided; the work is described, not re-argued.
 > no `noqa` needed.
 >
 > **Diffed at the level this section named**: built artifact's JSON against
-> `python3 -m palettekit`, module vs. console-script vs. zipapp, on every
+> `python3 -m website_palette_extractor`, module vs. console-script vs. zipapp, on every
 > corpus input available locally. Not diffed at the byte level —
 > `zipapp.create_archive` embeds mtimes, so two builds of identical source are
 > never byte-identical, and that was never the claim; the claim is
@@ -1076,7 +1092,7 @@ decided; the work is described, not re-argued.
 
 **Decided: rebuild it, and make it process rather than a thing to remember.**
 
-The tracked `palettekit.pyz` is the **pre-phase-1 program** — no `dom.py`, no
+The tracked `website_palette_extractor.pyz` is the **pre-phase-1 program** — no `dom.py`, no
 `tinycss2`, `color.py` at 528 lines against today's 1004. It has three faults
 and they were measured, not inferred:
 
@@ -1121,7 +1137,7 @@ and they were measured, not inferred:
 > rebuild, so T1 is written to rebuild; if the churn becomes annoying, this is
 > the escape hatch and it does not need re-litigating from scratch.
 
-**Diff level:** the built artifact's JSON against `python3 -m palettekit`, on
+**Diff level:** the built artifact's JSON against `python3 -m website_palette_extractor`, on
 every corpus input. Identity is the whole acceptance criterion.
 
 ### T2 — Raise the Python floor to 3.11
@@ -1149,7 +1165,7 @@ a smaller test matrix; it is not a free one.
 
 **Sub-decision left open: bump `__version__` from `1.0.0`.** Narrowing the
 supported interpreter range is the kind of change a version number exists to
-signal, and `palettekit/__init__.py` is the single source of truth
+signal, and `website_palette_extractor/__init__.py` is the single source of truth
 (`[tool.hatch.version]`). Pair it with T3's schema marker if both land
 together.
 
@@ -1190,7 +1206,7 @@ which is what the old floor's claim rested on.
 checking that turned up something worth stating plainly:
 
 **The "public" half is already done.** `emit.to_document` has no underscore, is
-the worked example in `palettekit/__init__.py`'s module docstring, is called by
+the worked example in `website_palette_extractor/__init__.py`'s module docstring, is called by
 `__main__`, and is asserted by roughly a dozen tests. `CLAUDE.md` already calls
 it "the public data contract". Nothing needs opening.
 
@@ -1208,7 +1224,7 @@ mirror `themes[0]` so pre-themes readers keep working.
   checkable.
 
   **Say in the same breath that it is not the package version.**
-  `palettekit/__init__.py` already carries `__version__ = "1.0.0"`, and a
+  `website_palette_extractor/__init__.py` already carries `__version__ = "1.0.0"`, and a
   consumer seeing both will ask which one governs the dict. They move on
   separate schedules: the package version tracks the tool, the schema version
   tracks this one document shape. Worth stating now, because T2's
@@ -1267,7 +1283,7 @@ would not ride inside one whose blast radius was being measured. That reason
 has expired.
 
 **Landed.** Fixed at the one call site that reads a name out of the var
-table (`resolve_vars`'s `one_pass`, `palettekit/cssparse.py`): a stored value
+table (`resolve_vars`'s `one_pass`, `website_palette_extractor/cssparse.py`): a stored value
 that is the literal keyword `initial` (trimmed, case-folded) is treated as
 absent, so the call falls through to the declared fallback exactly as a
 browser resolving a guaranteed-invalid custom property does. `initial` is
@@ -1350,7 +1366,7 @@ of this file: defer to a library already in the dependency set for anything
 it does correctly, codebase-wide, not only in the parser — see `CLAUDE.md`.
 
 Verified against a **frozen** `ui.shadcn.com` bundle (fetched once, same
-pickle fed to old and new code via `git stash push palettekit/color.py`, so
+pickle fed to old and new code via `git stash push website_palette_extractor/color.py`, so
 the diff cannot be site drift), at the per-declaration color list — the level
 this task specified before writing any code: **exactly six declarations
 move**, three per theme, all `.shimmer-color-blue-500\/60 { --shimmer-color }`
@@ -1428,7 +1444,7 @@ dependency installed.
 
 Two new tests, both in `TestCss`, both required to fail before being trusted:
 `test_an_at_rule_nested_in_a_style_rule_keeps_the_enclosing_selector` failed
-against HEAD (`git stash push -- palettekit/cssparse.py`), dropping the nested
+against HEAD (`git stash push -- website_palette_extractor/cssparse.py`), dropping the nested
 `blue` declaration exactly as described above.
 `test_a_nested_media_theme_is_still_found_as_a_scope` failed against the
 *first-draft* fix specifically — it passed the first test while still
@@ -1748,7 +1764,7 @@ counts above are exactly that prediction, one design-generation early.
 > on real output rather than an assumed one: `to_document()` on
 > `parkersprouse.me.har --images` and on a frozen `ground.news.har`, diffed
 > against a `git stash`-old run with `generated` dropped, both
-> byte-identical. `palettekit.pyz` has **not** been rebuilt — deferred until
+> byte-identical. `website_palette_extractor.pyz` has **not** been rebuilt — deferred until
 > there's a behavior change worth shipping in it, since a rebuild right now
 > would just re-package a no-op.
 >
@@ -1915,7 +1931,7 @@ counts above are exactly that prediction, one design-generation early.
 > no spurious warning, and a no-basis case proving last-wins survives
 > unchanged. Each of the two behaviour-changing tests was confirmed to
 > **fail against the pre-wiring implementation** (`git stash push --
-> palettekit/dom.py palettekit/extract.py`, tests kept); the two
+> website_palette_extractor/dom.py website_palette_extractor/extract.py`, tests kept); the two
 > regression/preservation tests pass unchanged before and after, which is
 > the point of them. 132 tests total (124 + 8), `ruff` clean.
 >
@@ -1928,7 +1944,7 @@ counts above are exactly that prediction, one design-generation early.
 > counts, and through them the ranking that names tokens."* Re-run at the
 > right level — full per-entry document diff (`name`, `occurrences`,
 > `score`, `role`, `status`), old vs new (`git checkout 1cd2005 --
-> palettekit/dom.py palettekit/extract.py`, run, restore, diff) — and the
+> website_palette_extractor/dom.py website_palette_extractor/extract.py`, run, restore, diff) — and the
 > same pattern repeats here:
 >
 > - **`fleshandbonedesign.com` and `parkersprouse.me`: genuinely
@@ -1994,11 +2010,11 @@ counts above are exactly that prediction, one design-generation early.
 > usage: query batching or an index keyed by class name are the likely
 > next moves, not attempted here.
 >
-> `palettekit.pyz` **rebuilt** at the end of this session (`python3
+> `website_palette_extractor.pyz` **rebuilt** at the end of this session (`python3
 > build.py`), per the standing process rule — this changed real pipeline
 > behavior, not just documentation. Verified on a fresh 3.11 interpreter with
 > neither dependency installed (`uv run --python 3.11 --no-project python
-> palettekit.pyz fleshandbonedesign.com.har …`), and module/console-script/
+> website_palette_extractor.pyz fleshandbonedesign.com.har …`), and module/console-script/
 > zipapp JSON confirmed identical.
 >
 > **Version matrix run this session, not skipped** — `dom.py` now imports
@@ -2260,7 +2276,7 @@ confirmed zero with no `matches` key, `None` on a bare `.css` input with no
 captured HTML, and the sample landing at exactly `MATCH_SAMPLES` when the
 real count is higher). All eight required to fail against the pre-T19 code
 before being trusted, per this file's own "a test that passes before and
-after tests nothing" rule — checked directly by stashing `palettekit/` and
+after tests nothing" rule — checked directly by stashing `website_palette_extractor/` and
 rerunning them. The `max_len` test needed a sharper check than that alone:
 stashing the whole feature makes it fail on an unrelated `ImportError`, which
 doesn't prove the truncation *logic* is what the test catches — verified
@@ -2844,7 +2860,7 @@ general case accurately.
 > `matched is None`, and a `saved` entry (the status-gate correction above)
 > also correctly not flagged despite `all_dynamic_only` being structurally
 > true for it. All required to fail against the pre-fix
-> implementation before being trusted (`git stash push palettekit/`,
+> implementation before being trusted (`git stash push website_palette_extractor/`,
 > the T25/T22 discipline), which they did — four of six errored on a
 > missing `reason`/`dynamicOnly` key entirely.
 >
@@ -3492,15 +3508,15 @@ the ones nobody could see. Both modules now have one (`tests/test_main.py`,
 8. **`CLAUDE.md`'s documented `python3 -m build` never built a wheel.** `-m`
    puts the current directory first on `sys.path`, and this repo has a
    `build.py` at its root, so from here that command resolves to *that file*
-   — it rebuilds `palettekit.pyz`, prints a success line, and writes no
+   — it rebuilds `website_palette_extractor.pyz`, prints a success line, and writes no
    `dist/` at all. It has been wrong for as long as `build.py` has existed
    (T12), and it fails in the worst way: it looks like it worked. Confirmed
    with `importlib.util.find_spec("build").origin`, and the line now reads
    `pyproject-build`, the same tool's own console script, which nothing
    shadows. Found only because the packaging path was re-run as a check on
-   this sweep's own edit to `palettekit/__init__.py` — the file
+   this sweep's own edit to `website_palette_extractor/__init__.py` — the file
    `[tool.hatch.version]` reads `__version__` from. (That edit is fine:
-   `pyproject-build` produces `palettekit-1.1.0` with all nine modules.)
+   `pyproject-build` produces `website_palette_extractor-1.1.0` with all nine modules.)
 
 **Verified the project's own way.** All eight frozen bundles, all six output
 files each — 48 files — byte-identical before and after with `generated`
@@ -3559,8 +3575,8 @@ neither-dependency-installed interpreter check already is:
 ```bash
 python3 build.py
 # then diff to_document() output (generated dropped) between
-# python3 -m palettekit, the installed `palettekit` script, and
-# python3 palettekit.pyz
+# python3 -m website_palette_extractor, the installed `website_palette_extractor` script, and
+# python3 website_palette_extractor.pyz
 ```
 
 `CLAUDE.md`'s "Rebuild the zipapp before a work session is finished" section
@@ -3585,14 +3601,14 @@ design stands regardless of whether it runs in CI or by hand.
 > incantation this section describes.
 >
 > **Departure from "smoke-test the result":** verification is a structural
-> assert that `palettekit`, `tinycss2`, `cssselect2` and `webencodings` are
+> assert that `website_palette_extractor`, `tinycss2`, `cssselect2` and `webencodings` are
 > physically present in the archive (`zipfile.ZipFile(...).namelist()`),
 > not a subprocess run of the built `.pyz`. Running it on the machine that
 > built it proves nothing — site-packages is still on `sys.path`, and every
 > dev interpreter has these installed anyway, which is exactly the blind spot
 > the six-command version had. The interpreter-with-neither-dependency check
 > CLAUDE.md calls for stays a separate, manual step (`uv run --python 3.11
-> --no-project python palettekit.pyz …`) — it needs an environment `build.py`
+> --no-project python website_palette_extractor.pyz …`) — it needs an environment `build.py`
 > doesn't control, so it isn't something the script can assert on its own.
 >
 > **`[project.dependencies]` is read out of `pyproject.toml` via `tomllib`**
@@ -3608,13 +3624,13 @@ step that is silently skippable on a development machine. **Prerequisite for
 T1's process half** — automate it and "rebuild each session" becomes one
 command that CI can verify.
 
-### T13 — Move `test_palettekit.py` into `tests/` and split by module — landed 2026-07-27
+### T13 — Move `test_website_palette_extractor.py` into `tests/` and split by module — landed 2026-07-27
 
 1,595 lines and fourteen `TestCase` classes in one file by the time this
 landed (it grew from the 1,272 this task was filed against). Mechanical, and
 worth doing before the suite grew further.
 
-**Split one file per `palettekit/` module**, mirroring the layout table at
+**Split one file per `website_palette_extractor/` module**, mirroring the layout table at
 the top of `CLAUDE.md`:
 
 | File | Classes moved in |
@@ -3676,7 +3692,7 @@ deliberate:
   alongside it.
 
 Every other class's source is byte-for-byte identical to what
-`test_palettekit.py` held at `HEAD` before this task.
+`test_website_palette_extractor.py` held at `HEAD` before this task.
 
 **Both existing entry points still work, deliberately, per the
 `[tool.pytest.ini_options]` comment this task had to update rather than
@@ -3691,9 +3707,9 @@ suite runnable with no install beyond the two runtime dependencies, per
 
 **Two other places quietly hardcoded the old single-file name and needed
 updating alongside it**: `pyproject.toml`'s `[tool.ruff.lint.per-file-ignores]`
-(`"test_palettekit.py"` → `"tests/*.py"`, the long color-literal/selector
+(`"test_website_palette_extractor.py"` → `"tests/*.py"`, the long color-literal/selector
 `E501` exemption) and `[tool.hatch.build.targets.sdist]`'s `include` list
-(`"/test_palettekit.py"` → `"/tests"`). Confirmed with `pyproject-build
+(`"/test_website_palette_extractor.py"` → `"/tests"`). Confirmed with `pyproject-build
 --sdist` (not `python -m build` — a repo-root `build.py` shadows the
 installed `build` package under `-m` because `-m` prepends the cwd to
 `sys.path`, a pre-existing quirk this task didn't introduce and isn't in
@@ -4126,7 +4142,7 @@ left orphaned.
 
 **Verification:** 103 tests pass (unchanged count — T16 touched no test file),
 `ruff` clean, 3.11–3.14 matrix green, module/console-script/zipapp JSON
-parity confirmed, `palettekit.pyz` rebuilt via `build.py` and verified on
+parity confirmed, `website_palette_extractor.pyz` rebuilt via `build.py` and verified on
 `uv run --python 3.11 --no-project` with neither dependency installed.
 
 ### T17 — Rewrite `COLOR_TOKEN` on `tinycss2` tokens — landed 2026-07-27
@@ -4261,9 +4277,9 @@ full palette JSON, old build against new, `generated` dropped — same recipe as
 phase 2/3/4's own verification:
 
 ```bash
-git stash push palettekit/ && for h in ground.news tailwindcss.com \
+git stash push website_palette_extractor/ && for h in ground.news tailwindcss.com \
   ui.shadcn.com fleshandbonedesign.com; do
-    python3 -m palettekit "$h.har" -o "out-old/$h"
+    python3 -m website_palette_extractor "$h.har" -o "out-old/$h"
   done && git stash pop
 # then the same into out-new/, and diff hex sets, grounds, warnings, names,
 # occurrences, and scores per theme
@@ -4377,7 +4393,7 @@ place between a 3.11 and a 3.14 interpreter (`51.7` vs `51.71`, and similarly
 on three other entries) — confirmed present identically in the pre-T17 code
 built the same way, so it is a pre-existing floating-point rounding difference
 between interpreter versions unconnected to this task, not a T17 regression;
-`color.py` has no part in computing `score` at all. `palettekit.pyz` rebuilt
+`color.py` has no part in computing `score` at all. `website_palette_extractor.pyz` rebuilt
 (after also deleting `_WHOLE_VALUE_FUNCS`, a leftover unused frozenset caught
 on review — the dispatch in `_collect_colors` compares `.lower_name` to the
 two literal strings directly and never read it) and verified on a bare 3.11

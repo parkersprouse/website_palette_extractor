@@ -1,7 +1,7 @@
 """load_har / load_url / load_paths error handling."""
 import unittest
 
-from palettekit import sources
+from website_palette_extractor import sources
 
 from .helpers import write_fixture
 

@@ -3,8 +3,8 @@ import json
 import re
 import unittest
 
-from palettekit import emit, extract, sources
-from palettekit.color import contrast_ratio, parse_color
+from website_palette_extractor import emit, extract, sources
+from website_palette_extractor.color import contrast_ratio, parse_color
 
 from .helpers import FIXTURE, write_fixture
 

@@ -1,12 +1,12 @@
-"""palettekit — read a website's color palette out of its stylesheets.
+"""website_palette_extractor — read a website's color palette out of its stylesheets.
 
 Command line:
 
-    python3 -m palettekit site.har -o palette
+    python3 -m website_palette_extractor site.har -o palette
 
 Programmatic use, if you want the data rather than the files:
 
-    from palettekit import sources, extract, emit
+    from website_palette_extractor import sources, extract, emit
 
     bundle = sources.load_any("site.har")
     palette = extract.extract(bundle, exclude=["bootstrap"])
@@ -21,7 +21,7 @@ __version__ = "1.1.0"
 # Every submodule, plus the two module-level names a consumer is meant to read.
 # `dom` was missing: it is phase 2's own module (the `cssselect2` matcher and
 # the document tree), not a private helper, and leaving it out made
-# `from palettekit import *` quietly different from the layout CLAUDE.md
+# `from website_palette_extractor import *` quietly different from the layout CLAUDE.md
 # documents.
 __all__ = [
     "PYTHON_FLOOR",

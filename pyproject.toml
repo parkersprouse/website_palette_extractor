@@ -3,7 +3,10 @@ requires = ["hatchling>=1.18"]
 build-backend = "hatchling.build"
 
 [project]
-name = "palettekit"
+# Hyphens: PyPI normalises `_` to `-` anyway, so this is the canonical form of
+# the same name. The import package is `website_palette_extractor` (underscores
+# are required there) and the console script matches this line, not that one.
+name = "website-palette-extractor"
 description = "Read a website's color palette out of its stylesheets and render it as an interactive page."
 readme = "README.md"
 
@@ -14,7 +17,7 @@ readme = "README.md"
 # 3.11+ itself.
 requires-python = ">=3.11"
 
-# Single source of truth is palettekit/__init__.py; see [tool.hatch.version].
+# Single source of truth is website_palette_extractor/__init__.py; see [tool.hatch.version].
 dynamic = ["version"]
 
 authors = [{ name = "Parker Sprouse" }]
@@ -77,17 +80,17 @@ images-fast = ["numpy>=1.21", "pillow>=9", "scikit-learn>=1.0"]
 dev = ["build>=1.0", "pytest>=7", "ruff>=0.4"]
 
 [project.scripts]
-palettekit = "palettekit.__main__:main"
+website-palette-extractor = "website_palette_extractor.__main__:main"
 
 [project.urls]
-Homepage = "https://github.com/parkersprouse/palettekit"
-Issues = "https://github.com/parkersprouse/palettekit/issues"
+Homepage = "https://github.com/parkersprouse/website_palette_extractor"
+Issues = "https://github.com/parkersprouse/website_palette_extractor/issues"
 
 [tool.hatch.version]
-path = "palettekit/__init__.py"
+path = "website_palette_extractor/__init__.py"
 
 [tool.hatch.build.targets.wheel]
-packages = ["palettekit"]
+packages = ["website_palette_extractor"]
 
 [tool.hatch.build.targets.sdist]
 # Ship the tests and the docs. The reference fixture described in CLAUDE.md
@@ -98,7 +101,7 @@ include = [
   "/CLAUDE.md",
   "/LICENSE.md",
   "/README.md",
-  "/palettekit",
+  "/website_palette_extractor",
   "/tests",
 ]
 
@@ -129,7 +132,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 # The report template is one long HTML string; wrapping it would corrupt output.
-"palettekit/emit.py" = ["E501"]
+"website_palette_extractor/emit.py" = ["E501"]
 # Tests assert on long literal color values and selectors.
 "tests/*.py" = ["E501"]
 

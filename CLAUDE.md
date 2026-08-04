@@ -96,7 +96,7 @@ explicitly — see below.
 
 ```bash
 python3 -m website_palette_extractor <target> -o out    # target: .har | URL | .html/.css path
-python3 -m unittest discover             # 223 tests, all must pass (needs the deps)
+python3 -m unittest discover             # 225 tests, all must pass (needs the deps)
 python3 -m website_palette_extractor x.har --no-themes  # collapse a two-theme site into one
 ruff check .                             # must stay clean; config in pyproject
 python3 -m website_palette_extractor x.har --list-sources   # diagnose framework noise first
@@ -276,8 +276,8 @@ sources.py   →  cssparse.py  →  extract.py  →  emit.py
 | `dom.py` | 718 | `html.parser` → `ElementTree` shim, `cssselect2` matching of `<html>`/`<body>`, specificity, plus `full_tree`/`elements_matching`/`wrap_tree` (T9: real DOM below the page element), `selector_reach` (T18: does a selector match anything, real/none/untestable), `element_signature` (T19: a short label for one real matched element), `_compile_selector_parts` (T25: one bad selector-list branch costs only itself), and `untestable_reason` (T24: which of the two causes made `selector_reach` answer `None`) |
 | `sources.py` | 292 | `load_har` / `load_url` / `load_paths` → `Bundle` |
 | `extract.py` | 1921 | `extract()`, the cascade, per-theme `_build`, ground, merging, statuses, naming, `resolve_by_ancestry`/`resolve_by_ancestry_kind` (T9, non-inheriting-aware since T22), `Entry.all_unmatched` (T18), per-usage `match_count`/`match_samples` (T19), `_page_color_scheme`/`_scopes_present`'s confirmation gate (T10), `_theme_scoped_scheme_keywords` (T26), `property_registrations` (T22), `Entry.all_dynamic_only`/`Usage.reach_reason` (T24) |
-| `emit.py` | 503 | Emitters; `_HTML` loads the report template off disk (T28) rather than holding it as a string (T20: status sub-headings, T24: always-present Caveats section) |
-| `report_template.html` | 606 | The interactive report's structural HTML/CSS/JS, `__PLACEHOLDER__`-marked (T28) — a real `.html` file, not a Python string, so it gets editor/linter support |
+| `emit.py` | 543 | Emitters; `_HTML` loads the report template off disk (T28) rather than holding it as a string (T20: status sub-headings, T24: always-present Caveats section, T29: `_font_data_uri` inlines the report's two custom fonts as `data:` URIs) |
+| `report_template.html` | 927 | The interactive report's structural HTML/CSS/JS, `__PLACEHOLDER__`-marked (T28) — a real `.html` file, not a Python string, so it gets editor/linter support. Its two `@font-face` blocks (T29) are the only faces the report's own CSS can ever select — see PLAN.md T29 before adding a weight/style back without checking reachability the same way |
 | `images.py` | 163 | Optional image quantisation, not part of the token set; `analyse` clamps k to the sample count (fewer opaque pixels than clusters used to raise) |
 | `__main__.py` | 321 | CLI; `main()` guards `PYTHON_FLOOR` before anything else, then `_validate` rejects bad `--formats`/negative numerics before any work |
 
@@ -522,8 +522,12 @@ because the obvious implementation produced plausible but wrong output.
 11. **The HTML report is standalone.** No `<link>`, no `fetch()` — it must open
     from `file://`. Its own reading colors are contrast-checked with a derived
     fallback (`_pick_report_theme`); an earlier version picked whatever cleared
-    the bar and produced red body text. Tests:
-    `test_html_report_is_standalone_and_valid`, `test_report_theme_is_readable`.
+    the bar and produced red body text. Its two custom fonts are inlined as
+    `data:` URIs for the same reason (T29, `PLAN.md`) — a relative
+    `url('./assets/fonts/…')`, the template's own first draft, is exactly the
+    external sibling-file dependency this invariant rules out. Tests:
+    `test_html_report_is_standalone_and_valid`, `test_report_theme_is_readable`,
+    `test_fonts_are_inlined_as_data_uris`.
 
 12. **A theme is a scope over declarations, so each one is extracted from
     scratch** (`_build`, once per entry in `_theme_plan`). Tagging colors after

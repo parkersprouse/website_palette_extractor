@@ -90,7 +90,17 @@ def _required_packages() -> tuple[str, ...]:
 # the six.py story below is: the archive *could* lose a non-.py file to some
 # future staging change without any of the dependency-vendoring checks
 # noticing, since none of them look inside PACKAGE itself.
-_REQUIRED_DATA_FILES = (f"{PACKAGE}/report_template.html",)
+#
+# The two fonts (PLAN.md T29) are read the identical way, by
+# emit._font_data_uri, and belong on this same list for the same reason --
+# a report emitted from a .pyz missing either one would raise at import
+# time (report_template.html) or when the module-level _FONT_INTER /
+# _FONT_MONO constants are computed (a font), rather than being caught here.
+_REQUIRED_DATA_FILES = (
+    f"{PACKAGE}/report_template.html",
+    f"{PACKAGE}/assets/fonts/inter/inter_variable.ttf",
+    f"{PACKAGE}/assets/fonts/sauce_code_pro/sauce_code_pro_mono__regular.ttf",
+)
 
 
 def _verify() -> None:

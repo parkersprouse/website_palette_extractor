@@ -3653,6 +3653,178 @@ message would trade a loud, immediate, correctly-located error for a
 quieter one, which is the wrong direction for a file that can only go
 missing by manual deletion.
 
+### T29 — Inline the report's custom fonts as `data:` URIs — landed 2026-08-04
+
+**Owner-requested, not an accuracy task.** The owner added two font families
+(Inter Variable, SauceCodePro Nerd Font Mono) to `report_template.html`
+themselves — `@font-face` blocks and the `font-family` attributes that
+consume them — with the `.ttf` files staged under a new
+`website_palette_extractor/assets/fonts/` and `src: url('./assets/fonts/…')`
+pointing at them. That relative reference is exactly what invariant 11
+forbids: it makes the emitted report depend on a sibling directory that has
+to travel with it, which breaks the moment the HTML is moved, emailed, or
+shared on its own — the report would silently render in fallback fonts with
+nothing in the file itself explaining why.
+
+**Mechanism: `data:` URIs through the existing placeholder pipeline, not a
+new one.** Copying the fonts next to the output HTML was considered and
+rejected on the same invariant-11 ground, not on taste — it keeps the
+external-file dependency, just renames it. `emit._font_data_uri` reads a
+vendored font via `importlib.resources.files(__package__)` (the identical
+zipapp-safety reasoning `_HTML` already uses, T28: a `__file__`-relative
+path breaks only inside the zipapp, where the package lives in a zip archive
+with no filesystem path to `open()`), base64-encodes it, and the result
+lands in two new `fills` entries — `__FONT_INTER__`, `__FONT_MONO__` — read
+by the same single-pass `re.sub` callback substitution T27 put in place for
+exactly this reason (a chained `str.replace` would let one placeholder's
+substituted content be rescanned and corrupted by a later one). Computed
+once at module scope, same as `_HTML`, since `emit_html()` can run more than
+once per process and there is no reason to re-read and re-encode megabytes
+of font bytes each time.
+
+**Scope was the owner's call, and the first analysis offered for it was
+wrong.** Inlined in full, the owner's original 16 `@font-face` blocks (33MB
+of `.ttf`, mostly SauceCodePro Nerd Font Mono's fourteen separate per-weight
+files) would cost ~44MB of base64 in *every* generated report — and
+permanently in git, since `example/index.html` is a tracked artifact
+(CLAUDE.md, "Regenerate `example/` too"). Asked to choose between shipping
+all 16, trimming to only the faces the template's own CSS can ever select,
+or subsetting glyphs with a new `fonttools` build dependency, the owner
+picked trimming. The reachability count offered at that point —
+"SauceCodePro at weight 600 and 700 normal are used, the rest aren't" — was
+based on grepping `report_template.html` for explicit `font-weight:`
+declarations and was **incomplete, not wrong in the way it looked**: it
+never checked whether the *elements* carrying those declarations also carry
+the mono `font-family`. They don't. Every `font-weight: 700`/`600` in the
+template's CSS (`h1`, `h2`, `.stats b`, `.name`, `.tag`, `th`,
+`.seg button[aria-pressed]`) lands on plain `<div>`/`<span>`/`<th>` elements
+that inherit Inter, never SauceCodePro. The *only* elements that ever carry
+`'SauceCodePro Nerd Font Mono'` are `<td class='mono'>` cells (`code, .mono`
+is the sole selector granting that family), and nothing in the cascade sets
+an explicit weight on them — they render at the browser default, 400.
+Caught by enumerating every `el(tag, class, …)` call in the template's JS
+and cross-referencing each against the CSS rather than re-deriving the
+answer by re-reading the `font-weight` grep a second time — the
+"verify by printing, don't derive by hand" discipline this project already
+follows for cascade claims (see T26's own correction, and the memory note it
+produced). The corrected, actually-reachable set is two faces total: Inter
+Variable normal (its italic face is unused — no `<em>`/`<i>`/`font-style` in
+the template's static or JS-generated markup anywhere) and SauceCodePro
+Mono normal-400. Thirteen of the fourteen SauceCodePro files and the one
+unused Inter italic file were deleted from `assets/fonts/` rather than kept
+unused — 33MB → 3.1MB raw (~4.2MB as base64). The report's own `@font-face`
+block gained a comment recording this reachability finding, so the next
+person editing the template's font usage doesn't have to re-derive it.
+
+**`build.py` gained two more entries on `_REQUIRED_DATA_FILES`**, alongside
+`report_template.html` (T28) — `assets/fonts/inter/inter_variable.ttf` and
+`assets/fonts/sauce_code_pro/sauce_code_pro_mono__regular.ttf` — read by
+`emit._font_data_uri` the identical way, so a `.pyz` missing either one is
+exactly the failure `_verify()`'s structural check exists to catch instead
+of a smoke test. Verified to actually fire, the same "prove the check bites"
+discipline T27/T28 used: temporarily removed `inter_variable.ttf`, rebuilt,
+confirmed `_verify()` raised naming the missing path, restored the file,
+rebuilt clean.
+
+**Packaging was checked for a case T28 didn't cover: a nested subdirectory,
+not a root-level file.** `[tool.hatch.build.targets.wheel] packages = […]`
+already carried `report_template.html` by default (T28), but whether that
+extends to a file two directories deep under the package root was
+unverified until checked directly — built both targets with
+`pyproject-build` (not `python3 -m build`, which resolves to this repo's own
+`build.py` from the repo root — CLAUDE.md's own documented trap, hit once
+while doing this check) and confirmed both font paths present via
+`unzip -l`/`tar tzf`. No `pyproject.toml` change was needed either way.
+
+**A pre-existing, unrelated regression was found and fixed as a
+precondition, not folded silently into this task.** Commit `8d09c10`
+("cleaned up the HTML template file a bit") switched
+`report_template.html`'s HTML attributes from double quotes to single
+(`id="palette-data"` → `id='palette-data'`) without re-running the suite
+afterward. Four regexes in `tests/test_emit.py` still hardcoded the
+double-quoted form, leaving 8 of 224 tests silently red on `main` before
+this task touched anything — `test_html_report_is_standalone_and_valid`,
+the T20 sub-heading test, and both subTest cases of
+`test_site_content_cannot_corrupt_the_report_payload`. Fixed to accept
+either quote character (`['"]`) rather than reverting the template's own
+quote style, since the single-quote form is what the owner's cleanup commit
+intentionally produced.
+
+**Verified at the level this change operates on: the HTML output specifically,
+not the JSON or the other code emitters**, same "diff at the level the
+change touches" discipline as T28. Ran `parkersprouse.me.har --images`
+through all three run modes — module, an installed console script in a
+throwaway venv, and a clean-3.11-interpreter zipapp with none of the three
+core dependencies installed — and diffed the emitted `index.html` with the
+`generated` timestamp normalised out: all three byte-identical to each
+other and to the regenerated, now-committed `example/index.html`. The four
+other emitted formats (`.json`, `.css`, `.scss`, `.ts`, `.tailwind.js`) came
+back byte-identical to their previously-committed versions — the predicted
+blast radius (font embedding touches only `emit_html`) held exactly, not
+merely assumed. The clean-interpreter run was also checked for the specific
+failure this task exists to prevent: exactly two `data:font/ttf;base64,`
+occurrences in the output and zero remaining `assets/fonts` substrings.
+Visually confirmed in a browser against the regenerated `example/index.html`
+— `document.fonts` reports both faces `status: "loaded"` and
+`getComputedStyle` shows them actually applied to `h1`/`.val`, not a
+fallback silently taking over. Full suite (224 → 225 tests) passes on
+Python 3.11, 3.12, 3.13 and 3.14; `ruff check .` stays clean.
+
+**Cost accepted, not hidden, and it recurs — not a one-time charge.**
+`example/index.html` grew from ~58KB to ~4.4MB, and *every* future
+generated report pays the same ~4.2MB font cost regardless of site size.
+CLAUDE.md requires regenerating `example/` in any session that changes
+emitted output, which is most sessions, so this ~4.4MB blob lands in git
+history again on each such regeneration — not once. That is the trade the
+owner chose over shipping all 16 faces (~44MB, worse) or a `fonttools`
+subsetting step (~100KB, but a new build dependency); worth restating
+plainly since it's the strongest argument for the subsetting option and the
+owner was weighing size against a one-time-sounding number.
+
+**The reachability enumeration that decided which faces to keep was
+re-verified in a browser after an initial pass missed an element, and the
+gap is worth naming rather than smoothing over.** The first pass grepped
+`report_template.html`'s JS for `el(tag, class, …)` calls and cross
+-referenced each class against the CSS; it missed `.val` entirely — a class
+that does carry the mono font-family, found only by accident when an
+earlier ad hoc `document.querySelector('.val') || document.querySelector
+('td.mono')` browser probe happened to resolve to the right answer through
+a fallback operator, not because `.val` had been identified as a target.
+Re-verified properly with a full computed-style sweep over every real
+text-bearing element in the rendered DOM (`getComputedStyle`, not source
+grep), in both themes, with "everything found" selected and both `<details>`
+sections opened — the exact conditions the initial screenshot check hadn't
+covered. Result: `.val` is mono at weight 400, already inside the kept
+`regular.ttf` face, so the trim was right, but the *method* that first
+established it wasn't reliable and shouldn't be trusted a second time
+without the same rendered-DOM check. This is the "verify by printing, don't
+derive by hand" discipline this project already applies to cascade claims
+(T26), extended to a source-reading claim instead of a data-flow one.
+
+**`_font_data_uri` is `functools.cache`d and called from inside `emit_html`,
+not computed eagerly at module scope the way `_HTML` is.** The first draft
+mirrored `_HTML`'s pattern exactly — two module-level constants built at
+import time — which is free for `_HTML` (~30KB) but not for ~3MB of font
+bytes: `__main__.py` imports `emit` unconditionally, so a `--formats
+json`-only run that never touches HTML would have paid a read-and-base64
+-encode cost for output it never produces. Confirmed directly: importing
+`emit` and building a JSON-only document leaves `_font_data_uri.cache_info()`
+at `misses=0` — the function is never invoked unless `emit_html` actually
+runs. The `functools.cache` keeps the original reasoning (`emit_html` can
+run more than once per process — the module/console-script/zipapp identity
+checks all do this back to back — and there's no reason to re-read and
+re-encode on a second call) without paying it on every import.
+
+Tests: `test_fonts_are_inlined_as_data_uris` (`tests/test_emit.py`) — decodes
+each `data:` URI's base64 back to bytes and checks for a real
+TrueType/OpenType `sfnt` header, not just the right string prefix, so a
+truncated or mis-encoded blob would fail this rather than pass on
+string-matching alone. `test_html_report_is_standalone_and_valid` extended
+with an explicit `assertNotIn("assets/fonts", html)`, the same shape as the
+existing `fetch(`/`<link` checks. `test_every_placeholder_is_still_filled`
+and `test_template_declares_no_unknown_placeholder` extended with the two
+new placeholder names, same as every prior placeholder addition.
+
 ---
 
 ## Repo and process

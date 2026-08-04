@@ -1,7 +1,9 @@
 """Writing the palette out in each format, including the interactive page."""
 from __future__ import annotations
 
+import base64
 import datetime
+import functools
 import html as htmlmod
 import importlib.resources
 import json
@@ -439,6 +441,42 @@ _HTML = importlib.resources.files(__package__).joinpath(
 ).read_text(encoding="utf-8")
 
 
+@functools.cache
+def _font_data_uri(relative_path: str) -> str:
+    """Read a vendored font and return it as a `data:` URI.
+
+    Same reasoning as `_HTML` above, and the same failure shape: a path
+    relative to `__file__` works from a checkout and an installed wheel and
+    breaks only inside website_palette_extractor.pyz. `importlib.resources`
+    reads through the zip loader instead.
+
+    Inlined rather than shipped as a sibling file next to the emitted
+    report -- invariant 11 requires the report to open standalone from
+    `file://`, and a `./assets/fonts/...` relative `url()` (the template's
+    own first draft) is exactly the external reference that invariant
+    forbids: separate the HTML from that sibling directory -- move it,
+    email it, share just the one file -- and the fonts silently vanish.
+    Only the two faces the report's own CSS can ever select are vendored at
+    all (report_template.html's own comment, PLAN.md T29); the rest of each
+    font family's weights were deleted rather than inlined unused, since a
+    Nerd Font's per-weight file is several MB and this project already
+    counts a report's own weight in its size budget (invariant 11's tests
+    diff full HTML, not just structure).
+
+    Called from inside `emit_html`, not eagerly at import time the way
+    `_HTML` is -- `_HTML` is ~30KB and free to load unconditionally, but
+    these two files are ~3MB raw between them, and `__main__.py` imports
+    this module even for a `--formats json`-only run that never touches
+    HTML at all. `functools.cache` keeps the "don't re-read and re-encode
+    on a second `emit_html()` call" guarantee module-scope constants would
+    have provided, without paying the cost on every import.
+    """
+    data = importlib.resources.files(__package__).joinpath(
+        relative_path
+    ).read_bytes()
+    return f"data:font/ttf;base64,{base64.b64encode(data).decode('ascii')}"
+
+
 def emit_html(doc: dict, pal: Palette) -> str:
     title = doc["name"]
     themes = doc["themes"]
@@ -491,6 +529,10 @@ def emit_html(doc: dict, pal: Palette) -> str:
         "__GROUP_BLURBS__": json.dumps(GROUP_BLURBS),
         "__STATUS_TITLES__": json.dumps(STATUS_TITLES),
         "__STATUS_BLURBS__": json.dumps(STATUS_BLURBS, ensure_ascii=False),
+        "__FONT_INTER__": _font_data_uri("assets/fonts/inter/inter_variable.ttf"),
+        "__FONT_MONO__": _font_data_uri(
+            "assets/fonts/sauce_code_pro/sauce_code_pro_mono__regular.ttf"
+        ),
     }
     # Longest first: `re` alternation is leftmost-first, not longest-match, so
     # an alternation listing `__TITLE__` before `__TITLE_HTML__` would match

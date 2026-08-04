@@ -5,161 +5,32 @@
     <meta name='viewport' content='width=device-width, initial-scale=1'>
     <title>__TITLE__ · palette</title>
     <style>
+      /* Only the faces this report's own CSS can ever select are shipped --
+         SauceCodePro Nerd Font Mono is a Nerd Font (thousands of glyphs
+         per weight) and would otherwise cost several MB per unused weight
+         once inlined as a data URI (see below). No element in this
+         template ever renders italic text or an explicit SauceCodePro
+         weight other than the browser default (regular, carried by
+         `code`/`.mono` with no font-weight override) -- verified by
+         reading every selector that sets `font-family` or `font-weight`
+         in this file, not assumed. Inter Variable is a single variable
+         -weight file regardless, so it is not a per-weight cost the same
+         way; only its unused italic face is dropped. PLAN.md T29. */
       @font-face {
         font-family: 'Inter Variable';
         font-style: normal;
         font-display: swap;
         font-weight: 100 900;
-        src: url('./assets/fonts/inter/inter_variable.ttf') format('truetype');
+        src: url('__FONT_INTER__') format('truetype');
         unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
       }
 
-      @font-face {
-        font-family: 'Inter Variable';
-        font-style: italic;
-        font-display: swap;
-        font-weight: 100 900;
-        src: url('./assets/fonts/inter/inter_variable_italic.ttf') format('truetype');
-        unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
-      }
-
-      /* sauce_code_pro_mono_200_normal */
-      @font-face {
-        font-family: 'SauceCodePro Nerd Font Mono';
-        font-style: normal;
-        font-display: swap;
-        font-weight: 200;
-        src: url('./assets/fonts/sauce_code_pro/sauce_code_pro_mono__extra_light.ttf') format('truetype');
-        unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
-      }
-
-      /* sauce_code_pro_mono_200_italic */
-      @font-face {
-        font-family: 'SauceCodePro Nerd Font Mono';
-        font-style: italic;
-        font-display: swap;
-        font-weight: 200;
-        src: url('./assets/fonts/sauce_code_pro/sauce_code_pro_mono__extra_light_italic.ttf') format('truetype');
-        unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
-      }
-
-      /* sauce_code_pro_mono_300_normal */
-      @font-face {
-        font-family: 'SauceCodePro Nerd Font Mono';
-        font-style: normal;
-        font-display: swap;
-        font-weight: 300;
-        src: url('./assets/fonts/sauce_code_pro/sauce_code_pro_mono__light.ttf') format('truetype');
-        unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
-      }
-
-      /* sauce_code_pro_mono_300_italic */
-      @font-face {
-        font-family: 'SauceCodePro Nerd Font Mono';
-        font-style: italic;
-        font-display: swap;
-        font-weight: 300;
-        src: url('./assets/fonts/sauce_code_pro/sauce_code_pro_mono__light_italic.ttf') format('truetype');
-        unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
-      }
-
-      /* sauce_code_pro_mono_400_normal */
       @font-face {
         font-family: 'SauceCodePro Nerd Font Mono';
         font-style: normal;
         font-display: swap;
         font-weight: 400;
-        src: url('./assets/fonts/sauce_code_pro/sauce_code_pro_mono__regular.ttf') format('truetype');
-        unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
-      }
-
-      /* sauce_code_pro_mono_400_italic */
-      @font-face {
-        font-family: 'SauceCodePro Nerd Font Mono';
-        font-style: italic;
-        font-display: swap;
-        font-weight: 400;
-        src: url('./assets/fonts/sauce_code_pro/sauce_code_pro_mono__italic.ttf') format('truetype');
-        unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
-      }
-
-      /* sauce_code_pro_mono_500_normal */
-      @font-face {
-        font-family: 'SauceCodePro Nerd Font Mono';
-        font-style: normal;
-        font-display: swap;
-        font-weight: 500;
-        src: url('./assets/fonts/sauce_code_pro/sauce_code_pro_mono__medium.ttf') format('truetype');
-        unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
-      }
-
-      /* sauce_code_pro_mono_500_italic */
-      @font-face {
-        font-family: 'SauceCodePro Nerd Font Mono';
-        font-style: italic;
-        font-display: swap;
-        font-weight: 500;
-        src: url('./assets/fonts/sauce_code_pro/sauce_code_pro_mono__medium_italic.ttf') format('truetype');
-        unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
-      }
-
-      /* sauce_code_pro_mono_600_normal */
-      @font-face {
-        font-family: 'SauceCodePro Nerd Font Mono';
-        font-style: normal;
-        font-display: swap;
-        font-weight: 600;
-        src: url('./assets/fonts/sauce_code_pro/sauce_code_pro_mono__semi_bold.ttf') format('truetype');
-        unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
-      }
-
-      /* sauce_code_pro_mono_600_italic */
-      @font-face {
-        font-family: 'SauceCodePro Nerd Font Mono';
-        font-style: italic;
-        font-display: swap;
-        font-weight: 600;
-        src: url('./assets/fonts/sauce_code_pro/sauce_code_pro_mono__semi_bold_italic.ttf') format('truetype');
-        unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
-      }
-
-      /* sauce_code_pro_mono_700_normal */
-      @font-face {
-        font-family: 'SauceCodePro Nerd Font Mono';
-        font-style: normal;
-        font-display: swap;
-        font-weight: 700;
-        src: url('./assets/fonts/sauce_code_pro/sauce_code_pro_mono__bold.ttf') format('truetype');
-        unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
-      }
-
-      /* sauce_code_pro_mono_700_italic */
-      @font-face {
-        font-family: 'SauceCodePro Nerd Font Mono';
-        font-style: italic;
-        font-display: swap;
-        font-weight: 700;
-        src: url('./assets/fonts/sauce_code_pro/sauce_code_pro_mono__bold_italic.ttf') format('truetype');
-        unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
-      }
-
-      /* sauce_code_pro_mono_700_normal */
-      @font-face {
-        font-family: 'SauceCodePro Nerd Font Mono';
-        font-style: normal;
-        font-display: swap;
-        font-weight: 900;
-        src: url('./assets/fonts/sauce_code_pro/sauce_code_pro_mono__black.ttf') format('truetype');
-        unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
-      }
-
-      /* sauce_code_pro_mono_700_italic */
-      @font-face {
-        font-family: 'SauceCodePro Nerd Font Mono';
-        font-style: italic;
-        font-display: swap;
-        font-weight: 900;
-        src: url('./assets/fonts/sauce_code_pro/sauce_code_pro_mono__black_italic.ttf') format('truetype');
+        src: url('__FONT_MONO__') format('truetype');
         unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
       }
 

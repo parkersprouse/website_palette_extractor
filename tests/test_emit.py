@@ -1,4 +1,5 @@
 """Emitters: the JSON document contract and the standalone HTML report."""
+import base64
 import json
 import re
 import unittest
@@ -62,12 +63,34 @@ class TestEndToEnd(unittest.TestCase):
         html = emit.emit_html(self.doc, self.pal)
         self.assertNotIn("fetch(", html)
         self.assertNotIn("<link", html)
+        # The template's own first draft referenced fonts with a relative
+        # `url('./assets/fonts/...')` -- exactly the external, sibling-file
+        # dependency this invariant rules out for everything else. A report
+        # separated from that directory (moved, emailed, shared on its own)
+        # would silently render in fallback fonts.
+        self.assertNotIn("assets/fonts", html)
         left = re.findall(r"__[A-Z_]+__", html)
         self.assertEqual(left, [], f"unreplaced placeholders: {left}")
         payload = re.search(
-            r'<script type="application/json" id="palette-data">(.*?)</script>',
+            r"""<script type=['"]application/json['"] """
+            r"""id=['"]palette-data['"]>(.*?)</script>""",
             html, re.S).group(1)
         json.loads(payload.replace("<\\/", "</"))
+
+    def test_fonts_are_inlined_as_data_uris(self):
+        """PLAN.md T29: the two reachable faces ship as `data:` URIs.
+
+        Not just presence of the right prefix -- each one is decoded back
+        from base64 and checked for a real TrueType/OpenType sfnt header
+        (`\\x00\\x01\\x00\\x00` or `OTTO`), so a truncated or mis-encoded
+        blob would fail this rather than pass on string-matching alone.
+        """
+        html = emit.emit_html(self.doc, self.pal)
+        uris = re.findall(r"data:font/ttf;base64,([A-Za-z0-9+/=]+)", html)
+        self.assertEqual(len(uris), 2, "expected exactly two inlined fonts")
+        for encoded in uris:
+            font_bytes = base64.b64decode(encoded)
+            self.assertIn(font_bytes[:4], (b"\x00\x01\x00\x00", b"OTTO"))
 
     def test_report_theme_is_readable(self):
         theme = emit._pick_report_theme(self.doc)
@@ -95,9 +118,10 @@ class TestEndToEnd(unittest.TestCase):
         `fleshandbonedesign.com.har`; see PLAN.md's T20 entry.
         """
         html = emit.emit_html(self.doc, self.pal)
-        self.assertIn(
-            'statusesPresent.length > 1 || statusesPresent[0] !== "live"',
-            html)
+        self.assertRegex(
+            html,
+            re.escape("statusesPresent.length > 1 || statusesPresent[0] !==")
+            + r""" ['"]live['"]""")
 
         # The fixture exercises all four statuses (verified directly against
         # extract() output), so every title/blurb pair is load-bearing here,
@@ -146,7 +170,8 @@ class TestReportTemplateSubstitution(unittest.TestCase):
 
     def _payload(self, html: str) -> dict:
         blob = re.search(
-            r'id="palette-data">(.*?)</script>', html, re.S).group(1)
+            r"""id=['"]palette-data['"]>(.*?)</script>""", html, re.S
+        ).group(1)
         # `</` is escaped on the way in so the JSON cannot close the element.
         return json.loads(blob.replace("<\\/", "</"))
 
@@ -174,11 +199,13 @@ class TestReportTemplateSubstitution(unittest.TestCase):
         for placeholder in ("__TITLE__", "__TITLE_HTML__", "__SUBTITLE__",
                             "__UI_THEMES__", "__DATA__", "__GROUP_TITLES__",
                             "__GROUP_BLURBS__", "__STATUS_TITLES__",
-                            "__STATUS_BLURBS__"):
+                            "__STATUS_BLURBS__", "__FONT_INTER__",
+                            "__FONT_MONO__"):
                 # The data blob is excluded: a *site* may legitimately contain
                 # the text, and that is precisely what must survive.
             blob = re.search(
-                r'id="palette-data">(.*?)</script>', html, re.S).group(1)
+                r"""id=['"]palette-data['"]>(.*?)</script>""", html, re.S
+            ).group(1)
             self.assertNotIn(placeholder, html.replace(blob, ""))
 
     def test_template_declares_no_unknown_placeholder(self):
@@ -198,7 +225,8 @@ class TestReportTemplateSubstitution(unittest.TestCase):
         known = {
             "__TITLE__", "__TITLE_HTML__", "__SUBTITLE__", "__UI_THEMES__",
             "__DATA__", "__GROUP_TITLES__", "__GROUP_BLURBS__",
-            "__STATUS_TITLES__", "__STATUS_BLURBS__",
+            "__STATUS_TITLES__", "__STATUS_BLURBS__", "__FONT_INTER__",
+            "__FONT_MONO__",
         }
         self.assertEqual(found, known)
 

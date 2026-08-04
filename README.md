@@ -7,9 +7,10 @@ Values are **read from the site's stylesheets**, not sampled from a screenshot,
 so they are the exact declared colors rather than pixels that have been through
 antialiasing and JPEG compression.
 
-Python 3.11+ (tested on 3.11 through 3.14). The core takes two pure-Python
-dependencies – `tinycss2` to tokenize the CSS and `cssselect2` to match and
-weigh selectors – which are installed for you. `pillow` and `numpy` are extra –
+Python 3.11+ (tested on 3.11 through 3.14). The core takes three pure-Python
+dependencies – `tinycss2` to tokenize the CSS, `cssselect2` to match and weigh
+selectors, and `html5lib` to build the real document tree those selectors are
+matched against – which are installed for you. `pillow` and `numpy` are extra –
 only required if you want to use `--images`.
 
 If using `uv` (_recommended_):
@@ -39,7 +40,7 @@ python3 palettekit.pyz site.har --images -o "palettes/site"
 Or install it, which puts a `palettekit` command on your path:
 
 ```bash
-pip install .              # core: pulls in tinycss2 + cssselect2
+pip install .              # core: pulls in tinycss2 + cssselect2 + html5lib
 pip install ".[images]"    # adds pillow + numpy for --images
 palettekit site.har -o "palettes/site"
 ```
@@ -96,13 +97,23 @@ tool should have bumped the version for.
 Each entry under `examples` also carries `matchCount` – how many real
 elements in the captured document that usage's selector actually reached,
 not just its text. `null` means there was no basis to test it at all (no
-captured HTML, or a selector `cssselect2` can't evaluate, such as `:hover`);
-`0` means it was tested and confirmed absent – the same evidence behind an
-`unmatched` status, at the level of one usage rather than a whole entry. When
+captured HTML, a selector `cssselect2` can't evaluate, or one standing on an
+interaction state such as `:hover`, which has no resting form to test); `0`
+means it was tested and confirmed absent – the same evidence behind an
+`unmatched` status, at the level of one usage rather than a whole entry. A
+pseudo-element selector such as `.card::after` is *not* untestable: it is
+tested against its base compound and answers whatever `.card` answers. When
 `matchCount` is a positive number, a bounded `matches` array names a few of
 the real elements (tag, id, classes, and a short ancestor chain) – omitted
-entirely, not an empty list, when there is nothing real to show. Both are
-additive.
+entirely, not an empty list, when there is nothing real to show. A `reason`
+string appears when `matchCount` is `null`, saying which of those cases it
+was. All three are additive.
+
+An entry whose every usage sits on an interaction state also carries
+`dynamicOnly: true`. It stays `live` rather than becoming a fifth status:
+no capture, however complete, could confirm or refute a `:hover` color, so
+saying "unused" would be a claim the tool cannot support. The report
+collects these under a **Caveats** section instead of hiding them.
 
 ## Light and dark themes
 
@@ -198,11 +209,13 @@ having. Use `--flat` for one token per distinct color instead.
 - `unmatched` – every declaration's selector was checked against the page's
   own markup and matched no real element there. Could be leftover CSS from an
   old design or an unused template variant; could also be a selector that only
-  applies once client-side JavaScript runs – a hover state, a toggled class, a
-  modal – which this tool cannot execute and so cannot rule out. Reported when
-  every use is a confirmed non-match; a selector this tool can't even test
-  (`:hover`, `::after`, one it can't parse) leaves the color `live` rather than
-  guessing.
+  applies once client-side JavaScript runs – a toggled class, a modal, a
+  route this capture never visited – which this tool cannot execute and so
+  cannot rule out. Reported only
+  when every use is a confirmed non-match; a single use this tool can't test
+  (`:hover`, or a selector it can't parse) leaves the color `live` rather than
+  guessing. `::after` is not one of those: a pseudo-element is tested against
+  its base compound, so `.card::after` answers whatever `.card` answers.
 
 Only `live` colors go into the css/scss/ts/tailwind files, so what you paste
 into a project is what the site actually paints. Everything stays in the JSON
@@ -257,9 +270,15 @@ knowing before you read too much into a status.
 --no-third-party      ignore other-origin stylesheets entirely
 --include-unused      put saved/inert colors in the code outputs too
 --images              also quantise images (needs pillow + numpy)
---formats LIST        which outputs to write
+--formats LIST        which outputs to write, comma-separated. Any of
+                      html, json, css, scss, ts, tailwind (default: all)
 --timeout SECONDS     network timeout for URL fetches
+--quiet               suppress the summary
 ```
+
+An unrecognised `--formats` value, or a negative `--limit`/`--merge`/
+`--min-score`, is rejected before any work happens rather than quietly doing
+something else.
 
 ## Limits worth knowing
 
@@ -270,18 +289,34 @@ knowing before you read too much into a status.
   `importance → @layer → specificity → document order` resolves the page
   background and what a custom property holds. It is not a cascade engine: every
   other declaration enters the palette as written, because a palette wants every
-  color a site declares rather than the one that won on some element. Scoped
-  custom properties and `@property` are not modelled.
+  color a site declares rather than the one that won on some element.
+- **Scoped custom properties are modelled only as far as the captured page can
+  prove.** When a `var()`'s consuming element is in the captured markup, the
+  real ancestor chain decides which definition applies to it. When it isn't —
+  a client-rendered page, or a HAR that never fetched the page using it — the
+  last definition in the document wins, which is a guess and is sometimes the
+  wrong one. `@property` is read for `inherits` and `initial-value`; its
+  `syntax` is not checked against the value stored.
 - **Ranking is a heuristic.** Score reflects where a color is used, not just
   how often. Treat the order as a strong hint, not a measurement.
 - `color-mix()` **is** evaluated, in eleven interpolation spaces, and so is
-  `light-dark()`. A mix whose percentage is a `calc()`, or whose space is one
-  of the few not implemented, is skipped whole – the colors written inside it
-  are not reported, because the page paints the mix and not its arguments.
+  `light-dark()`. A mix whose space is one of the few not implemented is
+  skipped whole – the colors written inside it are not reported, because the
+  page paints the mix and not its arguments. A `calc()` percentage is
+  evaluated when it is literal arithmetic (`calc(60 * 1%)`); one containing a
+  `var()`, a unit other than `%`, or anything else outside that subset skips
+  the mix rather than guessing at a percentage.
   Relative color syntax (`oklch(from white l c h)`) is not evaluated.
   `lab()` and `lch()` are read – modern Tailwind emits them after a hex
   fallback, so they win the cascade and skipping them would drop the color
   entirely.
+- **`@supports` is evaluated only far enough to be safe.** A condition can
+  confirm *supported* – a custom property, or a plain `<color>` property whose
+  value parses – and otherwise says it cannot tell, in which case the block is
+  read as though it always applies, exactly as before. That is enough to stop
+  a `@supports not (color: light-dark(…))` polyfill fallback from overriding
+  the real value it was written to stand in for, without ever dropping real
+  CSS on a guess.
 
 ## Example
 
@@ -303,18 +338,24 @@ uv run -m unittest discover
 ```
 
 Run it from an environment where the dependencies are installed – `pip install
--e ".[dev]"`, or `uv run --with tinycss2 --with cssselect2 python -m unittest
-discover`. A bare system `python3` will fail at the `tinycss2` import rather
-than at an assertion. `pytest` also works, discovering the same [`tests/`](./tests/)
-package ([`tests/test_color.py`](./tests/test_color.py), [`tests/test_cssparse.py`](./tests/test_cssparse.py),
+-e ".[dev]"`, or `uv run --with tinycss2 --with cssselect2 --with html5lib
+python -m unittest discover`. A bare system `python3` will fail at the
+`tinycss2` import rather than at an assertion. `pytest` also works, discovering
+the same [`tests/`](./tests/) package
+([`tests/test_color.py`](./tests/test_color.py), [`tests/test_cssparse.py`](./tests/test_cssparse.py),
 [`tests/test_dom.py`](./tests/test_dom.py), [`tests/test_extract.py`](./tests/test_extract.py),
 [`tests/test_emit.py`](./tests/test_emit.py), [`tests/test_sources.py`](./tests/test_sources.py),
-[`tests/test_packaging.py`](./tests/test_packaging.py), one per module in [`palettekit/`](./palettekit/)).
+[`tests/test_images.py`](./tests/test_images.py), [`tests/test_main.py`](./tests/test_main.py),
+[`tests/test_packaging.py`](./tests/test_packaging.py) – one per module in
+[`palettekit/`](./palettekit/), plus one for the packaging metadata).
 
-113 tests covering the color maths, cascade ordering, theme scoping, ground
-detection, the merge rules, and the status classifications. Worth running after
-any edit – several of these exist because the obvious implementation was quietly
-wrong.
+223 tests covering the color maths, cascade ordering, theme scoping, ground
+detection, the merge rules, the status classifications, the CLI's argument
+handling, and the optional image pass. Worth running after any edit – several
+of these exist because the obvious implementation was quietly wrong.
+
+The image tests skip themselves when `pillow`/`numpy` are absent, so the suite
+passes on a core install.
 
 ## License note
 

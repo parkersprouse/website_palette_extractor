@@ -62,6 +62,15 @@ def analyse(images: list[bytes], k: int = 10, sample: int = 400,
     idx = rng.choice(len(lab), size=min(120_000, len(lab)), replace=False)
     sample_lab = lab[idx]
 
+    # Never ask for more clusters than there are pixels to cluster. Both
+    # back-ends raise on k > n rather than degrading: the numpy path's seeding
+    # is `rng.choice(..., replace=False)`, and sklearn rejects
+    # n_clusters > n_samples outright. A page whose only artwork is a tracking
+    # pixel or a tiny spacer gif reaches here with a handful of opaque pixels,
+    # which crashed the whole run *after* the palette was already built.
+    # Test: test_a_tiny_image_does_not_crash_the_run.
+    k = max(1, min(k, len(sample_lab)))
+
     centers, counts = _kmeans(sample_lab, k)
     order = np.argsort(-counts)
     total = counts.sum()
@@ -95,12 +104,18 @@ def analyse(images: list[bytes], k: int = 10, sample: int = 400,
 
 def _kmeans(x, k: int):
     import numpy as np
+    # Only the import is guarded. Wrapping `.fit()` in the same `except
+    # ImportError` would silently reroute a genuine sklearn failure into the
+    # numpy fallback, hiding a real error behind a slower code path that
+    # answers differently — and `_kmeans` is reached only after `analyse`
+    # has already clamped k, so there is no expected failure left to absorb.
     try:
         from sklearn.cluster import KMeans
+    except ImportError:
+        KMeans = None
+    if KMeans is not None:
         km = KMeans(n_clusters=k, n_init=6, random_state=0).fit(x)
         return km.cluster_centers_, np.bincount(km.labels_, minlength=k)
-    except ImportError:
-        pass
 
     rng = np.random.default_rng(0)
     centers = x[rng.choice(len(x), size=k, replace=False)].copy()

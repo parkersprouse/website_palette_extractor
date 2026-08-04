@@ -123,7 +123,14 @@ def _title_for(pal: Palette) -> str:
     return f"{host}{' / ' + path if path else ''}"
 
 
-def _slug(pal: Palette) -> str:
+def slug(pal: Palette) -> str:
+    """The base filename the emitted files share, derived from the page URL.
+
+    Public because `__main__` names every output file with it, and reaching
+    across modules for a leading-underscore name is the one thing an
+    underscore is supposed to rule out. `to_document` is still the module's
+    data contract; this is just the filename half of the same job.
+    """
     s = re.sub(r"[^a-z0-9]+", "-", _title_for(pal).lower()).strip("-")
     return s or "palette"
 
@@ -1051,15 +1058,29 @@ def emit_html(doc: dict, pal: Palette) -> str:
     # Keep the JSON from terminating the script element early.
     payload = payload.replace("</", "<\\/")
 
-    out = _HTML
-    out = out.replace("__TITLE__", htmlmod.escape(title))
-    out = out.replace("__TITLE_HTML__", htmlmod.escape(title))
-    out = out.replace("__SUBTITLE__", sub)
-    out = out.replace("__UI_THEMES__", _ui_theme_css(themes))
-    out = out.replace("__DATA__", payload)
-    out = out.replace("__GROUP_TITLES__", json.dumps(GROUP_TITLES))
-    out = out.replace("__GROUP_BLURBS__", json.dumps(GROUP_BLURBS))
-    out = out.replace("__STATUS_TITLES__", json.dumps(STATUS_TITLES))
-    out = out.replace("__STATUS_BLURBS__",
-                       json.dumps(STATUS_BLURBS, ensure_ascii=False))
-    return out
+    # One pass, not a chain of `str.replace`. Chained replaces rescan the text
+    # they have already substituted, so a placeholder filled in early can have
+    # a *later* placeholder's name appear inside its own substituted content
+    # and be rewritten again. That is not hypothetical: `__DATA__` is the
+    # site's own JSON, and a site whose CSS contains the literal token
+    # `__GROUP_TITLES__` (a class name is enough) had that token replaced
+    # inside the data blob, producing invalid JSON and a report that renders
+    # nothing — invariant 11's standalone guarantee broken by the site's own
+    # content. `re.sub` with a callback visits each placeholder in the
+    # *template* exactly once and never re-reads what it wrote.
+    # Test: test_site_content_cannot_corrupt_the_report_payload.
+    fills = {
+        "__TITLE__": htmlmod.escape(title),
+        "__TITLE_HTML__": htmlmod.escape(title),
+        "__SUBTITLE__": sub,
+        "__UI_THEMES__": _ui_theme_css(themes),
+        "__DATA__": payload,
+        "__GROUP_TITLES__": json.dumps(GROUP_TITLES),
+        "__GROUP_BLURBS__": json.dumps(GROUP_BLURBS),
+        "__STATUS_TITLES__": json.dumps(STATUS_TITLES),
+        "__STATUS_BLURBS__": json.dumps(STATUS_BLURBS, ensure_ascii=False),
+    }
+    pattern = "|".join(re.escape(k) for k in fills)
+    # A replacement is returned verbatim by the callback, so backslashes and
+    # `\g<...>` inside a color value or selector are never read as group refs.
+    return re.sub(pattern, lambda m: fills[m.group(0)], _HTML)

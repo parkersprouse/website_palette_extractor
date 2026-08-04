@@ -7,11 +7,8 @@ export const palette = {
   "grey-2": "#09090b",
   "ground": "#e4e4e7",
   "ink-1": "#e4e4e7",
-  "ink-2": "#000000",
-  "line": "#a0a0a0",
   "red": "#d1335b",
   "red-2": "#da5d7c",
-  "surface": "#ffffff",
 } as const;
 
 export type PaletteColor = keyof typeof palette;

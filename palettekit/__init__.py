@@ -17,7 +17,23 @@ Programmatic use, if you want the data rather than the files:
 """
 
 __version__ = "1.1.0"
-__all__ = ["color", "cssparse", "sources", "extract", "emit", "images"]
+
+# Every submodule, plus the two module-level names a consumer is meant to read.
+# `dom` was missing: it is phase 2's own module (the `cssselect2` matcher and
+# the document tree), not a private helper, and leaving it out made
+# `from palettekit import *` quietly different from the layout CLAUDE.md
+# documents.
+__all__ = [
+    "PYTHON_FLOOR",
+    "__version__",
+    "color",
+    "cssparse",
+    "dom",
+    "emit",
+    "extract",
+    "images",
+    "sources",
+]
 
 # The single source of truth for the supported floor (PLAN.md T2). Checked
 # against pyproject.toml's requires-python by test_pyproject_floor_matches_

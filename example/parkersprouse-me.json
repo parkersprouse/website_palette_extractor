@@ -3,7 +3,7 @@
   "source": "https://parkersprouse.me/",
   "ground": "#e4e4e7",
   "groundSource": "html,body { background-color } in https://parkersprouse.me/index-yuSfdUTd.css",
-  "generated": "2026-07-27T17:31:45-05:00",
+  "generated": "2026-08-03T20:41:43-05:00",
   "schemaVersion": 1,
   "stats": {
     "stylesheets": 1,
@@ -86,32 +86,58 @@
             {
               "selector": "html,body",
               "property": "color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 2,
+              "matches": [
+                "html",
+                "html > body"
+              ]
             },
             {
               "selector": ":root,.light",
               "property": "--border-color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 1,
+              "matches": [
+                "html"
+              ]
             },
             {
               "selector": ":root,.light",
               "property": "--box-shadow-color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 1,
+              "matches": [
+                "html"
+              ]
             },
             {
               "selector": ":root,.light",
               "property": "--link-color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 1,
+              "matches": [
+                "html"
+              ]
             },
             {
               "selector": ":root,.light",
               "property": "--text-color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 1,
+              "matches": [
+                "html"
+              ]
             },
             {
               "selector": "a",
               "property": "color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 28,
+              "matches": [
+                "ul.blank-list > li > a.with-icon",
+                "ul.blank-list > li > a.with-icon"
+              ]
             }
           ],
           "customProperties": [
@@ -153,22 +179,39 @@
             {
               "selector": ":root,.light",
               "property": "--svg-alt-color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 1,
+              "matches": [
+                "html"
+              ]
             },
             {
               "selector": ":root,.light",
               "property": "--text-muted-color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 1,
+              "matches": [
+                "html"
+              ]
             },
             {
               "selector": ".with-icon>svg.duotone path.duotone--secondary",
               "property": "fill",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 2,
+              "matches": [
+                "a.with-icon > svg.duotone > path.duotone--seconda…",
+                "a.with-icon > svg.duotone > path.duotone--seconda…"
+              ]
             },
             {
               "selector": ".text-muted",
               "property": "color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 1,
+              "matches": [
+                "ul.blank-list > li > span.text-muted.with-icon"
+              ]
             }
           ],
           "customProperties": [
@@ -206,12 +249,21 @@
             {
               "selector": "html,body",
               "property": "background-color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 2,
+              "matches": [
+                "html",
+                "html > body"
+              ]
             },
             {
               "selector": ":root,.light",
               "property": "--bg-color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 1,
+              "matches": [
+                "html"
+              ]
             }
           ],
           "customProperties": [
@@ -248,17 +300,25 @@
             {
               "selector": ":root,.light",
               "property": "--link-hover-color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 1,
+              "matches": [
+                "html"
+              ]
             },
             {
               "selector": "a:hover",
               "property": "color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": null,
+              "reason": "dynamicState"
             },
             {
               "selector": ".theme-toggle button:hover",
               "property": "color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": null,
+              "reason": "dynamicState"
             }
           ],
           "customProperties": [
@@ -295,12 +355,18 @@
             {
               "selector": ":root,.light",
               "property": "--svg-alt-hover-color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 1,
+              "matches": [
+                "html"
+              ]
             },
             {
               "selector": ".with-icon:hover>svg.duotone path.duotone--secondary",
               "property": "fill",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": null,
+              "reason": "dynamicState"
             }
           ],
           "customProperties": [
@@ -336,12 +402,19 @@
             {
               "selector": "::-moz-selection",
               "property": "color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": null,
+              "reason": "uncompilable"
             },
             {
               "selector": "::selection",
               "property": "color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 172,
+              "matches": [
+                "html",
+                "html > head"
+              ]
             }
           ]
         },
@@ -349,7 +422,7 @@
           "name": "line",
           "group": "line",
           "role": "line",
-          "status": "live",
+          "status": "unmatched",
           "hex": "#a0a0a0",
           "rgb": [
             160,
@@ -374,7 +447,8 @@
             {
               "selector": ":where(fieldset)",
               "property": "border",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 0
             }
           ]
         },
@@ -382,7 +456,7 @@
           "name": "ink-2",
           "group": "ink",
           "role": "text",
-          "status": "live",
+          "status": "unmatched",
           "hex": "#000000",
           "rgb": [
             0,
@@ -407,7 +481,8 @@
             {
               "selector": ":where(dialog)",
               "property": "color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 0
             }
           ]
         },
@@ -415,7 +490,7 @@
           "name": "surface",
           "group": "surface",
           "role": "surface",
-          "status": "live",
+          "status": "unmatched",
           "hex": "#ffffff",
           "rgb": [
             255,
@@ -440,7 +515,8 @@
             {
               "selector": ":where(dialog)",
               "property": "background-color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 0
             }
           ]
         }
@@ -502,32 +578,58 @@
             {
               "selector": ".dark",
               "property": "--link-color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 1,
+              "matches": [
+                "html"
+              ]
             },
             {
               "selector": ".dark",
               "property": "--text-color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 1,
+              "matches": [
+                "html"
+              ]
             },
             {
               "selector": "html,body",
               "property": "color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 2,
+              "matches": [
+                "html",
+                "html > body"
+              ]
             },
             {
               "selector": ":root,.light",
               "property": "--bg-color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 1,
+              "matches": [
+                "html"
+              ]
             },
             {
               "selector": ":root,.light",
               "property": "--link-color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 1,
+              "matches": [
+                "html"
+              ]
             },
             {
               "selector": "a",
               "property": "color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 28,
+              "matches": [
+                "ul.blank-list > li > a.with-icon",
+                "ul.blank-list > li > a.with-icon"
+              ]
             }
           ],
           "customProperties": [
@@ -569,32 +671,56 @@
             {
               "selector": ".dark",
               "property": "--bg-color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 1,
+              "matches": [
+                "html"
+              ]
             },
             {
               "selector": "html,body",
               "property": "background-color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 2,
+              "matches": [
+                "html",
+                "html > body"
+              ]
             },
             {
               "selector": ":root,.light",
               "property": "--border-color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 1,
+              "matches": [
+                "html"
+              ]
             },
             {
               "selector": ":root,.light",
               "property": "--text-color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 1,
+              "matches": [
+                "html"
+              ]
             },
             {
               "selector": "::-moz-selection",
               "property": "color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": null,
+              "reason": "uncompilable"
             },
             {
               "selector": "::selection",
               "property": "color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 172,
+              "matches": [
+                "html",
+                "html > head"
+              ]
             }
           ],
           "customProperties": [
@@ -636,32 +762,59 @@
             {
               "selector": ".dark",
               "property": "--border-color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 1,
+              "matches": [
+                "html"
+              ]
             },
             {
               "selector": ".dark",
               "property": "--box-shadow-color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 1,
+              "matches": [
+                "html"
+              ]
             },
             {
               "selector": ":root,.light",
               "property": "--box-shadow-color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 1,
+              "matches": [
+                "html"
+              ]
             },
             {
               "selector": ".list-container",
               "property": "border",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 4,
+              "matches": [
+                "div.page-container > div.flex-container > div.lis…",
+                "div.page-container > div.flex-container > div.lis…"
+              ]
             },
             {
               "selector": ".list-container>.header",
               "property": "border-bottom",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 4,
+              "matches": [
+                "div.flex-container > div.list-container > span.he…",
+                "div.flex-container > div.list-container > span.he…"
+              ]
             },
             {
               "selector": ".list-container",
               "property": "box-shadow",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 4,
+              "matches": [
+                "div.page-container > div.flex-container > div.lis…",
+                "div.page-container > div.flex-container > div.lis…"
+              ]
             }
           ],
           "customProperties": [
@@ -702,27 +855,45 @@
             {
               "selector": ".dark",
               "property": "--svg-alt-color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 1,
+              "matches": [
+                "html"
+              ]
             },
             {
               "selector": ".dark",
               "property": "--text-muted-color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 1,
+              "matches": [
+                "html"
+              ]
             },
             {
               "selector": ".with-icon>svg.duotone path.duotone--secondary",
               "property": "fill",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 2,
+              "matches": [
+                "a.with-icon > svg.duotone > path.duotone--seconda…",
+                "a.with-icon > svg.duotone > path.duotone--seconda…"
+              ]
             },
             {
               "selector": ".text-muted",
               "property": "color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 1,
+              "matches": [
+                "ul.blank-list > li > span.text-muted.with-icon"
+              ]
             },
             {
               "selector": ":where(fieldset)",
               "property": "border",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 0
             }
           ],
           "customProperties": [
@@ -764,22 +935,34 @@
             {
               "selector": ".dark",
               "property": "--link-hover-color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 1,
+              "matches": [
+                "html"
+              ]
             },
             {
               "selector": ":root,.light",
               "property": "--svg-alt-hover-color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 1,
+              "matches": [
+                "html"
+              ]
             },
             {
               "selector": "a:hover",
               "property": "color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": null,
+              "reason": "dynamicState"
             },
             {
               "selector": ".theme-toggle button:hover",
               "property": "color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": null,
+              "reason": "dynamicState"
             }
           ],
           "customProperties": [
@@ -818,17 +1001,27 @@
             {
               "selector": ".dark",
               "property": "--svg-alt-hover-color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 1,
+              "matches": [
+                "html"
+              ]
             },
             {
               "selector": ":root,.light",
               "property": "--link-hover-color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 1,
+              "matches": [
+                "html"
+              ]
             },
             {
               "selector": ".with-icon:hover>svg.duotone path.duotone--secondary",
               "property": "fill",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": null,
+              "reason": "dynamicState"
             }
           ],
           "customProperties": [
@@ -866,12 +1059,20 @@
             {
               "selector": ":root,.light",
               "property": "--svg-alt-color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 1,
+              "matches": [
+                "html"
+              ]
             },
             {
               "selector": ":root,.light",
               "property": "--text-muted-color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 1,
+              "matches": [
+                "html"
+              ]
             }
           ],
           "customProperties": [
@@ -883,7 +1084,7 @@
           "name": "ink-2",
           "group": "ink",
           "role": "text",
-          "status": "live",
+          "status": "unmatched",
           "hex": "#000000",
           "rgb": [
             0,
@@ -908,7 +1109,8 @@
             {
               "selector": ":where(dialog)",
               "property": "color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 0
             }
           ]
         },
@@ -916,7 +1118,7 @@
           "name": "surface",
           "group": "surface",
           "role": "surface",
-          "status": "live",
+          "status": "unmatched",
           "hex": "#ffffff",
           "rgb": [
             255,
@@ -941,7 +1143,8 @@
             {
               "selector": ":where(dialog)",
               "property": "background-color",
-              "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+              "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+              "matchCount": 0
             }
           ]
         }
@@ -986,32 +1189,58 @@
         {
           "selector": "html,body",
           "property": "color",
-          "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+          "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+          "matchCount": 2,
+          "matches": [
+            "html",
+            "html > body"
+          ]
         },
         {
           "selector": ":root,.light",
           "property": "--border-color",
-          "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+          "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+          "matchCount": 1,
+          "matches": [
+            "html"
+          ]
         },
         {
           "selector": ":root,.light",
           "property": "--box-shadow-color",
-          "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+          "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+          "matchCount": 1,
+          "matches": [
+            "html"
+          ]
         },
         {
           "selector": ":root,.light",
           "property": "--link-color",
-          "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+          "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+          "matchCount": 1,
+          "matches": [
+            "html"
+          ]
         },
         {
           "selector": ":root,.light",
           "property": "--text-color",
-          "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+          "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+          "matchCount": 1,
+          "matches": [
+            "html"
+          ]
         },
         {
           "selector": "a",
           "property": "color",
-          "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+          "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+          "matchCount": 28,
+          "matches": [
+            "ul.blank-list > li > a.with-icon",
+            "ul.blank-list > li > a.with-icon"
+          ]
         }
       ],
       "customProperties": [
@@ -1053,22 +1282,39 @@
         {
           "selector": ":root,.light",
           "property": "--svg-alt-color",
-          "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+          "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+          "matchCount": 1,
+          "matches": [
+            "html"
+          ]
         },
         {
           "selector": ":root,.light",
           "property": "--text-muted-color",
-          "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+          "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+          "matchCount": 1,
+          "matches": [
+            "html"
+          ]
         },
         {
           "selector": ".with-icon>svg.duotone path.duotone--secondary",
           "property": "fill",
-          "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+          "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+          "matchCount": 2,
+          "matches": [
+            "a.with-icon > svg.duotone > path.duotone--seconda…",
+            "a.with-icon > svg.duotone > path.duotone--seconda…"
+          ]
         },
         {
           "selector": ".text-muted",
           "property": "color",
-          "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+          "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+          "matchCount": 1,
+          "matches": [
+            "ul.blank-list > li > span.text-muted.with-icon"
+          ]
         }
       ],
       "customProperties": [
@@ -1106,12 +1352,21 @@
         {
           "selector": "html,body",
           "property": "background-color",
-          "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+          "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+          "matchCount": 2,
+          "matches": [
+            "html",
+            "html > body"
+          ]
         },
         {
           "selector": ":root,.light",
           "property": "--bg-color",
-          "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+          "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+          "matchCount": 1,
+          "matches": [
+            "html"
+          ]
         }
       ],
       "customProperties": [
@@ -1148,17 +1403,25 @@
         {
           "selector": ":root,.light",
           "property": "--link-hover-color",
-          "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+          "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+          "matchCount": 1,
+          "matches": [
+            "html"
+          ]
         },
         {
           "selector": "a:hover",
           "property": "color",
-          "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+          "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+          "matchCount": null,
+          "reason": "dynamicState"
         },
         {
           "selector": ".theme-toggle button:hover",
           "property": "color",
-          "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+          "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+          "matchCount": null,
+          "reason": "dynamicState"
         }
       ],
       "customProperties": [
@@ -1195,12 +1458,18 @@
         {
           "selector": ":root,.light",
           "property": "--svg-alt-hover-color",
-          "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+          "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+          "matchCount": 1,
+          "matches": [
+            "html"
+          ]
         },
         {
           "selector": ".with-icon:hover>svg.duotone path.duotone--secondary",
           "property": "fill",
-          "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+          "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+          "matchCount": null,
+          "reason": "dynamicState"
         }
       ],
       "customProperties": [
@@ -1236,12 +1505,19 @@
         {
           "selector": "::-moz-selection",
           "property": "color",
-          "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+          "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+          "matchCount": null,
+          "reason": "uncompilable"
         },
         {
           "selector": "::selection",
           "property": "color",
-          "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+          "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+          "matchCount": 172,
+          "matches": [
+            "html",
+            "html > head"
+          ]
         }
       ]
     },
@@ -1249,7 +1525,7 @@
       "name": "line",
       "group": "line",
       "role": "line",
-      "status": "live",
+      "status": "unmatched",
       "hex": "#a0a0a0",
       "rgb": [
         160,
@@ -1274,7 +1550,8 @@
         {
           "selector": ":where(fieldset)",
           "property": "border",
-          "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+          "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+          "matchCount": 0
         }
       ]
     },
@@ -1282,7 +1559,7 @@
       "name": "ink-2",
       "group": "ink",
       "role": "text",
-      "status": "live",
+      "status": "unmatched",
       "hex": "#000000",
       "rgb": [
         0,
@@ -1307,7 +1584,8 @@
         {
           "selector": ":where(dialog)",
           "property": "color",
-          "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+          "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+          "matchCount": 0
         }
       ]
     },
@@ -1315,7 +1593,7 @@
       "name": "surface",
       "group": "surface",
       "role": "surface",
-      "status": "live",
+      "status": "unmatched",
       "hex": "#ffffff",
       "rgb": [
         255,
@@ -1340,7 +1618,8 @@
         {
           "selector": ":where(dialog)",
           "property": "background-color",
-          "source": "https://parkersprouse.me/index-yuSfdUTd.css"
+          "source": "https://parkersprouse.me/index-yuSfdUTd.css",
+          "matchCount": 0
         }
       ]
     }

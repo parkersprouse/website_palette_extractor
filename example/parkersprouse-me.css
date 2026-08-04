@@ -8,15 +8,8 @@
   /* Ground */
   --c-ground: #e4e4e7;
 
-  /* Surface */
-  --c-surface: #ffffff;
-
   /* Ink */
   --c-ink-1: #e4e4e7;
-  --c-ink-2: #000000;
-
-  /* Line */
-  --c-line: #a0a0a0;
 
   /* Neutral */
   --c-grey-1: #52525c;
@@ -39,12 +32,6 @@
     /* Ground */
     --c-ground: #09090b;
 
-    /* Surface */
-    --c-surface: #ffffff;
-
-    /* Ink */
-    --c-ink-2: #000000;
-
     /* Neutral */
     --c-grey-1: #9f9fa9;
     --c-grey-2: #e4e4e7;
@@ -60,12 +47,6 @@
 [data-theme="dark"] {
   /* Ground */
   --c-ground: #09090b;
-
-  /* Surface */
-  --c-surface: #ffffff;
-
-  /* Ink */
-  --c-ink-2: #000000;
 
   /* Neutral */
   --c-grey-1: #9f9fa9;

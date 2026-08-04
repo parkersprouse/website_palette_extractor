@@ -4,12 +4,12 @@ Status: **all four phases landed 2026-07-26.** Written 2026-07-26.
 
 **The migration is done; the work it left behind is not.** See
 [Outstanding work](#outstanding-work) below — ~~fourteen tasks, three of them
-decisions the owner has since settled~~ **nineteen as of 2026-08-02** (T15–T19
-were added after this line was written; not updated each time a task was
-filed, since the count itself isn't load-bearing anywhere — the section
-below is), six of them decisions the owner has settled outright (T1, T2, T3,
-T9's direction, T11's won't-do, T14's closed-as-satisfied) — and it is the
-authority for what is left.
+decisions the owner has since settled~~ ~~nineteen as of 2026-08-02~~
+**twenty-seven as of 2026-08-03** (tasks were added after this line was
+written; not updated each time one was filed, since the count itself isn't
+load-bearing anywhere — the section below is), six of them decisions the
+owner has settled outright (T1, T2, T3, T9's direction, T11's won't-do,
+T14's closed-as-satisfied) — and it is the authority for what is left.
 `CLAUDE.md`'s Migration TODO points there rather than duplicating it.
 
 ## Why
@@ -3422,6 +3422,92 @@ selector toggle does. All four required to fail against the implementation
 they were written to pin before being trusted, per this file's own "a test
 that passes before and after tests nothing" discipline — checked directly,
 not assumed.
+
+---
+
+### T27 — Quality sweep, 2026-08-03 — landed, with two items deferred
+
+**Not an accuracy task.** A whole-repo sweep after the four phases and
+T1–T26 were done: documentation accuracy across every `.md` file and the
+in-code docs, plus a bug hunt through the paths the corpus never exercises.
+The eight `python-*` review skills were run over the result.
+
+**What it found, and where.** Every bug was in `__main__.py` or `images.py`
+— **the only two modules with no test file at all**. That is not a
+coincidence worth glossing over: the suite was 198 tests deep on the parsing
+and cascade code and zero tests deep on the CLI, so the CLI's failures were
+the ones nobody could see. Both modules now have one (`tests/test_main.py`,
+`tests/test_images.py`); 198 → 223 tests.
+
+1. **The report's own template could be corrupted by the site it measures.**
+   `emit_html` filled `_HTML` with a chain of `str.replace` calls, and each
+   one rescans everything the earlier ones wrote. `__DATA__` — the site's
+   JSON, holding arbitrary selector text — was substituted *before* four
+   static placeholders, so a site whose CSS contained a class named
+   `.__GROUP_TITLES__` had that token rewritten inside its own data blob.
+   The result is invalid JSON inside `<script type="application/json">`,
+   `JSON.parse` throws, and the report renders nothing — invariant 11's
+   standalone guarantee broken by the page being measured. Reproduced
+   directly before fixing. Now one `re.sub` pass over the template, which
+   cannot re-read what it wrote.
+2. **`--formats` accepted anything.** An unknown name matched no writer
+   branch, so `--formats jsn` created an empty directory, printed an empty
+   "wrote:" list and **exited 0** — indistinguishable from a site with no
+   colors.
+3. **A negative `--limit` silently trimmed the wrong end.** `entries[:-5]`
+   is valid Python; the palette came back smaller with nothing said.
+   `--merge`, `--min-score` and `--timeout` were unchecked too.
+4. **An unwritable `-o` ended in a traceback**, alone among `main`'s
+   failures, and only after the whole extraction had already run.
+5. **`images.analyse` crashed on tiny artwork.** Fewer opaque pixels than
+   clusters raises in both back-ends (`rng.choice(..., replace=False)`;
+   sklearn refuses `n_clusters > n_samples`), so a page whose only image is
+   a tracking pixel died *after* its palette was complete. k is clamped now.
+6. **`build.py`'s vendoring check could not see `six`.** It tested
+   `startswith(f"{pkg}/")` — a directory prefix — and `six` (html5lib's
+   runtime dependency) vendors as a top-level `six.py`. So it was both
+   missing from the required list and undetectable had it been on it: the
+   archive could lose `six`, pass `_verify`, import fine on the build
+   machine and die everywhere else. Precisely the failure `_verify` replaced
+   a smoke test to catch, reintroduced by the dependency *shape* T9's
+   `html5lib` brought in. Verified by stripping `six.py` from a copy of the
+   archive and confirming the tightened check rejects it.
+7. **`example/` was stale**, the second tracked artifact and the one with no
+   rebuild rule. See `CLAUDE.md`'s new "Regenerate `example/` too" section.
+
+**Verified the project's own way.** All eight frozen bundles, all six output
+files each — 48 files — byte-identical before and after with `generated`
+stripped, because every fix is on a path the corpus does not reach. The
+reference fixture's documented anchors all re-checked by hand (ground
+`#151515`, 20 tokens, one theme, no warnings, `#ffc600` `saved`, `#13330d`
+`inert`, `rgb(255 255 255 / 0.75)` → `#c4c4c4` at 10.47:1, imagery 100.0%
+neutral over 2 images / 19,919 px, dominant `#3d3d3d` at 74.7%). Every new
+test was run against the stashed pre-fix tree and **required to fail there**
+first — per this file's own discipline — except two written to pin the new
+implementation's own hazards rather than the old bug.
+
+**Deferred, deliberately, and not filed as separate tasks unless the owner
+wants them:**
+
+- **`extract._build` is 273 lines**, and `_walk`/`extract`/`parse_color`/
+  `detect_ground`/`load_har` are all over 90. Every review skill flags this.
+  It is not being split in a sweep: `_build` alone carries invariants 12,
+  13, 18, 19, 21, 24 and 26, and this file's whole premise is that the
+  obvious restructuring of this code produces plausible wrong output. Worth
+  its own task with its own corpus diff, or worth leaving alone.
+- **The `except Exception` clauses in `dom.py`** (five of them) look like
+  the anti-pattern and are not: invariant 16 states outright that a selector
+  `cssselect2` cannot compile must be `False` rather than an error. Narrowing
+  them to a named exception class risks converting a currently-handled crash
+  into an uncaught one for a lint-shaped gain. Reviewed and kept.
+- **No `mypy`/`pyright`.** Annotation coverage was audited with the stdlib
+  instead (18 gaps in ~6,800 lines, all private helpers over untyped
+  third-party token/array objects, which is the one case the type-safety
+  guidance itself permits). Adding a checker is an owner call, not a sweep's.
+- **`sources.load_url` fetches stylesheets one at a time.** A thread pool
+  would need no new dependency, but this is the documented-inferior input
+  path, invariant 3 makes sheet order load-bearing, and parallel fetching
+  changes how a server is hit. Left alone on purpose.
 
 ---
 

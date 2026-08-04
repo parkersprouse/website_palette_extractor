@@ -50,19 +50,30 @@ Whether a broader dependency, like trading the pure-Python floor for `lxml`,
 is worth taking is still the owner's call to make explicitly, the same way the
 `tinycss2`/`cssselect2` migration itself was.
 
-The core takes two dependencies, both pure Python and both by the same authors:
-**`tinycss2`** (one transitive dep, `webencodings`) tokenises, and
-**`cssselect2`** (whose only dep is `tinycss2`) parses selectors, matches them,
-and counts their specificity. Everything above them — theme scopes, weighting,
-`var()`, what counts as a theme, the cascade itself — is still ours. These are
-phases 1, 2 and 3 of `PLAN.md`, all landed. Pillow/numpy remain optional and
+The core takes **three** dependencies, all pure Python. **`tinycss2`** (one
+transitive dep, `webencodings`) tokenises, and **`cssselect2`** (whose only dep
+is `tinycss2`) parses selectors, matches them, and counts their specificity —
+those two are by the same authors, and are phases 1 and 2 of `PLAN.md`.
+**`html5lib`** (one transitive dep, `six`) arrived later, with T9: it builds a
+conforming document tree *below* `<html>`/`<body>`, which `dom.py`'s own
+~60-line `html.parser` shim deliberately does not, and which T9's real-ancestry
+resolution needs. The shim was not replaced by it — see invariant 16 for why
+both still exist.
+
+Everything above all three — theme scopes, weighting, `var()`, what counts as a
+theme, the cascade itself — is still ours. Pillow/numpy remain optional and
 reached only through `images.py`, behind `--images`.
+
+**Five top-level names have to reach the zipapp**, not three: the three above
+plus `webencodings` and `six`. `six` vendors as a single `six.py` module rather
+than a package directory, which `build.py`'s structural check has to allow for
+explicitly — see below.
 
 ## Commands
 
 ```bash
 python3 -m palettekit <target> -o out    # target: .har | URL | .html/.css path
-python3 -m unittest discover             # 198 tests, all must pass (needs the deps)
+python3 -m unittest discover             # 223 tests, all must pass (needs the deps)
 python3 -m palettekit x.har --no-themes  # collapse a two-theme site into one
 ruff check .                             # must stay clean; config in pyproject
 python3 -m palettekit x.har --list-sources   # diagnose framework noise first
@@ -91,13 +102,15 @@ python3 build.py
 It does what used to be a six-command incantation copied from here into a
 terminal: stages `palettekit/` into a temp dir with the `__main__.py` shim
 zipapp requires (zipapp refuses a source tree that already has one), vendors
-`tinycss2`, `cssselect2` and `webencodings` into that staging dir via `uv pip
-install --target` (or plain `pip` if `uv` isn't on `PATH`) — a zipapp carries
+`tinycss2`, `cssselect2`, `html5lib` and their transitive deps
+(`webencodings`, `six`) into that staging dir via `uv pip install --target`
+(or plain `pip` if `uv` isn't on `PATH`) — a zipapp carries
 no dependency metadata, so without this the `.pyz` imports fine on a machine
 that happens to have them installed and fails everywhere else — strips
 `__pycache__`/`*.dist-info`/uv's `.lock` marker, and zips the result. It then
-**structurally asserts** all four vendored top-level packages
-(`palettekit`, `tinycss2`, `cssselect2`, `webencodings`) are physically inside
+**structurally asserts** all six vendored top-level names
+(`palettekit`, `tinycss2`, `cssselect2`, `html5lib`, `webencodings`, `six`)
+are physically inside
 the archive rather than smoke-testing by running it: running the built `.pyz`
 on the same machine that built it would pass whether or not vendoring
 happened, since site-packages is still on `sys.path` and a dev interpreter has
@@ -105,13 +118,24 @@ these installed regardless. That structural check is what actually catches a
 skipped vendoring step — the failure mode the six-command version was silently
 exposed to.
 
+**The check accepts a package directory *or* a single module, and that is not
+cosmetic.** It originally tested `name.startswith(f"{pkg}/")` only, which no
+`six` could ever satisfy: `six` vendors as a top-level `six.py`, so it was
+both absent from the required list and undetectable if it had been on it —
+the archive could lose `six` entirely, pass `_verify`, import fine on the
+build machine, and die on `import six` everywhere else. Exactly the failure
+`_verify` replaced a smoke test to catch, reintroduced by the dependency
+*shape* `html5lib` brought in. Verified by rebuilding the archive with
+`six.py` removed and confirming `_verify` rejects it.
+
 Reading `[project.dependencies]` out of `pyproject.toml` (via `tomllib`, free
 at this project's floor) means the dependency list can't drift from the one
 `pip install -e .` uses, the same discipline `PYTHON_FLOOR` applies to the
-version guard below.
+version guard below. The two *transitive* names (`webencodings`, `six`) are
+the only ones added by hand, because neither is ever in `pyproject.toml`.
 
 **Still a manual step, and still required**: run the built `.pyz` on an
-interpreter that has *neither* dependency installed —
+interpreter that has *none* of the dependencies installed —
 
 ```bash
 uv run --python 3.11 --no-project python palettekit.pyz <target> -o out
@@ -168,10 +192,38 @@ was decided against rather than left open:
 
 So this stays a manual step, permanently rather than "until T11 lands":
 rebuild with `python3 build.py` at the end of a session that touched
-`palettekit/`, and **verify with an interpreter that has neither dependency
-installed** — on a development machine every interpreter has them and a
-missing vendoring step is invisible to a smoke test, though not to
+`palettekit/`, and **verify with an interpreter that has none of the three
+dependencies installed** — on a development machine every interpreter has them
+and a missing vendoring step is invisible to a smoke test, though not to
 `build.py`'s own structural check.
+
+### Regenerate `example/` too — it is the second tracked artifact
+
+**`example/` is a committed *output* of this tool, and it goes stale the same
+way `palettekit.pyz` does.** `README.md` points readers at it as sample
+output, so a session that changed what the tool emits and left it alone ships
+the previous version's output under the current version's name — the identical
+failure the rule above exists for, on the artifact that had no rule.
+
+```bash
+python3 -m palettekit parkersprouse.me.har --images -o example
+```
+
+It drifted exactly as predicted, and was caught by regenerating rather than by
+any check: committed 2026-08-02, it predated T18–T26 and still showed three
+tokens as `live` that the current tool reports `unmatched` — so its `.css`,
+`.scss`, `.ts` and `.tailwind.js` each shipped three tokens the tool now
+correctly withholds (only `live` colors reach the code outputs), and its JSON
+lacked `matchCount`/`matches`/`reason` entirely. Regenerated 2026-08-03.
+
+**This is cheaper to check than to remember**: regenerate into a temp
+directory and diff against the tracked copy with the `generated` key stripped
+(it is a wall-clock timestamp — see the note above). Identical means nothing
+to do.
+
+Unlike the `.pyz`, this one *is* reproducible from a fresh clone —
+`parkersprouse.me.har` is the single `.gitignore` exception — so there is no
+reason for it to be wrong.
 
 ## Layout and data flow
 
@@ -190,10 +242,10 @@ sources.py   →  cssparse.py  →  extract.py  →  emit.py
 | `cssparse.py` | 1067 | `tinycss2` integration, `var()`, `selector_weight`, roles, theme scopes, `@layer` names, `color-scheme` pass-through (T10), `@supports` evaluation (T23), `@property` registrations (T22) |
 | `dom.py` | 718 | `html.parser` → `ElementTree` shim, `cssselect2` matching of `<html>`/`<body>`, specificity, plus `full_tree`/`elements_matching`/`wrap_tree` (T9: real DOM below the page element), `selector_reach` (T18: does a selector match anything, real/none/untestable), `element_signature` (T19: a short label for one real matched element), `_compile_selector_parts` (T25: one bad selector-list branch costs only itself), and `untestable_reason` (T24: which of the two causes made `selector_reach` answer `None`) |
 | `sources.py` | 292 | `load_har` / `load_url` / `load_paths` → `Bundle` |
-| `extract.py` | 1887 | `extract()`, the cascade, per-theme `_build`, ground, merging, statuses, naming, `resolve_by_ancestry`/`resolve_by_ancestry_kind` (T9, non-inheriting-aware since T22), `Entry.all_unmatched` (T18), per-usage `match_count`/`match_samples` (T19), `_page_color_scheme`/`_scopes_present`'s confirmation gate (T10), `_theme_scoped_scheme_keywords` (T26), `property_registrations` (T22), `Entry.all_dynamic_only`/`Usage.reach_reason` (T24) |
-| `emit.py` | 1059 | Emitters; `_HTML` is the report template (T20: status sub-headings, T24: always-present Caveats section) |
-| `images.py` | 148 | Optional image quantisation, not part of the token set |
-| `__main__.py` | 255 | CLI; `main()` guards `PYTHON_FLOOR` before anything else |
+| `extract.py` | 1921 | `extract()`, the cascade, per-theme `_build`, ground, merging, statuses, naming, `resolve_by_ancestry`/`resolve_by_ancestry_kind` (T9, non-inheriting-aware since T22), `Entry.all_unmatched` (T18), per-usage `match_count`/`match_samples` (T19), `_page_color_scheme`/`_scopes_present`'s confirmation gate (T10), `_theme_scoped_scheme_keywords` (T26), `property_registrations` (T22), `Entry.all_dynamic_only`/`Usage.reach_reason` (T24) |
+| `emit.py` | 1086 | Emitters; `_HTML` is the report template (T20: status sub-headings, T24: always-present Caveats section) |
+| `images.py` | 163 | Optional image quantisation, not part of the token set; `analyse` clamps k to the sample count (fewer opaque pixels than clusters used to raise) |
+| `__main__.py` | 321 | CLI; `main()` guards `PYTHON_FLOOR` before anything else, then `_validate` rejects bad `--formats`/negative numerics before any work |
 
 `emit.to_document(palette)` returns the dict the JSON file holds — that dict is
 the public data contract. The HTML report consumes the same dict, inlined into
@@ -1925,7 +1977,7 @@ publish an explanation for a discrepancy that itself amounts to a guess.
 ## Migration TODO
 
 **Moved. `PLAN.md`'s "Outstanding work" section is the authority** for
-everything still to do — T1–T19 as of 2026-08-02, each with its rationale, its
+everything still to do — T1–T27 as of 2026-08-03, each with its rationale, its
 prerequisites and the level its change should be *diffed* at. Not updated
 here each time a task is added; that section is the count that matters.
 

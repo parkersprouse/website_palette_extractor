@@ -15,6 +15,15 @@ import os
 import sys
 
 from . import PYTHON_FLOOR, emit, extract, images, sources
+from .color import find_colors
+from .cssparse import resolve_vars
+from .sources import Bundle
+
+# The outputs `--formats` accepts. Kept beside the writer block in `main()`
+# that consumes it — an unknown name used to be dropped silently, so
+# `--formats jsn` created an empty directory, printed an empty "wrote:" list
+# and exited 0, which reads exactly like a site with no colors in it.
+FORMATS = ("html", "json", "css", "scss", "ts", "tailwind")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -90,6 +99,12 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     args = build_parser().parse_args(argv)
+
+    problem = _validate(args)
+    if problem:
+        print(f"error: {problem}", file=sys.stderr)
+        return 2
+
     want = {f.strip().lower() for f in args.formats.split(",") if f.strip()}
 
     if args.images:
@@ -146,8 +161,16 @@ def main(argv: list[str] | None = None) -> int:
             )
 
     doc = emit.to_document(pal)
-    os.makedirs(args.out, exist_ok=True)
-    slug = emit._slug(pal)
+    try:
+        os.makedirs(args.out, exist_ok=True)
+    except OSError as e:
+        # Every other failure in this function reports itself and returns a
+        # code; an unwritable -o used to be the one that ended in a traceback,
+        # and it does so *after* the whole extraction has already run.
+        print(f"error: could not create output directory {args.out}: {e}",
+              file=sys.stderr)
+        return 2
+    slug = emit.slug(pal)
     written = []
 
     def write(name: str, text: str) -> None:
@@ -156,28 +179,73 @@ def main(argv: list[str] | None = None) -> int:
             fh.write(text)
         written.append(path)
 
-    if "json" in want:
-        write(f"{slug}.json", json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
-    if "css" in want:
-        write(f"{slug}.css", emit.emit_css(doc, args.prefix, args.include_unused))
-    if "scss" in want:
-        write(f"{slug}.scss",
-              emit.emit_scss(doc, args.prefix, args.include_unused))
-    if "ts" in want:
-        write(f"{slug}.ts",
-              emit.emit_ts(doc, args.var_name, args.include_unused))
-    if "tailwind" in want:
-        write(f"{slug}.tailwind.js",
-              emit.emit_tailwind(doc, args.include_unused))
-    if "html" in want:
-        write("index.html", emit.emit_html(doc, pal))
+    try:
+        if "json" in want:
+            write(f"{slug}.json",
+                  json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
+        if "css" in want:
+            write(f"{slug}.css",
+                  emit.emit_css(doc, args.prefix, args.include_unused))
+        if "scss" in want:
+            write(f"{slug}.scss",
+                  emit.emit_scss(doc, args.prefix, args.include_unused))
+        if "ts" in want:
+            write(f"{slug}.ts",
+                  emit.emit_ts(doc, args.var_name, args.include_unused))
+        if "tailwind" in want:
+            write(f"{slug}.tailwind.js",
+                  emit.emit_tailwind(doc, args.include_unused))
+        if "html" in want:
+            write("index.html", emit.emit_html(doc, pal))
+    except OSError as e:
+        # A full disk or a read-only directory is the same class of failure as
+        # an uncreatable one above, and reporting the files already written
+        # matters: the run is partially complete, not a clean no-op.
+        print(f"error: could not write output: {e}", file=sys.stderr)
+        if written:
+            print(f"  wrote {len(written)} file(s) before failing.",
+                  file=sys.stderr)
+        return 2
 
     if not args.quiet:
         _summarise(doc, pal, written)
     return 0
 
 
-def _list_sources(bundle, args) -> None:
+def _validate(args: argparse.Namespace) -> str | None:
+    """Check the numeric and enumerated options before any work happens.
+
+    Returns the message to print, or None if the arguments are usable. These
+    are checked here rather than with argparse `type=` callables so that all
+    of them are reachable from a plain `main([...])` call in a test without
+    catching `SystemExit`, the same way every other failure in `main` is.
+
+    Each of these used to be accepted and then quietly do the wrong thing
+    rather than fail: a negative `--limit` reached `entries[:limit]` and
+    trimmed tokens off the *end* of the palette (`[:-5]` drops five), which
+    looks like a smaller site rather than a rejected flag.
+    """
+    unknown = sorted(
+        f for f in {f.strip().lower() for f in args.formats.split(",") if f.strip()}
+        if f not in FORMATS
+    )
+    if unknown:
+        return (f"unknown --formats value(s): {', '.join(unknown)}. "
+                f"Valid: {', '.join(FORMATS)}.")
+    if not {f.strip().lower() for f in args.formats.split(",") if f.strip()}:
+        return f"--formats is empty. Valid: {', '.join(FORMATS)}."
+    if args.limit < 0:
+        return f"--limit must be 0 or more, got {args.limit}."
+    if args.merge < 0:
+        return f"--merge must be 0 or more, got {args.merge} (0 disables merging)."
+    if args.min_score < 0:
+        return f"--min-score must be 0 or more, got {args.min_score}."
+    if args.timeout <= 0:
+        return f"--timeout must be greater than 0, got {args.timeout}."
+    return None
+
+
+def _list_sources(bundle: Bundle, args: argparse.Namespace) -> None:
     """Show what CSS was found and how much color each source carries.
 
     On a site built with a page builder or a component framework, most colors
@@ -193,8 +261,6 @@ def _list_sources(bundle, args) -> None:
     for i, sh in enumerate(sheets):
         n_col = 0
         for d in sh.declarations:
-            from .color import find_colors
-            from .cssparse import resolve_vars
             n_col += len(find_colors(resolve_vars(d.value, table)))
         print(f"  {i:>2}  {len(sh.declarations):>6}  {n_col:>7}  "
               f"{'yes' if sh.third_party else '  -':>3}  {sh.source}")
@@ -224,7 +290,7 @@ def _summarise_theme(t: dict, label: bool) -> None:
             print(f"  {c['name']:<{width}}  {c['hex']}  [{c['status']}]")
 
 
-def _summarise(doc: dict, pal, written: list[str]) -> None:
+def _summarise(doc: dict, pal: extract.Palette, written: list[str]) -> None:
     themes = doc["themes"]
     print(f"\n{doc['name']}")
     if len(themes) > 1:

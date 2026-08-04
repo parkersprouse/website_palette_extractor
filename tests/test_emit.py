@@ -122,5 +122,77 @@ class TestEndToEnd(unittest.TestCase):
         })
 
 
+class TestReportTemplateSubstitution(unittest.TestCase):
+    """The report's placeholders must not be findable in the site's own data.
+
+    `emit_html` used to fill the template with a chain of `str.replace`
+    calls, each one rescanning everything the previous ones had already
+    written. `__DATA__` — the site's JSON, containing arbitrary selector text
+    — was substituted *before* four static placeholders, so a site whose CSS
+    contained one of their names had it rewritten inside the data blob. The
+    result is invalid JSON in a `<script type="application/json">` element,
+    which means `JSON.parse` throws and the report renders nothing: invariant
+    11's standalone guarantee broken by the page being measured.
+    """
+
+    def _report(self, css: str) -> tuple[dict, str]:
+        page = write_fixture(
+            f"<!doctype html><html><head><style>{css}</style></head>"
+            "<body></body></html>"
+        )
+        pal = extract.extract(sources.load_any(page))
+        doc = emit.to_document(pal)
+        return doc, emit.emit_html(doc, pal)
+
+    def _payload(self, html: str) -> dict:
+        blob = re.search(
+            r'id="palette-data">(.*?)</script>', html, re.S).group(1)
+        # `</` is escaped on the way in so the JSON cannot close the element.
+        return json.loads(blob.replace("<\\/", "</"))
+
+    def test_site_content_cannot_corrupt_the_report_payload(self):
+        """A class literally named for a placeholder is enough to trigger it."""
+        for placeholder in ("__GROUP_TITLES__", "__GROUP_BLURBS__",
+                            "__STATUS_TITLES__", "__STATUS_BLURBS__"):
+            with self.subTest(placeholder=placeholder):
+                _doc, html = self._report(
+                    f"body {{ background: #123456 }} "
+                    f".{placeholder} {{ color: #ff0000 }}"
+                )
+                data = self._payload(html)          # raises if corrupted
+                selectors = [e.get("selector", "")
+                             for c in data["colors"]
+                             for e in c.get("examples", [])]
+                self.assertTrue(
+                    any(placeholder in s for s in selectors),
+                    "the site's own selector should survive verbatim",
+                )
+
+    def test_every_placeholder_is_still_filled(self):
+        """The single-pass rewrite must not leave a placeholder behind."""
+        _doc, html = self._report("body { background: #123456 }")
+        for placeholder in ("__TITLE__", "__TITLE_HTML__", "__SUBTITLE__",
+                            "__UI_THEMES__", "__DATA__", "__GROUP_TITLES__",
+                            "__GROUP_BLURBS__", "__STATUS_TITLES__",
+                            "__STATUS_BLURBS__"):
+                # The data blob is excluded: a *site* may legitimately contain
+                # the text, and that is precisely what must survive.
+            blob = re.search(
+                r'id="palette-data">(.*?)</script>', html, re.S).group(1)
+            self.assertNotIn(placeholder, html.replace(blob, ""))
+
+    def test_a_backslash_in_site_content_is_not_read_as_a_group_reference(self):
+        """`re.sub` reads `\\g<0>` in a *replacement string* as a back-reference.
+
+        The replacements are returned from a callback, which is never
+        scanned for those — but Tailwind-style escaped class names put real
+        backslashes in selectors, so this is the shape that would break it.
+        """
+        _doc, html = self._report(
+            r"body { background: #123456 } .w-\[\\g\<0\>\] { color: #00ff00 }"
+        )
+        self._payload(html)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

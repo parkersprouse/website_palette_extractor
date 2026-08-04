@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 """Build palettekit.pyz — the vendored, single-file zipapp.
 
-A zipapp carries no dependency metadata, so `tinycss2` and `cssselect2`
-(and tinycss2's own dependency, `webencodings`) have to be vendored into
-the staging directory or the .pyz only works on a machine that happens
-to have them installed already (PLAN.md T1). zipapp also refuses a
-source tree that already has a top-level __main__.py, hence the shim.
+A zipapp carries no dependency metadata, so every runtime dependency —
+`tinycss2`, `cssselect2` and `html5lib`, plus the two transitive ones
+they pull in, `webencodings` and `six` — has to be vendored into the
+staging directory, or the .pyz only works on a machine that happens to
+have them installed already (PLAN.md T1). zipapp also refuses a source
+tree that already has a top-level __main__.py, hence the shim.
 
     python3 build.py
 
 Rebuild whenever anything under palettekit/ changes — CLAUDE.md's
 "Rebuild the zipapp before a work session is finished" — and verify
-with an interpreter that has neither dependency installed; every
+with an interpreter that has none of the dependencies installed; every
 interpreter on a dev machine has them, which is exactly what let the
 tracked artifact go four phases stale before (PLAN.md T1).
 """
@@ -54,17 +55,21 @@ def _dependencies() -> list[str]:
 
 
 def _required_packages() -> tuple[str, ...]:
-    """Every top-level package the archive must contain.
+    """Every top-level importable name the archive must contain.
 
     Derived from [project.dependencies] rather than a second hardcoded
     list — otherwise a dependency added there gets vendored by pip but
     silently skipped by this check, the exact drift reading the
-    dependency list from one place was meant to prevent. `webencodings`
-    is the one name added by hand: it arrives as tinycss2's own
-    transitive dependency and is never itself in pyproject.toml.
+    dependency list from one place was meant to prevent.
+
+    Two names are added by hand because they are *transitive* and so never
+    appear in pyproject.toml: `webencodings` (tinycss2's) and `six`
+    (html5lib's). Both are imported at runtime, so a .pyz missing either
+    one fails on a clean interpreter exactly like a missing direct
+    dependency — which is the whole failure `_verify` exists to catch.
     """
     names = (_NAME_SPLIT.split(req, maxsplit=1)[0] for req in _dependencies())
-    return ("palettekit", "webencodings", *names)
+    return ("palettekit", "webencodings", "six", *names)
 
 
 def _verify() -> None:
@@ -79,11 +84,20 @@ def _verify() -> None:
     names = zipfile.ZipFile(OUTPUT).namelist()
     missing = [
         pkg for pkg in _required_packages()
-        if not any(n.startswith(f"{pkg}/") for n in names)
+        # A top-level dependency may be vendored either as a package
+        # directory (`tinycss2/…`) or as a single module (`six.py`), and
+        # checking only for the directory form made the module form
+        # permanently undetectable: `six` could vanish from the archive and
+        # this check would still pass, leaving a .pyz that imports fine here
+        # and dies on `import six` anywhere else. That is precisely the
+        # failure a structural check is here to catch instead of a smoke
+        # test, so it has to accept both shapes.
+        if not any(n == f"{pkg}.py" or n.startswith(f"{pkg}/") for n in names)
     ]
     if missing:
         raise RuntimeError(
-            f"palettekit.pyz is missing vendored package(s): {missing}"
+            f"palettekit.pyz is missing vendored dependency/dependencies: "
+            f"{missing}"
         )
 
 

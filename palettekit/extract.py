@@ -12,7 +12,14 @@ import urllib.parse
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-from .color import Color, contrast_ratio, delta_ok, hue_name, wcag_label
+from .color import (
+    Color,
+    contrast_ratio,
+    delta_ok,
+    find_colors,
+    hue_name,
+    wcag_label,
+)
 from .cssparse import (
     Stylesheet,
     is_inert_shadow,
@@ -1486,7 +1493,6 @@ def _build(sheets: list[Stylesheet], page_url: str, all_var_refs: set[str],
 
 
 def _colors_of(value: str, appearance: str = "light") -> list[Color]:
-    from .color import find_colors
     return find_colors(value, appearance)
 
 

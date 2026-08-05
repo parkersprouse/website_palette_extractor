@@ -615,12 +615,24 @@
         'use strict';
         var doc = JSON.parse(document.getElementById('palette-data').textContent);
 
+        var HREF_REGEX = /(?:http[s]?:\/\/.)?(?:www\.)?[-a-zA-Z0-9@%._\+~#=]{2,256}\.[a-z]{2,6}\b(?:[-a-zA-Z0-9@:%_\+.~#?&\/\/=]*)/g;
+
         var GROUP_TITLES = __GROUP_TITLES__;
         var GROUP_BLURBS = __GROUP_BLURBS__;
         var GROUP_ORDER = ['ground', 'surface', 'ink', 'line', 'neutral', 'chroma'];
         var STATUS_TITLES = __STATUS_TITLES__;
         var STATUS_BLURBS = __STATUS_BLURBS__;
         var STATUS_ORDER = ['live', 'saved', 'inert', 'unmatched'];
+
+        var DATE_TIME_FORMAT = new Intl.DateTimeFormat('en-US', {
+          day: 'numeric',
+          hour12: true,
+          hour: 'numeric',
+          minute: '2-digit',
+          month: 'short',
+          timeZoneName: 'short',
+          year: 'numeric',
+        });
 
         var fmt = 'declared';
         var filter = 'live';
@@ -650,11 +662,24 @@
           document.documentElement.setAttribute('data-pk-theme', theme().id);
         }
 
-        function el(tag, cls, text) {
+        function el(tag, cls, text, as_html = false) {
           var n = document.createElement(tag);
           if (cls) n.className = cls;
-          if (text != null) n.textContent = text;
+          if (text != null) {
+            if (as_html) {
+              n.innerHTML = text;
+            } else {
+              n.textContent = text;
+            }
+          }
           return n;
+        }
+
+        function formatDateTime(value) {
+          if (!value) return value;
+          var toDate = new Date(value);
+          if (toDate.toString() === 'Invalid Date') return value;
+          return DATE_TIME_FORMAT.format(toDate);
         }
 
         function valueFor(c) {
@@ -892,25 +917,70 @@
           var dl = el('table');
           dl.id = 'report-details';
           var tbody = el('tbody');
-          function row(k, v) {
+
+          function linkify(href) {
+            if (
+              !href ||
+              (typeof href === 'string' && !HREF_REGEX.test(href)) ||
+              href.constructor.name === 'HTMLAnchorElement'
+            ) return href;
+
+            var a = el('a', null, href);
+            a.href = href;
+            a.target = '_blank';
+            a.setAttribute('rel', 'nofollow noreferrer');
+            return a;
+          }
+
+          function linkifyCell(href) {
+            var cell = el('td', 'mono');
+            var cell_content = linkify(href);
+
+            if (cell_content && typeof cell_content !== 'string') {
+              cell_content.classList.add('mono');
+            }
+
+            cell.append(cell_content);
+            return cell;
+          }
+
+          function linkifySentence(line) {
+            if (!line || typeof line !== 'string') return line;
+            var new_line = line;
+
+            var links = line.match(HREF_REGEX) || [];
+            for (var link of links) {
+              new_line = new_line.replace(link, `<a href='${link}' target='_blank' rel='nofollow noreferrer'>${link}</a>`);
+            }
+
+            return new_line;
+          }
+
+          function row(k, v, as_html = false) {
             var tr = el('tr');
-            tr.appendChild(el('th', null, k));
-            tr.appendChild(el('td', 'mono', v));
+            tr.appendChild(el('th', null, k, as_html));
+            if (typeof v === 'string') {
+              tr.appendChild(el('td', 'mono', v, as_html));
+            } else {
+              var cell = linkifyCell(v);
+              tr.appendChild(cell);
+            }
             tbody.appendChild(tr);
           }
-          row('Source', doc.source || '(local files)');
+
+          row('Source', linkifySentence(doc.source) || '(local files)', true);
           if (THEMES.length > 1) {
-            row('Theme', t.id + ' (' + t.appearance + ')' +
+            row('Theme', linkifySentence(t.id + ' (' + t.appearance + ')' +
               (t.scope ? ' \u2014 from rules scoped to ' + t.scope : ' \u2014 ' +
-                'from rules belonging to no theme'));
+                'from rules belonging to no theme')), true);
           }
-          row('Ground', t.ground + '  (' + t.groundSource + ')');
-          row('Generated', doc.generated);
-          row('Custom properties', t.stats.customProperties + ' declared, ' +
-            t.stats.customPropertiesReferenced + ' referenced');
+          row('Ground', linkifySentence(t.ground + '  (' + t.groundSource + ')'), true);
+          row('Generated', linkifySentence(formatDateTime(doc.generated)), true);
+          row('Custom properties', linkifySentence(t.stats.customProperties + ' declared, ' +
+            t.stats.customPropertiesReferenced + ' referenced'), true);
           if (doc.images) {
-            row('Images sampled', doc.images.imageCount + ' (' +
-              doc.images.neutralSharePct + '% of pixels visually neutral)');
+            row('Images sampled', linkifySentence(doc.images.imageCount + ' (' +
+              doc.images.neutralSharePct + '% of pixels visually neutral)'), true);
           }
           dl.appendChild(tbody);
           rep.appendChild(dl);
@@ -928,7 +998,7 @@
             var stb = el('tbody');
             t.stats.sources.forEach(function (s) {
               var tr = el('tr');
-              tr.appendChild(el('td', 'mono', s.source));
+              tr.appendChild(linkifyCell(s.source));
               tr.appendChild(el('td', 'mono', String(s.declarations)));
               tr.appendChild(el('td', 'mono', s.thirdParty ? 'yes' : 'no'));
               stb.appendChild(tr);

@@ -662,16 +662,10 @@
           document.documentElement.setAttribute('data-pk-theme', theme().id);
         }
 
-        function el(tag, cls, text, as_html = false) {
+        function el(tag, cls, text) {
           var n = document.createElement(tag);
           if (cls) n.className = cls;
-          if (text != null) {
-            if (as_html) {
-              n.innerHTML = text;
-            } else {
-              n.textContent = text;
-            }
-          }
+          if (text != null) n.textContent = text;
           return n;
         }
 
@@ -919,9 +913,14 @@
           var tbody = el('tbody');
 
           function linkify(href) {
+            /* `.match`, not `HREF_REGEX.test` -- `HREF_REGEX` carries `/g`
+               and is shared across every call in this render, so `.test()`
+               would resume from the `lastIndex` its own previous call left
+               behind and silently refuse every other href in a multi-row
+               table. `.match()` on a global regex always restarts at 0. */
             if (
               !href ||
-              (typeof href === 'string' && !HREF_REGEX.test(href)) ||
+              (typeof href === 'string' && !href.match(HREF_REGEX)) ||
               href.constructor.name === 'HTMLAnchorElement'
             ) return href;
 
@@ -944,43 +943,61 @@
             return cell;
           }
 
+          /* Returns a DocumentFragment of text nodes and real <a> elements,
+             never an HTML string. `line` is site-derived in several callers
+             (a theme's scope selector, the winning ground rule's own selector
+             text) and invariant 9 means it is not sanitized; building nodes
+             directly performs the necessary sanitization */
           function linkifySentence(line) {
             if (!line || typeof line !== 'string') return line;
-            var new_line = line;
 
-            var links = line.match(HREF_REGEX) || [];
-            for (var link of links) {
-              new_line = new_line.replace(link, `<a href='${link}' target='_blank' rel='nofollow noreferrer'>${link}</a>`);
+            var frag = document.createDocumentFragment();
+            var cursor = 0;
+            var re = new RegExp(HREF_REGEX.source, 'g');
+            var match;
+            while ((match = re.exec(line)) !== null) {
+              if (match.index > cursor) {
+                frag.appendChild(document.createTextNode(line.slice(cursor, match.index)));
+              }
+              var a = el('a', null, match[0]);
+              a.href = match[0];
+              a.target = '_blank';
+              a.setAttribute('rel', 'nofollow noreferrer');
+              frag.appendChild(a);
+              cursor = match.index + match[0].length;
             }
-
-            return new_line;
+            if (cursor < line.length) {
+              frag.appendChild(document.createTextNode(line.slice(cursor)));
+            }
+            return frag;
           }
 
-          function row(k, v, as_html = false) {
+          function row(k, v) {
             var tr = el('tr');
-            tr.appendChild(el('th', null, k, as_html));
-            if (typeof v === 'string') {
-              tr.appendChild(el('td', 'mono', v, as_html));
+            tr.appendChild(el('th', null, k));
+            var td = el('td', 'mono');
+            if (v && v.nodeType) {
+              td.appendChild(v);
             } else {
-              var cell = linkifyCell(v);
-              tr.appendChild(cell);
+              td.textContent = v;
             }
+            tr.appendChild(td);
             tbody.appendChild(tr);
           }
 
-          row('Source', linkifySentence(doc.source) || '(local files)', true);
+          row('Source', linkifySentence(doc.source) || '(local files)');
           if (THEMES.length > 1) {
             row('Theme', linkifySentence(t.id + ' (' + t.appearance + ')' +
               (t.scope ? ' \u2014 from rules scoped to ' + t.scope : ' \u2014 ' +
-                'from rules belonging to no theme')), true);
+                'from rules belonging to no theme')));
           }
-          row('Ground', linkifySentence(t.ground + '  (' + t.groundSource + ')'), true);
-          row('Generated', linkifySentence(formatDateTime(doc.generated)), true);
+          row('Ground', linkifySentence(t.ground + '  (' + t.groundSource + ')'));
+          row('Generated', linkifySentence(formatDateTime(doc.generated)));
           row('Custom properties', linkifySentence(t.stats.customProperties + ' declared, ' +
-            t.stats.customPropertiesReferenced + ' referenced'), true);
+            t.stats.customPropertiesReferenced + ' referenced'));
           if (doc.images) {
             row('Images sampled', linkifySentence(doc.images.imageCount + ' (' +
-              doc.images.neutralSharePct + '% of pixels visually neutral)'), true);
+              doc.images.neutralSharePct + '% of pixels visually neutral)'));
           }
           dl.appendChild(tbody);
           rep.appendChild(dl);

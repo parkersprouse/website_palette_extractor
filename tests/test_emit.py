@@ -243,5 +243,81 @@ class TestReportTemplateSubstitution(unittest.TestCase):
         self._payload(html)
 
 
+class TestReportLinkification(unittest.TestCase):
+    """The "Extraction report" panel turns URL-shaped substrings in the
+    Source/Ground/Theme rows into real links (2026-08-04, PLAN.md T30).
+
+    Both bugs below were found while writing this class, not designed
+    against up front – documenting the feature is what surfaced them. Each
+    was confirmed to fail against the pre-fix template before being
+    trusted, per this project's own "a test that passes before and after
+    tests nothing" rule (`git stash` the template, rerun, `git stash pop`).
+    """
+
+    def setUp(self):
+        self.page = write_fixture(FIXTURE)
+        bundle = sources.load_any(self.page)
+        self.pal = extract.extract(bundle)
+        self.doc = emit.to_document(self.pal)
+
+    def test_the_report_never_assigns_innerhtml(self):
+        """A row's value can be site-derived text – a theme's own scope
+        selector, or the winning ground rule's own selector – and
+        invariant 9 means neither is sanitized: `<img src=x
+        onerror=...>` written into a selector reaches this string
+        verbatim. An earlier draft of the report's link-detection spliced
+        that through `el()`'s `innerHTML` path, which makes it executable
+        markup instead of the inert text it must stay – invariant 11's
+        standalone guarantee, broken by the page being *measured* rather
+        than by the report's own machinery (the class of bug T27 already
+        patched once, on a different code path).
+
+        `linkifySentence` was rewritten to build text nodes and real `<a>`
+        elements instead, which removes the sink rather than trying to
+        escape around it – so this checks for the sink's absence rather
+        than for one payload surviving, a stronger and harder-to-regress
+        guarantee than pinning a single escaped example would be.
+        """
+        html = emit.emit_html(self.doc, self.pal)
+        self.assertIsNone(
+            re.search(r"\.innerHTML\s*=", html),
+            "the report must never assign .innerHTML; build DOM nodes "
+            "instead so untrusted site text can never become markup",
+        )
+
+    def test_href_detection_does_not_reuse_a_global_regexs_last_index(self):
+        """`HREF_REGEX` carries `/g` and is shared across every row and
+        every "Stylesheets read" table cell rendered in one pass.
+        `.test()` on a global regex resumes from its own `lastIndex`, so
+        calling it repeatedly on that one shared pattern alternates
+        true/false regardless of the input – confirmed directly in a JS
+        engine: four structurally identical URLs in a row came back
+        link/no-link/link/no-link. `.match()` on a global pattern always
+        restarts at 0 and carries no such state between calls.
+        """
+        self.assertIsNone(
+            re.search(r"HREF_REGEX\.test\(", emit._HTML),
+            "linkify() must not call .test() on the shared global "
+            "HREF_REGEX -- use .match(), which carries no state between "
+            "calls",
+        )
+
+    # A third, "end-to-end" version of this test was drafted and dropped: it
+    # built a page whose winning ground rule's own selector carried the
+    # `<img src=x onerror=...>` payload (so `groundSource` – and, through
+    # it, the report's "Ground" row – contains it verbatim, confirmed
+    # directly), then asserted the payload appears only inside the
+    # `<script type="application/json">` block and not in the surrounding
+    # HTML. It passed against *both* the buggy template and the fixed one –
+    # `emit_html()` only emits static markup plus JS source text, and never
+    # executes that JS, so a bug that only manifests once a browser actually
+    # runs `renderReport()` cannot be observed this way. Per this project's
+    # own "a test that passes before and after tests nothing" rule it was
+    # removed rather than kept for appearances; the two structural tests
+    # above are what actually pin the fix in a Python test, and the runtime
+    # behavior was instead confirmed by hand in a real browser – see
+    # PLAN.md's T30 entry for what was checked and how.
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

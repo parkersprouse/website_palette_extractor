@@ -3825,6 +3825,207 @@ existing `fetch(`/`<link` checks. `test_every_placeholder_is_still_filled`
 and `test_template_declares_no_unknown_placeholder` extended with the two
 new placeholder names, same as every prior placeholder addition.
 
+### T30 — Report design pass and link-detection; two bugs found while documenting it — landed 2026-08-04
+
+**Owner-authored, in two commits, before this task started.** `c8182c0`
+restyled the report — small-caps section headings in place of
+`text-transform: uppercase`, chevron `<svg>` open/close markers on the two
+`<details>` panels, `.controls` regrouped into labelled
+`.controls__control-wrapper` pairs, `--ui-muted` swapped for the
+higher-contrast `--ui-body` across most secondary text, the default copy
+format changed from `hex` to `declared`, and the "Where each color came
+from" table's `examples` column changed from a `  ·  `-joined single line to
+one `\n`-per-example cell (paired with a new `white-space: pre-line` rule on
+`#prov`). `49a37cc` then added link detection: URL-shaped substrings in the
+"Extraction report" panel's Source/Ground/Theme/Generated rows and the
+"Stylesheets read" table become real, `target='_blank' rel='nofollow
+noreferrer'` anchors, and `doc.generated`'s raw ISO timestamp is now run
+through `Intl.DateTimeFormat` for display. This task was "update the tests
+and documentation for that" — the CSS churn has no failure mode worth
+pinning and none is added for it (T20's own style headings/blurbs tests
+already cover the mechanism the new small-caps rule sits on top of); the
+JS behavior changes do, and two of them turned out not to be about
+staleness at all.
+
+**The two tracked artifacts were the first-order staleness, and both were
+checked rather than assumed.** `website_palette_extractor.pyz` was last
+rebuilt at T29 (`eb7a8ca`) — two commits before the design pass and
+link-detection landed, so the shipped zipapp still ran the *pre*-redesign
+template. Rebuilt with `build.py` and reverified the standing three-way
+identity (module / console-script-equivalent / clean-3.11-interpreter
+zipapp with none of the three core dependencies installed) on
+`parkersprouse.me.har`, JSON and HTML both, `generated` normalised out —
+identical. `example/` turned out *not* to be stale: both owner commits had
+already regenerated it (visible in their own diffs touching
+`example/index.html` and `example/parkersprouse-me.json`), confirmed by an
+independent regeneration into a scratch directory and a byte-diff against
+the tracked copy before this task changed anything. It went stale again
+once the two bugs below were fixed, and was regenerated a second time
+after.
+
+**Bug 1 — `linkify()` tested a shared `/g`-flagged regex with `.test()`,
+which alternates true/false across calls regardless of the input.**
+`HREF_REGEX` is declared once at module scope and reused by every row and
+every "Stylesheets read" cell rendered in one pass. A global regex's
+`.test()` resumes from its own `lastIndex`, so on a multi-stylesheet site
+only every other real URL actually became a link — confirmed directly in a
+JS engine (four structurally identical URLs came back
+link/no-link/link/no-link) and then live in a real browser: a three
+-stylesheet local-path fixture rendered under the pre-fix template linked
+`styles-one.css` and `styles-three.css` but not `styles-two.css`, the exact
+alternating pattern predicted. `.match()` on a global pattern always
+restarts at 0 and carries no state between calls, so `linkify()`'s
+`!HREF_REGEX.test(href)` became `!href.match(HREF_REGEX)` — same intent, no
+shared state. Re-verified against the same three-stylesheet fixture: all
+three link.
+
+**Bug 2 — `linkifySentence()` built an HTML string and `row()` spliced it in
+through `el(..., as_html=true)` → `n.innerHTML = text`, and the string it
+built was not escaped.** Every row this function feeds can carry
+site-derived text: the Ground row embeds `groundSource`, which is
+`detect_ground`'s winning rule's own selector text
+(`f"{u.selector} {{ {u.prop} }} in {u.source}"`, `extract.py`); the Theme
+row embeds a theme's own selector-scope string. Invariant 9 means neither
+is sanitized — `<img src=x onerror=...>` written into a selector (a real,
+if contrived, CSS attribute selector: `body[data-x="<img
+src=x onerror=alert(1)>"]`) reaches that string verbatim, and previously
+reached `innerHTML` verbatim too. That is invariant 11's standalone
+guarantee broken by the page *being measured*, the same class of bug T27
+already patched once on a different code path (the chained
+`str.replace`-based placeholder substitution) — reintroduced here by a
+second, unrelated route. Confirmed to actually execute as markup rather
+than merely look risky, in a real browser rather than by inspecting
+`emit_html()`'s return value (which is static text – see the note below on
+why a Python-level check of this can't discriminate the fix at all): built
+a fixture whose `<body>` genuinely carries that attribute (so the malicious
+selector really does win `detect_ground`, not just appear in `examples`),
+served the emitted report over local HTTP, and loaded it in a real browser
+tab. The browser's own console logged the dialog it suppresses by policy –
+`Page dialog suppressed (alert): "1"` – confirming `onerror` actually fired,
+and reading the DOM directly confirmed why: the Ground cell's `<td>`
+genuinely contained a real `<img>` child element
+(`td.querySelector('img')` truthy), not merely the string `<img ...>`
+inside a text node.
+
+Fixed by removing the sink rather than escaping around it, per this
+project's own library-preference habit applied to the DOM instead of a
+parsing library: `linkifySentence` now walks `HREF_REGEX` matches with
+`.exec()` and builds a `DocumentFragment` of real text nodes and `<a>`
+elements, so the hostile substring reaches the DOM only via `textContent`
+-equivalent text-node content, which is always rendered as inert text no
+matter what characters it holds. `row()` takes either a plain string or a
+node and appends accordingly; `el()`'s `as_html` parameter and its
+`innerHTML` branch were deleted outright, since nothing calls it anymore.
+Re-verified on the same live fixture, same DOM-level check: `hasImgElement`
+is now `false`, `.innerHTML` on that cell reads the payload correctly
+entity-escaped (`&lt;img src=x onerror=alert(1)&gt;`), and `.textContent`
+shows it as the plain, visible, inert text a reader would expect – no
+`Page dialog suppressed` line in the console this time.
+
+**Why the obvious "assert no `<img`-shaped payload survives unescaped"
+Python test doesn't work, and was written, shown not to discriminate, and
+removed rather than kept for appearances.** `emit.emit_html()` returns
+static HTML plus JS *source text* — it never executes that JavaScript, so a
+bug that only manifests once a browser actually runs `renderReport()`
+cannot be observed by inspecting the function's return value. A first draft
+of an end-to-end test built exactly the hostile-ground-selector fixture
+above, called `emit_html()`, and asserted the payload appeared only inside
+the `<script type="application/json">` block — and passed against both the
+buggy template and the fixed one, because neither run ever executes
+`row()`/`linkifySentence()` at all. Per this project's own "a test that
+passes before and after tests nothing" rule (stated once already, for T20's
+suite) it was deleted rather than left in as false reassurance; a comment
+in `tests/test_emit.py::TestReportLinkification` records why, so the next
+person doesn't re-derive and re-discover the same dead end. What actually
+verifies the runtime behavior is the browser check described above — this
+is the "verified by hand in a browser" step T20 already established as
+this codebase's answer for claims a Python test structurally cannot make.
+
+**What the Python suite does pin, and does discriminate (both required to
+fail against the pre-fix template before being trusted, `git stash push
+website_palette_extractor/report_template.html` and rerun, per this
+project's standard discipline):**
+
+- `test_the_report_never_assigns_innerhtml` — asserts `\.innerHTML\s*=`
+  does not appear anywhere in the emitted HTML. Structural rather than
+  example-based on purpose: it guarantees the *sink* is gone, not that one
+  chosen payload happens to survive escaped, which is the stronger and
+  harder-to-regress claim and the one a future refactor reintroducing
+  `innerHTML` would actually trip.
+- `test_href_detection_does_not_reuse_a_global_regexs_last_index` — asserts
+  `HREF_REGEX\.test\(` does not appear in `emit._HTML`, i.e. that the
+  specific stateful-call shape is gone, independent of which function it
+  might reappear in.
+
+Both are regex-over-emitted-JS-source checks, T20's own style, chosen for
+the same reason T20 chose it: nothing here executes the template's
+JavaScript, so pinning the *source shape* is what a Python test can
+actually do, and the runtime claim gets its confidence from the browser
+check instead.
+
+**Also fixed, not merely diagnosed: `el()`'s dead `as_html` parameter and
+`row()`'s dead `linkifyCell`-based branch**, both unreachable once
+`linkifySentence` always returns either the untouched falsy input or a
+`DocumentFragment` (every real call site passes a `linkifySentence(...)`
+result). Removed rather than left as unused generality.
+
+**One cosmetic gap noted, not fixed.** `HREF_REGEX`'s scheme prefix is
+optional, so a bare relative filename with no scheme and no slash (a local
+`.css` path shorter than its directory, e.g. `styles.css` on its own)
+still linkifies to a dead relative link wherever the report happens to be
+opened from. Confirmed live in the same browser check. Not fixed here:
+tightening the regex risks the over/under-matching this project's other
+regex-precision invariants (24, the `color-mix()` glue characters; the
+per-space powerless-hue epsilons) already warn against getting wrong in
+either direction, and every real corpus site's `source` values carry a
+full scheme, so this is cosmetic rather than a correctness or security
+gap. Left as a known limit rather than a task, since it doesn't rise to a
+numbered fix on its own.
+
+**Verified**: full suite 225 → 227 tests, passing on Python 3.11, 3.12,
+3.13 and 3.14; `ruff check .` clean. `example/` regenerated a second time
+after the fixes landed (byte-diff against a fresh run, `generated`
+normalised out: identical) and `website_palette_extractor.pyz` rebuilt
+again from the fixed template, with the standing three-way JSON/HTML
+identity check rerun and passing. CLAUDE.md's file-size table entries for
+`emit.py` (543 → 545, a pre-existing drift from T29 not caused by this
+task but caught while touching the same table) and `report_template.html`
+(927 → 1114) corrected.
+
+**Two more questions this task's own checks raised, both closed by
+measurement rather than assumption:**
+
+- *Does `linkify()`'s "whole string becomes the anchor's `href`" behavior
+  ever produce a wrong link for a real source?* `linkifyCell` treats
+  `HREF_REGEX` matching *anywhere* in the string as license to link the
+  *entire* string, unlike `linkifySentence`, which links only the matched
+  substring. That is only correct if every real `source` value is either a
+  complete URL or doesn't match at all — a source where the regex matches a
+  substring in the middle would produce an anchor pointing at text the user
+  never sees as a link. Checked directly against all eight frozen corpus
+  bundles' `stats.sources`, not assumed from the two shapes this project
+  happens to construct (`<style[N]>`, `[style attributes]`, and full URLs):
+  every one of ~50 source strings across the corpus is either a full-string
+  match or no match, with zero partial matches. `linkify`'s behavior is
+  correct for every real source this tool has ever read; the one shape that
+  would expose the difference (a bare local filename, `styles.css`) is the
+  cosmetic dead-link gap already noted above, not a new one.
+- *Did swapping `--ui-muted` for `--ui-body` across roughly a dozen
+  selectors in the design pass (`.blurb`, `.status-blurb`, `.val`, `.role`,
+  `.cr`, `.tag`, `th`, `.warn-box ul`, `.caveat-box`, …) put any of them
+  below `_pick_report_theme`'s contrast floor?* It cannot have: every
+  changed selector in `c8182c0`'s diff moves from `--ui-muted` (invariant
+  11's 3.0 floor) to `--ui-body` (4.5), never the reverse — checked by
+  grepping the commit's own diff for both directions, not by re-reading it
+  once and trusting the impression. `test_report_theme_is_readable` already
+  asserts the *picked* body-role color clears 4.5 on the fixture, and that
+  assertion is unaffected by which CSS selectors consume the role, so no
+  element could have gained a weaker guarantee than it already had. Reran
+  `_pick_report_theme` over all eight frozen bundles and both themes anyway,
+  printing the actual ratio rather than trusting the architectural argument
+  alone: body ranges 4.82:1 (`pawelgrzybek.com`, light) to 13.26:1 (`mdn`,
+  light), comfortably above the 4.5 floor everywhere, `.tag` included.
+
 ---
 
 ## Repo and process

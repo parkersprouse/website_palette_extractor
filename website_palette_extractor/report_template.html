@@ -363,13 +363,15 @@
       }
 
       details.detail .detail-body table#prov tbody tr td {
-        white-space: pre-line;
         vertical-align: middle;
+        white-space: pre-line;
+        word-break: break-word;
       }
 
       details.detail .detail-body table#prov thead tr th:not(:last-of-type),
       details.detail .detail-body table#prov tbody tr td:not(:last-of-type) {
         text-align: center;
+        white-space: nowrap;
       }
 
       details.detail .detail-body .detail-body__section-header {
@@ -390,7 +392,7 @@
         text-align: left;
         padding: .35rem .5rem;
         border-bottom: 1px solid var(--ui-line);
-        vertical-align: top;
+        vertical-align: middle;
       }
 
       th {
@@ -404,6 +406,7 @@
 
       details.detail div#report table#report-details th {
         text-align: right;
+        white-space: nowrap;
       }
 
       .warn-box {
@@ -417,7 +420,6 @@
         margin: 0 0 .4rem;
         font-size: 1rem;
         letter-spacing: .1em;
-        /* text-transform: uppercase; */
         font-variant: small-caps;
         color: var(--ui-accent);
       }
@@ -452,7 +454,6 @@
         margin: 0 0 .4rem;
         font-size: 1rem;
         letter-spacing: .1em;
-        /* text-transform: uppercase; */
         font-variant: small-caps;
         color: var(--ui-strong);
       }
@@ -884,7 +885,14 @@
         function renderProv(cols) {
           var tb = document.querySelector('#prov tbody');
           tb.textContent = '';
-          cols.forEach(function (c) {
+
+          var sorted_cols = [...cols].sort((col_a, col_b) => {
+            var a_occurrences = Number.parseInt(col_a.occurrences, 10) || 0;
+            var b_occurrences = Number.parseInt(col_b.occurrences, 10) || 0;
+            return b_occurrences - a_occurrences;
+          });
+
+          sorted_cols.forEach(function (c) {
             var tr = el('tr');
             tr.appendChild(el('td', 'mono', c.name));
             tr.appendChild(el('td', 'mono', valueFor(c)));
@@ -1013,7 +1021,14 @@
             sh.appendChild(shr);
             st.appendChild(sh);
             var stb = el('tbody');
-            t.stats.sources.forEach(function (s) {
+
+            var sorted_stats = [...t.stats.sources].sort((source_a, source_b) => {
+              var a_decs = Number.parseInt(source_a.declarations, 10) || 0;
+              var b_decs = Number.parseInt(source_b.declarations, 10) || 0;
+              return b_decs - a_decs;
+            });
+
+            sorted_stats.forEach(function (s) {
               var tr = el('tr');
               tr.appendChild(linkifyCell(s.source));
               tr.appendChild(el('td', 'mono', String(s.declarations)));

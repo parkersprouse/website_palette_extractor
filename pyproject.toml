@@ -10,22 +10,28 @@ name = "website-palette-extractor"
 description = "Read a website's color palette out of its stylesheets and render it as an interactive page."
 readme = "README.md"
 
-# Verified floor, not a nominal one: the suite passes on 3.11, 3.12, 3.13 and
-# 3.14, and 3.11 produces byte-identical JSON to 3.14 for the reference
-# fixture. Raised from 3.10 on 2026-07-26 (owner decision, PLAN.md T2) because
-# 3.10 reaches end-of-life in October 2026; nothing in the codebase needs
-# 3.11+ itself.
+# Verified floor: the suite passes on 3.11, 3.12, 3.13 and 3.14; 3.11 produces byte-identical JSON to 3.14.
 requires-python = ">=3.11"
 
-# Single source of truth is website_palette_extractor/__init__.py; see [tool.hatch.version].
+# Single source of truth is `website_palette_extractor/__init__.py`; see [tool.hatch.version].
 dynamic = ["version"]
 
 authors = [{ name = "Parker Sprouse" }]
-keywords = ["css", "color", "design-tokens", "extractor", "har", "oklab", "palette"]
+keywords = [
+  "css",
+  "color",
+  "design-tokens",
+  "extractor",
+  "har",
+  "oklab",
+  "palette",
+]
 
 # The SPDX license repository only has v2.1 of the Hippocratic License currently
 license = "LicenseRef-Hippocratic-License-3.0"
-license-file = "LICEN[CS]E.*"
+license-files = [
+  "LICEN[CS]E.*",
+]
 
 classifiers = [
   "Development Status :: 4 - Beta",
@@ -40,44 +46,45 @@ classifiers = [
   "Topic :: Text Processing :: Markup :: HTML",
 ]
 
-# The owner set accuracy and breadth above slimness on 2026-07-26, so a
-# dependency that makes the tool read more sites correctly is welcome. See
-# PLAN.md. Anything merely *optional* still belongs behind an extra, reached
-# through a capability check that degrades with a message.
-#
 # tinycss2 is a spec-compliant CSS tokenizer, pure Python, one transitive
-# dependency (webencodings, BSD). It replaces the hand-rolled brace walker,
-# which was an approximation of the CSS grammar and leaked a new bug per site:
-# escaped quotes in selectors, statement at-rules glued onto the next rule,
-# commas inside `:where()`. Phase 1 of PLAN.md.
+# dependency (webencodings, BSD).
 #
 # cssselect2 is the same story one level up, and by the same authors: a
 # spec-compliant selector parser and matcher, pure Python, and its only
 # dependency is tinycss2. It answers "does this rule land on <html>/<body>"
-# against a real tree, replacing a regex that could only read one compound
-# selector and refused everything else. Phase 2 of PLAN.md.
+# against a real tree.
 #
-# html5lib builds a real document tree below <html>/<body>, which dom.py's
-# own ~60-line html.parser shim deliberately does not (it only needs
-# <html>/<body> ancestry to be right; T9 needs a real element's *inheritance*
-# relationship to an ancestor several levels down, where a conforming tree
-# builder's implied-tag and misnesting handling actually matters). Core
+# html5lib builds a real document tree below <html>/<body>. Core
 # install is pure Python – six and webencodings, the latter already a
 # transitive dependency via tinycss2 above – so PYTHON_FLOOR and build.py's
-# vendoring model, which assumes no compiled wheels, are unaffected. PLAN.md
-# T9.
-dependencies = ["tinycss2>=1.5", "cssselect2>=0.9", "html5lib>=1.1"]
+# vendoring model, which assumes no compiled wheels, are unaffected.
+dependencies = [
+  "cssselect2>=0.9",
+  "html5lib>=1.1",
+  "tinycss2>=1.5",
+]
 
 [project.optional-dependencies]
-# `--images` quantises page artwork to check whether it carries color the CSS
+# `--images` quantizes page artwork to check whether it carries color the CSS
 # does not. Without these, the flag warns and the rest of the tool still runs.
-images = ["numpy>=1.21", "pillow>=9"]
+images = [
+  "numpy>=1.21",
+  "pillow>=9",
+]
 
 # scikit-learn gives a faster, better-conditioned k-means. images.py falls back
 # to a numpy implementation when it is absent, so this is purely a speedup.
-images-fast = ["numpy>=1.21", "pillow>=9", "scikit-learn>=1.0"]
+images-fast = [
+  "numpy>=1.21",
+  "pillow>=9",
+  "scikit-learn>=1.0",
+]
 
-dev = ["build>=1.0", "pytest>=7", "ruff>=0.4"]
+dev = [
+  "build>=1.0",
+  "pytest>=7",
+  "ruff>=0.4",
+]
 
 [project.scripts]
 website-palette-extractor = "website_palette_extractor.__main__:main"
@@ -90,13 +97,12 @@ Issues = "https://github.com/parkersprouse/website_palette_extractor/issues"
 path = "website_palette_extractor/__init__.py"
 
 [tool.hatch.build.targets.wheel]
-packages = ["website_palette_extractor"]
+packages = [
+  "website_palette_extractor",
+]
 
 [tool.hatch.build.targets.sdist]
-# Ship the tests and the docs. The reference fixture described in CLAUDE.md
-# lives in palettes/fleshandbonedesign.com/ and is deliberately *not* shipped:
-# there is no committed copy at all – `palettes` is .gitignore'd – so there is
-# nothing here to include or exclude.
+# Ship the tests and the docs.
 include = [
   "/CLAUDE.md",
   "/LICENSE.md",
@@ -106,10 +112,7 @@ include = [
 ]
 
 [tool.ruff]
-# 88 is ruff's default and everything already fits under it. The source is
-# mostly written to ~79; tightening to 79 would flag roughly 40 existing lines,
-# so do that as a deliberate pass rather than letting the linter nag from day one.
-line-length = 88
+line-length = 100
 target-version = "py311"
 
 [tool.ruff.lint]
@@ -124,26 +127,27 @@ select = [
   "SIM",  # simplify
 ]
 ignore = [
-  # The color-science modules use short names (l, m, s, a, b, L, C, H) because
+  # The `color-science` modules use short names (l, m, s, a, b, L, C, H) because
   # they match the published OKLab formulae. Renaming them to satisfy a linter
-  # would make the maths harder to check against the reference.
+  # would make the math harder to check against the reference.
   "E741",
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# No longer the report template -- that moved to report_template.html, which
-# ruff doesn't lint anyway. What's left over 88 columns is two doc comments
-# whose length comes from `website_palette_extractor.__version__`'s own name;
-# not worth wrapping mid-identifier.
-"website_palette_extractor/emit.py" = ["E501"]
 # Tests assert on long literal color values and selectors.
-"tests/*.py" = ["E501"]
+"tests/*.py" = [
+  "E501",
+]
 
 [tool.pytest.ini_options]
 # The suite is unittest-based; pytest discovers those classes natively, so both
 # `python3 -m unittest discover` and `pytest` work. Keep it that way – the
 # plain stdlib invocation is what makes the tests runnable with no install at
-# all. tests/ is a package (has __init__.py) so both runners import modules as
+# all. `tests/` is a package (has `__init__.py`) so both runners import modules as
 # `tests.test_x`, which is what makes `from .helpers import ...` resolve.
-testpaths = ["tests"]
-python_files = ["test_*.py"]
+testpaths = [
+  "tests",
+]
+python_files = [
+  "test_*.py",
+]

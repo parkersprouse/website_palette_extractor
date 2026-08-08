@@ -1,4 +1,4 @@
-"""Website Palette Extractor – read a site's color palette, build a browsable page.
+"""Website Palette Extractor – build a browsable page from a site's extracted color palette.
 
     python3 -m website_palette_extractor <target> [-o outdir] [options]
 
@@ -25,6 +25,8 @@ from .sources import Bundle
 # and exited 0, which reads exactly like a site with no colors in it.
 FORMATS = ("html", "json", "css", "scss", "ts", "tailwind")
 
+PROG_NAME = "website-palette-extractor"
+
 
 def requested_formats(spec: str) -> set[str]:
     """Split a `--formats` value the one way it is ever split.
@@ -38,71 +40,77 @@ def requested_formats(spec: str) -> set[str]:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    cmd_prefix = PROG_NAME
+    try:
+        suffix = sys.argv[0].split('/')[-1]
+        cmd_prefix = "python3 -m website_palette_extractor" if suffix == "__main__.py" else suffix
+    except: # noqa: E722
+        # we're not concerned about any errors thrown to get us here since we're
+        # just going to fall back to using the default assigned script name
+        pass
+
     p = argparse.ArgumentParser(
         # The installed console script, which is hyphenated; the underscored
         # form in the examples below is the *import package*, which `-m` needs.
-        prog="website-palette-extractor",
+        prog=PROG_NAME,
         description="Extract a color palette from a website's styles and "
                     "render it as an interactive page.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "examples:\n"
-            "  python3 -m website_palette_extractor site.har -o palette\n"
-            "  python3 -m website_palette_extractor https://example.com -o palette\n"
-            "  python3 -m website_palette_extractor site.har --images --all\n"
-            "  python3 -m website_palette_extractor ./page/ -o out --prefix brand\n"
-            "\n"
-            "installed, the same thing is spelled:\n"
-            "  website-palette-extractor site.har -o palette\n"
+            f"  {cmd_prefix} site.har -o palette\n"
+            f"  {cmd_prefix} https://example.com -o palette\n"
+            f"  {cmd_prefix} site.har --images --all\n"
+            f"  {cmd_prefix} ./page/ -o out --prefix brand\n"
         ),
     )
     p.add_argument("target", help=".har file, URL, or local html/css path")
     p.add_argument("-o", "--out", default="palette-out",
                    help="output directory (default: palette-out)")
-    p.add_argument("--prefix", default="c",
-                   help="CSS custom property prefix (default: c)")
-    p.add_argument("--var-name", default="palette",
-                   help="exported name in the TypeScript file")
-    p.add_argument("--merge", type=float, default=0.02, metavar="D",
-                   help="OKLab distance below which colors are merged "
-                        "(default 0.02; 0 disables)")
-    p.add_argument("--min-score", type=float, default=0.0,
-                   help="drop colors scoring below this (default 0)")
-    p.add_argument("--limit", type=int, default=0,
-                   help="keep only the top N colors by score")
     p.add_argument("--all", action="store_true",
                    help="keep third-party stylesheets at full weight instead "
                         "of down-weighting them")
+    p.add_argument("--exclude", action="append", metavar="TEXT",
+                   help="skip stylesheets whose source contains TEXT "
+                        "(repeatable) – useful for dropping a framework or "
+                        "site-builder bundle")
+    p.add_argument("--flat", action="store_true",
+                   help="one token per distinct color, instead of separating "
+                        "a color used for text from the same color used for "
+                        "a background")
+    p.add_argument("--formats", default="html,json,css,scss,ts,tailwind",
+                   help="comma-separated outputs to write")
+    p.add_argument("--images", action="store_true",
+                   help="also quantize the page's images to check whether the "
+                        "artwork carries color (needs pillow + numpy)")
+    p.add_argument("--include-unused", action="store_true",
+                   help="also put saved/inert colors in the css, scss, ts and "
+                        "tailwind files (they are always in the json)")
+    p.add_argument("--limit", type=int, default=0, metavar="N",
+                   help="keep only the top N colors by score")
+    p.add_argument("--list-sources", action="store_true",
+                   help="list the stylesheets found, with their color counts, "
+                        "then exit")
+    p.add_argument("--merge", type=float, default=0.02, metavar="D",
+                   help="OKLab distance below which colors are merged "
+                        "(default 0.02; 0 disables)")
+    p.add_argument("--min-score", type=float, default=0.0, metavar="SCORE",
+                   help="drop colors that score below this value (default 0 -- don't drop any)")
+    p.add_argument("--no-themes", action="store_true",
+                   help="treat the site as having one theme, even where it "
+                        "scopes rules to prefers-color-scheme or a .dark class")
     p.add_argument("--no-third-party", action="store_true",
                    help="ignore stylesheets served from another origin")
     p.add_argument("--only", action="append", metavar="TEXT",
                    help="only read stylesheets whose source contains TEXT "
                         "(repeatable)")
-    p.add_argument("--exclude", action="append", metavar="TEXT",
-                   help="skip stylesheets whose source contains TEXT "
-                        "(repeatable) – useful for dropping a framework or "
-                        "site-builder bundle")
-    p.add_argument("--list-sources", action="store_true",
-                   help="list the stylesheets found, with their color counts, "
-                        "then exit")
-    p.add_argument("--flat", action="store_true",
-                   help="one token per distinct color, instead of separating "
-                        "a color used for text from the same color used for "
-                        "a background")
-    p.add_argument("--no-themes", action="store_true",
-                   help="treat the site as having one theme, even where it "
-                        "scopes rules to prefers-color-scheme or a .dark class")
-    p.add_argument("--include-unused", action="store_true",
-                   help="also put saved/inert colors in the css, scss, ts and "
-                        "tailwind files (they are always in the json)")
-    p.add_argument("--images", action="store_true",
-                   help="also quantize the page's images to check whether the "
-                        "artwork carries color (needs pillow + numpy)")
+    p.add_argument("--prefix", default="c",
+                   help="CSS custom property prefix (default: c)")
+    p.add_argument("--quiet", action="store_true", help="suppress the summary")
     p.add_argument("--timeout", type=float, default=20.0,
                    help="network timeout in seconds when fetching a URL")
-    p.add_argument("--formats", default="html,json,css,scss,ts,tailwind",
-                   help="comma-separated outputs to write")
-    p.add_argument("--quiet", action="store_true", help="suppress the summary")
+    p.add_argument("--var-name", default="palette",
+                   help="exported name in the TypeScript file")
     return p
 
 
@@ -110,9 +118,10 @@ def main(argv: list[str] | None = None) -> int:
     if sys.version_info < PYTHON_FLOOR:
         have = ".".join(map(str, sys.version_info[:3]))
         need = ".".join(map(str, PYTHON_FLOOR))
-        print(f"error: website-palette-extractor requires Python {need}+ "
-              f"(running {have}).",
-              file=sys.stderr)
+        print(
+            f"error: {PROG_NAME} requires Python {need}+ (running {have}).",
+            file=sys.stderr
+        )
         return 1
 
     args = build_parser().parse_args(argv)

@@ -11,13 +11,17 @@ a traceback instead of the `error: …`/exit-code pair every other failure in
 exit code instead of raising `SystemExit` for everything except argparse's own
 usage errors, which is what makes that possible.
 """
+import base64
 import io
+import json
 import os
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from unittest import mock
 
 from website_palette_extractor import __main__ as cli
+from website_palette_extractor import extract, sources
 
 from .helpers import FIXTURE, write_fixture
 
@@ -158,6 +162,85 @@ class TestFormatsConstant(unittest.TestCase):
                 self.assertEqual(code, 0)
                 self.assertEqual(len(os.listdir(out)), 1,
                                  f"--formats {fmt} wrote nothing")
+
+
+def _font_page_har() -> str:
+    """A page that both declares an `@font-face` and captured its binary –
+    the shape `--fonts` embeds from with no network access at all."""
+    html = ('<!DOCTYPE html><html><head><link rel="stylesheet" '
+           'href="https://example.com/s.css"></head>'
+           '<body style="background:#fff;color:#111">x</body></html>')
+    css = ('@font-face { font-family: Brand; '
+          'src: url(https://example.com/brand.woff2) format("woff2"); } '
+          'body { font-family: Brand, sans-serif; font-size: 16px; }')
+    font_bytes = b"\x00fake-font-bytes"
+
+    def entry(url: str, mime: str, text: str, encoding: str = "") -> dict:
+        content = {"mimeType": mime, "text": text}
+        if encoding:
+            content["encoding"] = encoding
+            content["size"] = len(base64.b64decode(text))
+        return {"request": {"url": url}, "response": {"content": content}}
+
+    har = {"log": {"entries": [
+        entry("https://example.com/page", "text/html", html),
+        entry("https://example.com/s.css", "text/css", css),
+        entry("https://example.com/brand.woff2", "font/woff2",
+             base64.b64encode(font_bytes).decode("ascii"), "base64"),
+    ]}}
+    return json.dumps(har)
+
+
+class TestFontsFlag(unittest.TestCase):
+    """`--fonts`: CLI wiring, and `_collect_font_bytes`'s HAR-vs-URL gate."""
+
+    def setUp(self):
+        self.page = write_fixture(_font_page_har(), "fonts.har")
+        self.out = tempfile.mkdtemp()
+
+    def test_fonts_flag_embeds_bytes_already_in_the_har(self):
+        """No network access needed or attempted -- the HAR already has the
+        bytes a real browser fetched at capture time."""
+        code, _out, _err = run(self.page, "--fonts", "-o", self.out, "--quiet")
+        self.assertEqual(code, 0)
+        with open(os.path.join(self.out, "index.html"), encoding="utf-8") as fh:
+            html = fh.read()
+        self.assertIn(
+            "data:font/woff2;base64," + base64.b64encode(
+                b"\x00fake-font-bytes"
+            ).decode("ascii"),
+            html,
+        )
+
+    def test_without_fonts_flag_no_bytes_are_embedded(self):
+        code, _out, _err = run(self.page, "-o", self.out, "--quiet")
+        self.assertEqual(code, 0)
+        with open(os.path.join(self.out, "index.html"), encoding="utf-8") as fh:
+            html = fh.read()
+        self.assertNotIn("base64", html.split("id='site-fonts'>")[1][:200])
+
+    def test_collect_font_bytes_never_fetches_for_a_har_target(self):
+        """The HAR-vs-URL asymmetry, exercised directly: `main` computes
+        `allow_fetch` from whether the target is a `.har` file, and a HAR
+        target must never reach `sources.fetch_binaries`."""
+        bundle = sources.load_har(self.page, want_fonts=True)
+        pal = extract.extract(bundle)
+        with mock.patch.object(sources, "fetch_binaries") as fetch:
+            got = cli._collect_font_bytes(pal, bundle, 20.0, allow_fetch=False)
+        fetch.assert_not_called()
+        self.assertEqual(got, {"https://example.com/brand.woff2":
+                               b"\x00fake-font-bytes"})
+
+    def test_collect_font_bytes_fetches_whats_missing_when_allowed(self):
+        bundle = sources.load_har(self.page)  # no want_fonts -- bytes absent
+        pal = extract.extract(bundle)
+        with mock.patch.object(
+            sources, "fetch_binaries",
+            return_value={"https://example.com/brand.woff2": b"\x01\x02"},
+        ) as fetch:
+            got = cli._collect_font_bytes(pal, bundle, 20.0, allow_fetch=True)
+        fetch.assert_called_once()
+        self.assertEqual(got, {"https://example.com/brand.woff2": b"\x01\x02"})
 
 
 if __name__ == "__main__":

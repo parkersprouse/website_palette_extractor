@@ -200,7 +200,7 @@ class TestReportTemplateSubstitution(unittest.TestCase):
                             "__UI_THEMES__", "__DATA__", "__GROUP_TITLES__",
                             "__GROUP_BLURBS__", "__STATUS_TITLES__",
                             "__STATUS_BLURBS__", "__FONT_INTER__",
-                            "__FONT_MONO__"):
+                            "__FONT_MONO__", "__FONT_FACES_CSS__"):
                 # The data blob is excluded: a *site* may legitimately contain
                 # the text, and that is precisely what must survive.
             blob = re.search(
@@ -226,7 +226,7 @@ class TestReportTemplateSubstitution(unittest.TestCase):
             "__TITLE__", "__TITLE_HTML__", "__SUBTITLE__", "__UI_THEMES__",
             "__DATA__", "__GROUP_TITLES__", "__GROUP_BLURBS__",
             "__STATUS_TITLES__", "__STATUS_BLURBS__", "__FONT_INTER__",
-            "__FONT_MONO__",
+            "__FONT_MONO__", "__FONT_FACES_CSS__",
         }
         self.assertEqual(found, known)
 
@@ -317,6 +317,96 @@ class TestReportLinkification(unittest.TestCase):
     # above are what actually pin the fix in a Python test, and the runtime
     # behavior was instead confirmed by hand in a real browser – see
     # PLAN.md's T30 entry for what was checked and how.
+
+
+class TestFontEmbedding(unittest.TestCase):
+    """`doc["fonts"]`, and `emit_html`'s optional real-byte embedding."""
+
+    def _pal_and_doc(self, css: str):
+        html = (f"<!DOCTYPE html><html><head><style>{css}</style></head>"
+               "<body><h1>x</h1></body></html>")
+        pal = extract.extract(sources.load_any(write_fixture(html)))
+        return pal, emit.to_document(pal)
+
+    def test_fonts_key_present_when_the_page_has_typography(self):
+        _pal, doc = self._pal_and_doc(
+            "body { background:#fff; color:#111; "
+            "font-family: Inter, sans-serif; font-size: 16px; }"
+        )
+        self.assertIn("fonts", doc)
+        self.assertEqual(doc["fonts"][0]["family"], "Inter")
+
+    def test_fonts_key_absent_when_the_page_has_none(self):
+        """Additive and optional, like `images` -- a plain site's JSON
+        doesn't grow a key it has nothing to say for."""
+        _pal, doc = self._pal_and_doc("body { background:#fff; color:#111; }")
+        self.assertNotIn("fonts", doc)
+
+    def test_fonts_metadata_never_carries_raw_bytes(self):
+        """`doc["fonts"]` stays lean like `images` -- the actual embedded
+        font bytes live only in the HTML report's own `<style>` block
+        (`emit_html`'s `font_bytes` param), not in the JSON every emitter
+        shares, the same reason `pal.image_report` never carries raw image
+        bytes either."""
+        pal, doc = self._pal_and_doc(
+            '@font-face { font-family: Roboto; '
+            'src: url(https://fonts.gstatic.com/a.woff2) format("woff2"); } '
+            "body { background:#fff; color:#111; "
+            "font-family: Roboto, sans-serif; font-size: 16px; }"
+        )
+        font_bytes = {"https://fonts.gstatic.com/a.woff2": b"\x00fake-woff2"}
+        html = emit.emit_html(doc, pal, font_bytes=font_bytes)
+        blob = re.search(
+            r"""id=['"]palette-data['"]>(.*?)</script>""", html, re.S
+        ).group(1)
+        self.assertNotIn("base64", blob)
+
+    def test_font_mime_prefers_the_declared_format(self):
+        self.assertEqual(emit._font_mime_for("https://x/a", "woff2"),
+                         "font/woff2")
+        self.assertEqual(emit._font_mime_for("https://x/a.woff2", ""),
+                         "font/woff2")
+        self.assertEqual(emit._font_mime_for("https://x/a", ""), "font/ttf")
+
+    def test_site_font_faces_css_embeds_only_faces_with_bytes(self):
+        _pal, doc = self._pal_and_doc(
+            '@font-face { font-family: Roboto; '
+            'src: url(https://fonts.gstatic.com/a.woff2) format("woff2"); } '
+            "body { background:#fff; color:#111; "
+            "font-family: Roboto, sans-serif; font-size: 16px; }"
+        )
+        css = emit._site_font_faces_css(
+            doc["fonts"], {"https://fonts.gstatic.com/a.woff2": b"\x00\x01"}
+        )
+        self.assertIn('font-family: "Roboto"', css)
+        self.assertIn(
+            "data:font/woff2;base64," + base64.b64encode(b"\x00\x01").decode(),
+            css,
+        )
+        # No bytes at all for a face the caller didn't supply -- nothing
+        # embedded, no empty/broken @font-face block either.
+        self.assertEqual(emit._site_font_faces_css(doc["fonts"], {}), "")
+
+    def test_emit_html_fills_the_font_faces_placeholder(self):
+        pal, doc = self._pal_and_doc(
+            '@font-face { font-family: Roboto; '
+            'src: url(https://fonts.gstatic.com/a.woff2) format("woff2"); } '
+            "body { background:#fff; color:#111; "
+            "font-family: Roboto, sans-serif; font-size: 16px; }"
+        )
+        font_bytes = {"https://fonts.gstatic.com/a.woff2": b"\x00\x01"}
+        html = emit.emit_html(doc, pal, font_bytes=font_bytes)
+        self.assertIn("id='site-fonts'", html)
+        self.assertIn("data:font/woff2;base64,", html)
+
+    def test_emit_html_without_font_bytes_leaves_the_style_block_empty(self):
+        pal, doc = self._pal_and_doc(
+            "body { background:#fff; color:#111; "
+            "font-family: Inter, sans-serif; font-size: 16px; }"
+        )
+        html = emit.emit_html(doc, pal)
+        m = re.search(r"id='site-fonts'>(.*?)</style>", html, re.S)
+        self.assertEqual(m.group(1), "")
 
 
 if __name__ == "__main__":

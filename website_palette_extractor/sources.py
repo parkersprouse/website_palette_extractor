@@ -60,12 +60,15 @@ def _kind_for(mime: str, url: str) -> str:
         (".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".bmp")
     ):
         return "image"
+    if "font" in m or u.endswith((".woff2", ".woff", ".ttf", ".otf")):
+        return "font"
     return "other"
 
 
 # ------------------------------------------------------------------ HAR
 
-def load_har(path: str, want_images: bool = False) -> Bundle:
+def load_har(path: str, want_images: bool = False,
+            want_fonts: bool = False) -> Bundle:
     try:
         with open(path, encoding="utf-8", errors="replace") as fh:
             har = json.load(fh)
@@ -104,6 +107,14 @@ def load_har(path: str, want_images: bool = False) -> Bundle:
 
         if kind == "image" and not want_images:
             continue
+        # `--fonts` gates capturing font binary bytes the same way `--images`
+        # gates images – opt-in, since embedding real font files can be
+        # sizeable and most runs don't need them (`emit.py`'s Typography
+        # section works metadata-only without this). Ungated, `kind ==
+        # "font"` responses used to fall through to the `"other"` branch
+        # below and be discarded entirely, same as any font file today.
+        if kind == "font" and not want_fonts:
+            continue
         if kind == "other":
             continue
 
@@ -126,7 +137,7 @@ def load_har(path: str, want_images: bool = False) -> Bundle:
                 raw = base64.b64decode(text)
             except Exception:
                 continue
-            if kind == "image":
+            if kind in ("image", "font"):
                 bundle.assets.append(
                     Asset(url=url, kind=kind, data=raw, origin=origin_of(url))
                 )
@@ -243,6 +254,36 @@ def load_url(url: str, timeout: float = 20.0,
     return bundle
 
 
+def fetch_binaries(urls: list[str], timeout: float = 20.0) -> dict[str, bytes]:
+    """Fetch each of `urls`, returning `{url: bytes}` for the ones that came
+    back.
+
+    Used only to embed real font files (`--fonts`) against a *live* URL
+    target – a linked stylesheet's `@font-face` bodies are already read by
+    the ordinary CSS-fetching path above, so only the binaries their `src:
+    url(...)` point to are new requests. HAR-mode embedding never calls this
+    – only bytes already present in the capture are used there (see
+    CLAUDE.md's known-limits note on this asymmetry); initiating a fresh
+    fetch for a frozen capture defeats the point of one and can hit an
+    expired or blocked URL.
+
+    A failed fetch is silently dropped rather than aborting the run – a
+    report missing one weight's real preview (it falls back to metadata-only
+    for that face) is still useful; an error that kills the whole run over
+    one broken font URL is not.
+    """
+    out: dict[str, bytes] = {}
+    for url in urls:
+        if not url or url.lower().startswith("data:"):
+            continue
+        try:
+            raw, _mime, _final = _get(url, timeout)
+        except Exception:
+            continue
+        out[url] = raw
+    return out
+
+
 # ------------------------------------------------------------------ local
 
 def load_paths(paths: list[str]) -> Bundle:
@@ -277,11 +318,18 @@ def _add_file(bundle: Bundle, path: str) -> None:
         bundle.warnings.append(f"Could not read {path}: {e}")
 
 
-def load_any(target: str, want_images: bool = False,
+def load_any(target: str, want_images: bool = False, want_fonts: bool = False,
              timeout: float = 20.0) -> Bundle:
-    """Dispatch on what the target looks like."""
+    """Dispatch on what the target looks like.
+
+    `want_fonts` only ever widens what `load_har` keeps from a capture
+    already sitting on disk – a live URL target's font *binaries* are fetched
+    later, by `fetch_binaries`, once `extract.extract_fonts` knows which
+    faces are actually used (see that function's own docstring for why this
+    asymmetry is deliberate). `load_url` itself doesn't need the flag.
+    """
     if target.lower().endswith(".har") and os.path.exists(target):
-        return load_har(target, want_images=want_images)
+        return load_har(target, want_images=want_images, want_fonts=want_fonts)
     if re.match(r"^https?://", target, re.I):
         return load_url(target, timeout=timeout)
     if os.path.exists(target):

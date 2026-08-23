@@ -96,8 +96,9 @@ explicitly — see below.
 
 ```bash
 python3 -m website_palette_extractor <target> -o out    # target: .har | URL | .html/.css path
-python3 -m unittest discover             # 225 tests, all must pass (needs the deps)
+python3 -m unittest discover             # 273 tests, all must pass (needs the deps)
 python3 -m website_palette_extractor x.har --no-themes  # collapse a two-theme site into one
+python3 -m website_palette_extractor x.har --fonts      # + real font-file previews (T31)
 ruff check .                             # must stay clean; config in pyproject
 python3 -m website_palette_extractor x.har --list-sources   # diagnose framework noise first
 
@@ -272,14 +273,14 @@ sources.py   →  cssparse.py  →  extract.py  →  emit.py
 | File | Lines | Holds |
 |---|---:|---|
 | `color.py` | 1182 | `Color`, parsing, sRGB↔OKLab/CIE Lab/XYZ both ways, `color-mix()`, `light-dark()`, `calc()`, contrast, hue names |
-| `cssparse.py` | 1067 | `tinycss2` integration, `var()`, `selector_weight`, roles, theme scopes, `@layer` names, `color-scheme` pass-through (T10), `@supports` evaluation (T23), `@property` registrations (T22) |
+| `cssparse.py` | 1367 | `tinycss2` integration, `var()`, `selector_weight`, roles, theme scopes, `@layer` names, `color-scheme` pass-through (T10), `@supports` evaluation (T23), `@property` registrations (T22), `@font-face` parsing into `Stylesheet.font_faces` and the font-value helpers `parse_font_family_list`/`first_named_family`/`resolve_font_weight`/`resolve_font_size`/`parse_font_shorthand` (T31) |
 | `dom.py` | 718 | `html.parser` → `ElementTree` shim, `cssselect2` matching of `<html>`/`<body>`, specificity, plus `full_tree`/`elements_matching`/`wrap_tree` (T9: real DOM below the page element), `selector_reach` (T18: does a selector match anything, real/none/untestable), `element_signature` (T19: a short label for one real matched element), `_compile_selector_parts` (T25: one bad selector-list branch costs only itself), and `untestable_reason` (T24: which of the two causes made `selector_reach` answer `None`) |
-| `sources.py` | 292 | `load_har` / `load_url` / `load_paths` → `Bundle` |
-| `extract.py` | 1921 | `extract()`, the cascade, per-theme `_build`, ground, merging, statuses, naming, `resolve_by_ancestry`/`resolve_by_ancestry_kind` (T9, non-inheriting-aware since T22), `Entry.all_unmatched` (T18), per-usage `match_count`/`match_samples` (T19), `_page_color_scheme`/`_scopes_present`'s confirmation gate (T10), `_theme_scoped_scheme_keywords` (T26), `property_registrations` (T22), `Entry.all_dynamic_only`/`Usage.reach_reason` (T24) |
-| `emit.py` | 545 | Emitters; `_HTML` loads the report template off disk (T28) rather than holding it as a string (T20: status sub-headings, T24: always-present Caveats section, T29: `_font_data_uri` inlines the report's two custom fonts as `data:` URIs) |
-| `report_template.html` | 1114 | The interactive report's structural HTML/CSS/JS, `__PLACEHOLDER__`-marked (T28) — a real `.html` file, not a Python string, so it gets editor/linter support. Its two `@font-face` blocks (T29) are the only faces the report's own CSS can ever select — see PLAN.md T29 before adding a weight/style back without checking reachability the same way. A 2026-08-04 design pass (T30) restyled headings/controls and turned URL-shaped substrings in the "Extraction report" panel into real links — see T30 for the two bugs that surfaced while documenting it and how they were fixed |
-| `images.py` | 163 | Optional image quantisation, not part of the token set; `analyse` clamps k to the sample count (fewer opaque pixels than clusters used to raise) |
-| `__main__.py` | 321 | CLI; `main()` guards `PYTHON_FLOOR` before anything else, then `_validate` rejects bad `--formats`/negative numerics before any work |
+| `sources.py` | 340 | `load_har` / `load_url` / `load_paths` → `Bundle`; `fetch_binaries` (T31) fetches font binaries for URL-mode `--fonts` embedding, and `_kind_for`/`load_har` recognise a `"font"` asset kind gated on `want_fonts` the same way images are gated on `want_images` |
+| `extract.py` | 2149 | `extract()`, the cascade, per-theme `_build`, ground, merging, statuses, naming, `resolve_by_ancestry`/`resolve_by_ancestry_kind` (T9, non-inheriting-aware since T22), `Entry.all_unmatched` (T18), per-usage `match_count`/`match_samples` (T19), `_page_color_scheme`/`_scopes_present`'s confirmation gate (T10), `_theme_scoped_scheme_keywords` (T26), `property_registrations` (T22), `Entry.all_dynamic_only`/`Usage.reach_reason` (T24), `extract_fonts`/`_page_root_font_size`/`_latin_face` (T31: typography, extracted once per document rather than per theme — see Themes, below) |
+| `emit.py` | 624 | Emitters; `_HTML` loads the report template off disk (T28) rather than holding it as a string (T20: status sub-headings, T24: always-present Caveats section, T29: `_font_data_uri` inlines the report's two custom fonts as `data:` URIs, T31: `to_document`'s `fonts` key stays metadata-only — `emit_html`'s own `font_bytes` param and `_site_font_faces_css` are the only place real embedded font bytes ever reach the output, and only the HTML report carries them) |
+| `report_template.html` | 1290 | The interactive report's structural HTML/CSS/JS, `__PLACEHOLDER__`-marked (T28) — a real `.html` file, not a Python string, so it gets editor/linter support. Its two `@font-face` blocks (T29) are the only faces the report's own CSS can ever select — see PLAN.md T29 before adding a weight/style back without checking reachability the same way. A 2026-08-04 design pass (T30) restyled headings/controls and turned URL-shaped substrings in the "Extraction report" panel into real links — see T30 for the two bugs that surfaced while documenting it and how they were fixed. A 2026-08-23 pass (T31) added the Typography section and its own `#site-fonts` `<style>`, pre-rendered from `__FONT_FACES_CSS__` rather than JS-constructed from the JSON payload |
+| `images.py` | 165 | Optional image quantisation, not part of the token set; `analyse` clamps k to the sample count (fewer opaque pixels than clusters used to raise) |
+| `__main__.py` | 388 | CLI; `main()` guards `PYTHON_FLOOR` before anything else, then `_validate` rejects bad `--formats`/negative numerics before any work; `--fonts` (T31) and its `_collect_font_bytes` orchestrator — bytes from the bundle first, a live fetch only when the target isn't a `.har` file |
 
 `emit.to_document(palette)` returns the dict the JSON file holds — that dict is
 the public data contract. The HTML report consumes the same dict, inlined into
@@ -1526,6 +1527,17 @@ no telling which mechanism a consuming project uses; **SCSS, TS and Tailwind
 carry the default theme only**. If that changes, decide what a two-theme
 Tailwind config should even look like first.
 
+**Typography (T31) is not part of any of this.** `extract_fonts` runs once
+per document, outside the per-theme `_build` loop, and `doc["fonts"]` sits
+at the top level rather than inside `themes[]` — a light and dark theme read
+the same `fonts` list. Colors need a per-theme pass because everything
+downstream (alpha flattening, every contrast ratio) is measured against a
+ground that differs by theme; fonts have no equivalent dependency, and a
+site whose `font-family` genuinely changes with `.dark`/`prefers-color
+-scheme` is a documented known limit rather than something this reads
+correctly. Fonts also don't reach the CSS/SCSS/TS/Tailwind emitters at all,
+default theme or otherwise — those stay color-only.
+
 ## Conventions
 
 - Anything needing numpy/Pillow goes in `images.py` behind a capability check
@@ -1871,6 +1883,51 @@ Tailwind config should even look like first.
   "unsupported" past what this tool can actually parse would manufacture a
   worse failure (dropping real, universally-supported CSS) than the one this
   task fixed.
+
+- **Typography extraction (T31) does not model real inheritance, relative
+  units past `rem`, or per-theme fonts.** `extract_fonts` attributes a
+  usage to a family only when `font-family` (or the `font` shorthand) is
+  declared on the *same selector* as its size/weight — a selector that sets
+  only `font-size` and relies on an ancestor for its family is invisible to
+  this report, the same "not modelled, no inheritance walk for this" shape
+  as the pre-T9 custom-property limit used to be for colors. `em`/`%`/`vw`/
+  `clamp()`/`calc()` font-sizes show their declared string with no resolved
+  px, for the same "don't invent a value with no defined answer" reason
+  invariant 22's `calc()` evaluator refuses those shapes too — only literal
+  `px`/`rem` are converted, against the page's own cascade-resolved root
+  `font-size` (default 16, CSS's real initial value, only when nothing on
+  the page confirms otherwise). And fonts are extracted once for the whole
+  document rather than per theme (see Themes, above) — a site that swaps
+  `font-family` between `.dark` and its default is read as whichever the
+  cascade resolves unscoped, not as two separate typography sets.
+
+- **An inline `style="..."` attribute's font declarations are only kept
+  when the page's inline styles also contain a color declaration
+  somewhere.** `collect_sheets`'s `"[style attributes]"` pseudo-sheet has
+  always been gated on "is there anything here worth a source entry" so
+  that the common case (a page with no inline styles at all) doesn't add a
+  phantom zero-declaration source to `stats.sources` — before T31 that gate
+  and "worth reporting" were the same test, because only color declarations
+  existed at all. T31 widened what `_record` keeps to include font
+  properties, which meant a page whose *only* inline style sets
+  `font-size` (no inline color anywhere) started passing the old gate and
+  adding a real "[style attributes]" source with a color-declaration count
+  of zero purely as a side effect — found on `parkersprouse.me.har` itself
+  during T31's own verification pass, by the exact byte-identical-color
+  -JSON diff CLAUDE.md's own process prescribes for a change like this. The
+  gate now requires a declaration that isn't one of the new font properties
+  specifically (`d.prop not in FONT_PROPERTIES`) — **not** a `role !=
+  "other"` filter, which was the first fix tried and was itself wrong:
+  `color-scheme`'s own role is `"other"` too (T10), and it was always
+  counted here, so filtering on role would silently drop it from any site
+  carrying one, not only font-only sites (`_source_stats` and
+  `__main__._list_sources` had the identical mistake and the identical
+  fix — see PLAN.md T31 for the full account, including the synthetic test
+  that caught it since no corpus bundle in this checkout carries
+  `color-scheme`). A font-only inline style is invisible to the Typography
+  report too when it's the page's only inline styling — a narrow,
+  deliberate trade against reopening the phantom-source problem the gate
+  exists to prevent.
 
 ## Reference fixture
 

@@ -3,7 +3,7 @@
   "source": "https://parkersprouse.me/",
   "ground": "#e4e4e7",
   "groundSource": "html,body { background-color } in https://parkersprouse.me/index-yuSfdUTd.css",
-  "generated": "2026-08-04T23:32:24-05:00",
+  "generated": "2026-08-23T15:29:00-05:00",
   "schemaVersion": 1,
   "stats": {
     "stylesheets": 1,
@@ -1681,5 +1681,86 @@
         "neutral": true
       }
     ]
-  }
+  },
+  "fonts": [
+    {
+      "family": "Inter",
+      "source": "custom",
+      "totalCount": 1,
+      "usages": [
+        {
+          "size": "1rem",
+          "sizePx": 16.0,
+          "weight": 400,
+          "weightDeclared": "400",
+          "style": "normal",
+          "count": 1
+        }
+      ],
+      "faces": [
+        {
+          "weight": "400",
+          "style": "normal",
+          "src": [
+            {
+              "url": "https://parkersprouse.me/inter-latin-400-normal-C38fXH4l.woff2",
+              "format": "woff2"
+            },
+            {
+              "url": "https://parkersprouse.me/inter-latin-400-normal-CyCys3Eg.woff",
+              "format": "woff"
+            }
+          ],
+          "unicodeRange": ""
+        },
+        {
+          "weight": "400",
+          "style": "italic",
+          "src": [
+            {
+              "url": "https://parkersprouse.me/inter-latin-400-italic-D1l0FflY.woff2",
+              "format": "woff2"
+            },
+            {
+              "url": "https://parkersprouse.me/inter-latin-400-italic-BmFrN47l.woff",
+              "format": "woff"
+            }
+          ],
+          "unicodeRange": ""
+        }
+      ]
+    },
+    {
+      "family": "Rampart One",
+      "source": "custom",
+      "totalCount": 1,
+      "usages": [
+        {
+          "size": "3rem",
+          "sizePx": 48.0,
+          "weight": 700,
+          "weightDeclared": "700",
+          "style": "normal",
+          "count": 1
+        }
+      ],
+      "faces": [
+        {
+          "weight": "400",
+          "style": "normal",
+          "src": [
+            {
+              "url": "https://parkersprouse.me/rampart-one-latin-400-normal-DD7gomWA.woff2",
+              "format": "woff2"
+            },
+            {
+              "url": "https://parkersprouse.me/rampart-one-latin-400-normal-CG3yqfHI.woff",
+              "format": "woff"
+            }
+          ],
+          "unicodeRange": ""
+        }
+      ]
+    }
+  ]
 }

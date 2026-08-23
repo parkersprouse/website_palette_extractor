@@ -107,6 +107,14 @@ def to_document(pal: Palette) -> dict:
     }
     if pal.image_report:
         doc["images"] = pal.image_report
+    if pal.fonts:
+        # Metadata only – family, usages, counts, badge, and the *declared*
+        # face src URLs (never raw bytes). Kept lean like `images` above,
+        # which carries aggregate stats rather than the images themselves.
+        # A `--fonts` run's actual embedded font bytes live only in the HTML
+        # report (`emit_html`'s own `font_bytes` parameter), not here – the
+        # same reason `pal.image_report` never carries raw image bytes.
+        doc["fonts"] = pal.fonts
     return doc
 
 
@@ -477,7 +485,74 @@ def _font_data_uri(relative_path: str) -> str:
     return f"data:font/ttf;base64,{base64.b64encode(data).decode('ascii')}"
 
 
-def emit_html(doc: dict, pal: Palette) -> str:
+_FONT_MIME = {
+    "woff2": "font/woff2", "woff": "font/woff",
+    "truetype": "font/ttf", "ttf": "font/ttf",
+    "opentype": "font/otf", "otf": "font/otf",
+}
+
+
+def _font_mime_for(url: str, fmt: str) -> str:
+    """The `data:` mime type for one embedded site font source.
+
+    Prefers the format `@font-face` itself declared (`format("woff2")`);
+    falls back to the URL's own extension when the declaration didn't carry
+    one, and to `font/ttf` failing both – a real, always-accepted value, same
+    spirit as `_font_data_uri`'s own hardcoded `font/ttf` for the report's
+    two vendored faces above.
+    """
+    if fmt in _FONT_MIME:
+        return _FONT_MIME[fmt]
+    low = url.lower().split("?")[0]
+    for ext, mime in (("woff2", "font/woff2"), ("woff", "font/woff"),
+                      ("ttf", "font/ttf"), ("otf", "font/otf")):
+        if low.endswith("." + ext):
+            return mime
+    return "font/ttf"
+
+
+def _site_font_faces_css(fonts: list[dict], font_bytes: dict[str, bytes]) -> str:
+    """Real `@font-face` CSS for every face `font_bytes` has bytes for.
+
+    `--fonts` gathers bytes (from the HAR bundle, or a live fetch for a URL
+    target – see `sources.fetch_binaries`) keyed by the *declared* src URL;
+    this turns whichever ones came back into `data:` URIs and real
+    `@font-face` blocks, one per (family, weight, style) – `extract_fonts`
+    already deduplicated a family's Google-Fonts unicode-range subsets down
+    to one face per weight/style before this ever sees them.
+
+    Written into the report as a pre-rendered `<style>` block
+    (`__FONT_FACES_CSS__`), not built by the report's own JS from the JSON
+    payload – the bytes never need to round-trip through `doc["fonts"]` at
+    all (which stays metadata-only, see `to_document`'s own comment), and a
+    plain `<style>` tag is simpler than the report's JS constructing one.
+    Invariant 11 stays intact either way: everything here comes from what
+    this call already has in memory, not a new `<link>`/`fetch()`.
+    """
+    blocks = []
+    for entry in fonts:
+        family = entry["family"].replace("\\", "\\\\").replace('"', '\\"')
+        for face in entry.get("faces", []):
+            hit = next((s for s in face.get("src", [])
+                       if s["url"] in font_bytes), None)
+            if not hit:
+                continue
+            uri = (f"data:{_font_mime_for(hit['url'], hit['format'])};base64,"
+                  + base64.b64encode(font_bytes[hit["url"]]).decode("ascii"))
+            fmt = hit["format"] or "woff2"
+            blocks.append(
+                "@font-face {\n"
+                f'  font-family: "{family}";\n'
+                f'  src: url({uri}) format("{fmt}");\n'
+                f"  font-weight: {face['weight'] or '400'};\n"
+                f"  font-style: {face['style'] or 'normal'};\n"
+                "  font-display: swap;\n"
+                "}"
+            )
+    return "\n".join(blocks)
+
+
+def emit_html(doc: dict, pal: Palette, font_bytes: dict[str, bytes] | None = None) -> str:
     title = doc["name"]
     themes = doc["themes"]
     n_live = len([c for c in doc["colors"] if c["status"] == "live"])
@@ -532,6 +607,10 @@ def emit_html(doc: dict, pal: Palette) -> str:
         "__FONT_INTER__": _font_data_uri("assets/fonts/inter/inter_variable.ttf"),
         "__FONT_MONO__": _font_data_uri(
             "assets/fonts/sauce_code_pro/sauce_code_pro_mono__regular.ttf"
+        ),
+        "__FONT_FACES_CSS__": (
+            _site_font_faces_css(doc.get("fonts") or [], font_bytes)
+            if font_bytes else ""
         ),
     }
     # Longest first: `re` alternation is leftmost-first, not longest-match, so

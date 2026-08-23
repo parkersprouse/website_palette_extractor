@@ -39,6 +39,18 @@
       *::after {
         box-sizing: border-box;
       }
+    </style>
+    <!-- The site's own fonts, real bytes embedded as data URIs -- only
+         present when the report was built with --fonts and a face's bytes
+         were actually found (bundle or a live fetch; see emit.py's
+         _site_font_faces_css). Empty otherwise, and the Typography section
+         renders its sample text in the report's own face instead -- see
+         renderFonts() below. A separate <style> tag rather than folding into
+         the one above: the block above is fixed at template-authoring time,
+         this one is per-run generated CSS, same reason __UI_THEMES__ gets
+         its own text substitution rather than being hand-written inline. -->
+    <style id='site-fonts'>__FONT_FACES_CSS__</style>
+    <style>
 
       __UI_THEMES__ body {
         margin: 0;
@@ -490,6 +502,75 @@
         opacity: .75;
       }
 
+      .font-group {
+        border: 1px solid var(--ui-line);
+        padding: .9rem 1rem 1.05rem;
+        margin-bottom: .8rem;
+      }
+
+      .font-group__header {
+        display: flex;
+        align-items: baseline;
+        gap: .6rem;
+        margin-bottom: .5rem;
+      }
+
+      .font-group__name {
+        font-size: .86rem;
+        font-weight: 700;
+        color: var(--ui-body);
+      }
+
+      .font-group__count {
+        font-size: .74rem;
+        color: var(--ui-muted);
+      }
+
+      .font-badge {
+        font-size: .58rem;
+        font-weight: 700;
+        letter-spacing: .07em;
+        text-transform: uppercase;
+        padding: .14rem .42rem;
+        border: 1px solid var(--ui-line);
+        color: var(--ui-body);
+        margin-left: auto;
+      }
+
+      .font-badge.google {
+        color: var(--ui-accent);
+        border-color: var(--ui-accent);
+      }
+
+      .font-row {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 1.2rem;
+        padding: .55rem 0;
+        border-top: 1px solid var(--ui-line);
+      }
+
+      .font-row:first-of-type {
+        border-top: none;
+        padding-top: .2rem;
+      }
+
+      .font-row__sample {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: var(--ui-strong);
+      }
+
+      .font-row__label {
+        flex: none;
+        font-size: .72rem;
+        font-variant-numeric: tabular-nums;
+        color: var(--ui-muted);
+        white-space: nowrap;
+      }
+
       footer {
         margin-top: 2.6rem;
         padding-top: 1.2rem;
@@ -564,6 +645,18 @@
         <div class='pairs' id='pairs'></div>
       </section>
 
+      <section id='fonts-section' hidden>
+        <h2>Typography</h2>
+        <p class='blurb'>Every font family the stylesheet declares, with the
+          sizes and weights it's used at. Read from font-family/font-size/
+          font-weight declarations, not a rendered snapshot – a family with
+          no <span class='font-badge'>Google</span>/<span
+          class='font-badge'>Custom</span> badge is referenced by name but
+          never defined in the CSS, so it's whatever the visitor's system
+          provides.</p>
+        <div id='fonts'></div>
+      </section>
+
       <details class='detail'>
         <summary class='detail-header'>
           <span class='detail-header__marker'>
@@ -624,6 +717,12 @@
         var STATUS_TITLES = __STATUS_TITLES__;
         var STATUS_BLURBS = __STATUS_BLURBS__;
         var STATUS_ORDER = ['live', 'saved', 'inert', 'unmatched'];
+
+        /* Matches body's own font-family declaration above -- the fallback
+           a Typography sample renders in when --fonts wasn't used, or when
+           it was but this particular face's bytes weren't found. */
+        var BODY_FONT_STACK = "'Inter Variable', system-ui, -apple-system, " +
+          "BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif";
 
         var DATE_TIME_FORMAT = new Intl.DateTimeFormat('en-US', {
           day: 'numeric',
@@ -882,6 +981,60 @@
           });
         }
 
+        function renderFonts() {
+          /* Not theme-scoped (extract.extract_fonts runs once for the whole
+             document, unlike colors) so this is called once at load, below,
+             rather than from render() on every theme/format/filter toggle. */
+          var host = document.getElementById('fonts');
+          var fonts = doc.fonts || [];
+          document.getElementById('fonts-section').hidden = fonts.length === 0;
+          host.textContent = '';
+
+          fonts.forEach(function (fam) {
+            var group = el('div', 'font-group');
+            var header = el('div', 'font-group__header');
+            header.appendChild(el('span', 'font-group__name', fam.family));
+            header.appendChild(el('span', 'font-group__count',
+              '(' + fam.usages.length + ')'));
+            if (fam.source === 'google' || fam.source === 'custom') {
+              header.appendChild(el('span', 'font-badge ' + fam.source,
+                fam.source === 'google' ? 'Google' : 'Custom'));
+            }
+            group.appendChild(header);
+
+            fam.usages.forEach(function (u) {
+              var row = el('div', 'font-row');
+              var sample = el('div', 'font-row__sample', 'The quick brown fox');
+              /* The real face renders here when --fonts embedded bytes for
+                 it (site-fonts <style>, filled by emit.py); otherwise this
+                 silently falls through to the report's own body font -- the
+                 label below is still accurate either way. */
+              sample.style.fontFamily = '"' + fam.family.replace(/"/g, '\\"') +
+                '", ' + BODY_FONT_STACK;
+              sample.style.fontWeight = u.weight || 400;
+              if (u.style === 'italic' || u.style === 'oblique') {
+                sample.style.fontStyle = u.style;
+              }
+              /* Capped for layout only -- a hero heading's real size would
+                 otherwise blow past the row. The label beside it always
+                 shows the true declared/resolved value. */
+              sample.style.fontSize =
+                (u.sizePx != null ? Math.min(u.sizePx, 40) : 16) + 'px';
+              row.appendChild(sample);
+
+              var size = u.sizePx != null
+                ? (Math.round(u.sizePx * 100) / 100) + 'px'
+                : (u.size || '?');
+              var weight = u.weightDeclared != null ? u.weightDeclared
+                : (u.weight != null ? String(u.weight) : '?');
+              row.appendChild(el('div', 'font-row__label', size + ' · ' + weight));
+              group.appendChild(row);
+            });
+
+            host.appendChild(group);
+          });
+        }
+
         function renderProv(cols) {
           var tb = document.querySelector('#prov tbody');
           tb.textContent = '';
@@ -1052,7 +1205,18 @@
               "ratio above is measured against that theme's own ground. "
               : '') +
             'Colors themselves are not copyrightable, but fonts and images on the ' +
-            'source page are licensed separately.';
+            'source page are licensed separately' +
+            /* The site-fonts <style> (filled by emit.py, empty unless --fonts
+               found real bytes to embed) is the only place that fact lives --
+               doc.fonts itself never carries the bytes, see to_document's own
+               comment. Non-empty means this specific report embeds real font
+               files, which raises the stakes on the sentence above from "the
+               source page is licensed" to "this file you're holding is". */
+            (document.getElementById('site-fonts').textContent.trim()
+              ? ' – this report embeds the actual font files it found; check ' +
+                'their license before redistributing it'
+              : '') +
+            '.';
         }
 
         /* ---------- caveats ---------- */
@@ -1119,6 +1283,7 @@
 
         applyTheme();
         render();
+        renderFonts();
       })();
     </script>
   </body>

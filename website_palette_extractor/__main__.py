@@ -16,7 +16,7 @@ import sys
 
 from . import PYTHON_FLOOR, emit, extract, images, sources
 from .color import find_colors
-from .cssparse import resolve_vars
+from .cssparse import FONT_PROPERTIES, resolve_vars
 from .sources import Bundle
 
 # The outputs `--formats` accepts. Kept beside the writer block in `main()`
@@ -74,6 +74,13 @@ def build_parser() -> argparse.ArgumentParser:
                    help="skip stylesheets whose source contains TEXT "
                         "(repeatable) – useful for dropping a framework or "
                         "site-builder bundle")
+    p.add_argument("--fonts", action="store_true",
+                   help="also embed the page's real font files in the HTML "
+                        "report, for accurate Typography-section previews "
+                        "(metadata is always extracted; this only adds the "
+                        "actual bytes). Uses bytes already in a HAR capture "
+                        "as-is; for a live URL target it also fetches the "
+                        "binaries the CSS points to")
     p.add_argument("--flat", action="store_true",
                    help="one token per distinct color, instead of separating "
                         "a color used for text from the same color used for "
@@ -140,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         bundle = sources.load_any(args.target, want_images=args.images,
-                                  timeout=args.timeout)
+                                  want_fonts=args.fonts, timeout=args.timeout)
     except RuntimeError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
@@ -186,6 +193,23 @@ def main(argv: list[str] | None = None) -> int:
                 "not. A CSS-only palette will miss it."
             )
 
+    font_bytes = None
+    if args.fonts and "html" in want:
+        # Only ever consumed by emit_html below – for a URL target this can
+        # mean a live network fetch (sources.fetch_binaries), which a
+        # `--formats json` run has no use for; gating on "html" in want
+        # stops that fetch from happening at all rather than happening and
+        # being discarded.
+        #
+        # A HAR target stays bytes-already-present-only – it is a frozen
+        # capture, and fetching fresh binaries for it defeats the point and
+        # can hit an expired/blocked URL (sources.fetch_binaries' own
+        # docstring). Every other target (a live URL, or local files that
+        # happen to reference a CDN font) may fetch.
+        is_har = args.target.lower().endswith(".har") and os.path.exists(args.target)
+        font_bytes = _collect_font_bytes(pal, bundle, args.timeout,
+                                         allow_fetch=not is_har)
+
     doc = emit.to_document(pal)
     try:
         os.makedirs(args.out, exist_ok=True)
@@ -222,7 +246,7 @@ def main(argv: list[str] | None = None) -> int:
             write(f"{slug}.tailwind.js",
                   emit.emit_tailwind(doc, args.include_unused))
         if "html" in want:
-            write("index.html", emit.emit_html(doc, pal))
+            write("index.html", emit.emit_html(doc, pal, font_bytes=font_bytes))
     except OSError as e:
         # A full disk or a read-only directory is the same class of failure as
         # an uncreatable one above, and reporting the files already written
@@ -269,6 +293,26 @@ def _validate(args: argparse.Namespace) -> str | None:
     return None
 
 
+def _collect_font_bytes(pal: extract.Palette, bundle: Bundle, timeout: float,
+                        allow_fetch: bool) -> dict[str, bytes]:
+    """Bytes for every font `src` URL `pal.fonts` references, keyed by URL.
+
+    Bytes already sitting in the bundle (a HAR capture, once `--fonts`
+    widened `sources._kind_for` to keep them) are used first and are free;
+    `allow_fetch` gates whether a live request is made for whatever's still
+    missing – see `main`'s own call site and `sources.fetch_binaries` for why
+    a HAR target never sets it.
+    """
+    urls = {s["url"]
+           for entry in pal.fonts for face in entry.get("faces", [])
+           for s in face.get("src", [])}
+    have = {a.url: a.data for a in bundle.by_kind("font") if a.data and a.url in urls}
+    missing = urls - have.keys()
+    if missing and allow_fetch:
+        have.update(sources.fetch_binaries(sorted(missing), timeout=timeout))
+    return have
+
+
 def _list_sources(bundle: Bundle, args: argparse.Namespace) -> None:
     """Show what CSS was found and how much color each source carries.
 
@@ -284,9 +328,15 @@ def _list_sources(bundle: Bundle, args: argparse.Namespace) -> None:
     print(f"  {'#':>2}  {'decls':>6}  {'colors':>7}  {'3p':>3}  source")
     for i, sh in enumerate(sheets):
         n_col = 0
+        # Excludes only the newly-kept font declarations, not every
+        # `role == "other"` one – that would also drop `color-scheme`
+        # (its own role is "other" too), which this table always counted.
+        # See `extract._source_stats`'s own comment for the full reasoning;
+        # this is the same fix for the same latent bug.
+        n_decl = sum(1 for d in sh.declarations if d.prop not in FONT_PROPERTIES)
         for d in sh.declarations:
             n_col += len(find_colors(resolve_vars(d.value, table)))
-        print(f"  {i:>2}  {len(sh.declarations):>6}  {n_col:>7}  "
+        print(f"  {i:>2}  {n_decl:>6}  {n_col:>7}  "
               f"{'yes' if sh.third_party else '  -':>3}  {sh.source}")
     print("\n  Narrow with --only TEXT or --exclude TEXT (substring match).\n")
 

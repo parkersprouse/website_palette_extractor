@@ -4026,6 +4026,271 @@ measurement rather than assumption:**
   alone: body ranges 4.82:1 (`pawelgrzybek.com`, light) to 13.26:1 (`mdn`,
   light), comfortably above the 4.5 floor everywhere, `.tag` included.
 
+### T31 — Typography extraction: fonts as a second data dimension — landed 2026-08-23
+
+**Owner-requested** (2026-08-23), from a reference screenshot of another
+tool's typography report: grouped by font family, each with its resolved
+usages (size × weight), an occurrence count, a Google/Custom/system badge,
+and a rendered sample. The tool read *only* color out of CSS before this —
+`font-family`/`font-weight`/`font-size`/`font-style`/`font` were tokenised
+for their `var()` refs (invariant 10 already required that of every
+declaration) and then dropped by `_record`'s gate, which only kept a custom
+property, a `PROPERTY_ROLE` entry, or `color-scheme`. `@font-face` bodies
+were read for `var()` refs only and discarded entirely — `_walk`'s own
+docstring said so outright.
+
+**Two architectural forks were owner decisions, not defaults picked
+silently**, in this project's established idiom (dependency posture, network
+behavior, and CLI flags have all been explicit owner calls before —
+`priorities`, `--images`, `PYTHON_FLOOR`):
+
+1. **Real-font preview is opt-in, behind a new `--fonts` flag mirroring
+   `--images`.** Without it, the Typography section still lists every
+   family/usage/badge/count — metadata is unconditional — but sample text
+   renders in the report's own fallback face (Inter Variable, already
+   vendored per T29). With it, real font bytes are embedded as `data:` URIs,
+   the identical technique T29 already uses for the report's own two faces.
+2. **URL-mode input may fetch font binaries when `--fonts` is set; HAR-mode
+   embedding never does.** A HAR is a frozen capture — fetching fresh
+   binaries for it defeats the point and can hit an expired/blocked URL — so
+   HAR embedding only ever uses bytes already sitting in the capture
+   (widening `sources._kind_for` to recognise `.woff2`/`.woff`/`.ttf`/`.otf`
+   and keep them, the same opt-in shape `--images` already has for image
+   bytes). A live URL target may fetch what a HAR could not have captured.
+
+**Parsing (`cssparse.py`).** `FONT_PROPERTIES` rides the same gate
+`color-scheme` already special-cased in `_record` — kept, `Declaration.role`
+falls through to `"other"`, every existing color-role consumer already skips
+that. A new `_walk` branch for `keyword == "font-face"` (same shape as the
+existing `@property` branch: parsed directly, not descended as ordinary
+content) produces a `FontFace` (family, weight, style, `src` as
+`(absolute_url, format)` pairs — resolved against the sheet's own URL,
+`unicode-range`, source sheet) onto a new `Stylesheet.font_faces`, mirroring
+the existing `sheet.properties`/`sheet.layers` precedent for document-wide
+metadata gathered from at-rule bodies. Five new parsing helpers:
+`parse_font_family_list` (token-walks a `font-family` value, joining
+unquoted multi-word names, unwrapping quoted ones), `first_named_family`
+(first non-`GENERIC_FAMILIES` entry — a stack that's only generics is "a
+system stack, not a family," the same shape of reasoning `_scopes_present`
+already applies to a scope carrying no color), `resolve_font_weight`
+(numeric passthrough; `normal`/`bold` keywords; `lighter`/`bolder` refused —
+relative to an inherited weight this tool doesn't model), `resolve_font_size`
+(only a literal `<number>px`/`<number>rem` is resolved; `em`/`%`/`vw`/
+`clamp()`/`calc()`/unresolved `var()` keep the declared string with no
+fabricated px — the same discipline invariant 22's `calc()` evaluator and
+the bare-channel-triplet limit already hold), and `parse_font_shorthand`
+(`font: [style||variant||weight]? size[/line-height]? family` isn't expanded
+by `tinycss2`; walks the token stream for the size as an anchor token,
+reading weight/style before it and family after — any field not confidently
+found comes back `None` rather than guessed).
+
+**Aggregation (`extract.py`).** `extract_fonts` runs **once per document**,
+not once per theme — called directly from `extract()`, stored as
+`Palette.fonts` on the base palette only (mirrors `image_report`).
+Typography rarely changes with a `prefers-color-scheme`/`.dark` scope the
+way color does, and a full per-theme pass for it is out of scope here — a
+documented known limit, not an oversight. `_page_root_font_size` resolves
+`html`'s cascade-winning `font-size` the identical way `_page_color_scheme`
+already resolves one ordinary property (`_page_specificity(..., element=
+"html")` + `_cascade_key`), defaulting to 16 — CSS's real initial value, not
+a guess — only when nothing on the page confirms otherwise. Declarations are
+grouped **per selector, within one sheet** (never merged across sheets or
+selectors — the same "a rule is a rule" boundary invariant 13 already draws
+for theme-shadowing) into a `FontSpec`; a selector with a size or weight but
+no `font-family` of its own is dropped (real inheritance for typography
+isn't modelled — see Known limits) and so is a bare `font-family` with
+neither size nor weight declared alongside it (not informative enough to be
+its own row — it would show an unlabelled "`? · ?`"). Every value is routed
+through `resolve_vars` first: `font-family: var(--font-sans)` is the
+dominant modern shape (Tailwind v4, shadcn), and skipping this reports zero
+fonts on most of the corpus. `source` classification cross-references
+`sheet.font_faces` merged across the document by family name
+(case-insensitive): any matching face resolving to a `fonts.gstatic.com`
+host → `"google"`; any other matching face → `"custom"`; no matching face at
+all → `"system"` (the family is referenced by name but never defined — a
+pre-installed font). `_latin_face` collapses a family's several
+`@font-face` blocks at the *same* (weight, style) down to one — Google Fonts
+ships one block per unicode-range subset (latin, latin-ext, cyrillic, …) per
+weight, and the report's own sample text ("The quick brown fox") is pure
+ASCII, so embedding every subset would balloon the report for nothing:
+prefer no `unicode-range` restriction, then one starting at `U+0`, then just
+the first found. Families sort by total occurrence count descending
+(matches the existing "sort report tables by usage count" convention); rows
+within a family by resolved px descending, then weight ascending, declared
+-string-only rows last.
+
+**A real regression was found and fixed before this was considered
+done — the kind CLAUDE.md's own verification discipline exists to catch —
+and the first fix for it was itself wrong in a way only a second check
+caught.** Widening `_record`'s gate meant `sheet.declarations` legitimately
+grew for sites with font declarations, which silently changed two things
+downstream that were never meant to move: `extract._source_stats`'s
+`"declarations"` count (`len(s.declarations)`, no filter at all) and the
+`"[style attributes]"` pseudo-sheet's inclusion gate in `collect_sheets`
+(`if inline.declarations`, also unfiltered) — both counted every kept
+declaration regardless of what it was, where `declarationsScanned`'s own
+`n_decls` computation two lines away *already* excluded `d.role == "other"`
+specifically so font-shaped bookkeeping couldn't inflate a counter
+documented as "declarations scanned for color." Caught by the exact diff
+CLAUDE.md prescribes for a change like this — the existing color JSON,
+`generated` stripped, old code (via `git stash`) against new on
+`parkersprouse.me.har`, the one frozen corpus bundle present in this
+checkout (the others are `.gitignore`d and not on this disk) — which is
+not hypothetical: `parkersprouse.me.har`'s own HTML carries exactly one
+inline `style="font-size:0.7rem"` attribute, previously entirely invisible
+to the tool (no color, so never recorded at all), that started appearing
+as a phantom zero-color `"[style attributes]"` source and bumped the real
+stylesheet's declaration count from 65 to 95 — no hex, ground, or status
+moved, only these two metadata counters.
+
+**The first fix mirrored `n_decls`'s own exclusion directly —
+`d.role != "other"` — and that was the wrong exclusion to copy.**
+`color-scheme`'s own `role` is `"other"` too (T10, deliberately: it carries
+no color of its own), and it *was* counted by `_source_stats`'s pre-T31
+`len(s.declarations)` — `_record` has special-cased it through the same
+gate since T10, well before font properties existed. Filtering on role
+would have silently dropped `color-scheme` from this count too, on every
+site carrying one, not only font-only ones — invisible on
+`parkersprouse.me.har` specifically only because that bundle happens to
+carry no `color-scheme` declaration at all, which is exactly why a
+one-bundle diff cannot be trusted to have caught it and a synthetic fixture
+(`TestFonts.test_color_scheme_still_counts_toward_source_stats`, built to
+fail against the `role != "other"` draft and pass against the corrected
+one) was added rather than relying on the corpus. The fix landed instead
+is `d.prop not in FONT_PROPERTIES` — the discriminating exclusion, since
+that is exactly and only what's new since `_source_stats`'s pre-T31
+baseline — applied identically in three places: `_source_stats`, the
+pseudo-sheet gate (now keyed on *any* declaration that isn't a font
+property, not merely a kept one), and `__main__._list_sources`'s own
+"decls" column, which had the identical latent bug (harmless there since
+nothing consumed it, but the same fix applied for the same reason).
+Rerunning the diff after the corrected fix: byte-identical, `fonts` key
+aside. **The narrow cost of the pseudo-sheet fix**: a page whose *only*
+inline styles are font-only (no inline color
+anywhere) has those inline font declarations invisible to the Typography
+report too — documented below rather than left implicit.
+
+**Embedding (opt-in, `--fonts`).** `sources.fetch_binaries` (thin reuse of
+the existing `_get`/`_decompress`) fetches a list of URLs, skips `data:`
+URIs, and drops a failed fetch silently rather than aborting the run — one
+broken font URL costs one weight's real preview, not the whole report.
+Orchestration lives in `__main__.py`'s `_collect_font_bytes`: bytes already
+in the bundle (HAR, gated by the widened `_kind_for`) are used first and are
+free; `allow_fetch` (computed from whether the target is an existing `.har`
+file, the same check `sources.load_any` makes to dispatch) gates whether
+`fetch_binaries` runs for whatever's still missing. **`main()` only even
+calls `_collect_font_bytes` when `"html" in want`** — `font_bytes` is
+consumed by `emit_html` alone, so a `--fonts --formats json` run (against a
+URL target, where fetching is otherwise allowed) used to fetch every font
+binary and then discard the result unread; gating on the requested formats
+stops the fetch from happening at all rather than happening for nothing.
+`emit.to_document`
+deliberately does **not** carry embedded bytes — `doc["fonts"]` stays
+metadata-only, the same reason `pal.image_report` never carries raw image
+bytes, so the plain `.json` output stays lean regardless of `--fonts`.
+`emit_html` gained an optional `font_bytes` parameter; `_site_font_faces_css`
+turns whichever URLs it covers into real `@font-face` CSS text (one block
+per already-deduplicated face), filling a new `__FONT_FACES_CSS__`
+placeholder into a pre-rendered `<style id='site-fonts'>` block in
+`report_template.html` — not JS-constructed from the JSON payload, since the
+bytes never need to round-trip through `doc["fonts"]` at all. Invariant 11
+stays intact either way: everything here comes from what `emit_html` already
+has in memory, never a new `<link>`/`fetch()`. The existing copyright
+caveat (`renderFooter`, previously "fonts and images on the source page are
+licensed separately") gets one more clause, JS-conditional on the
+`site-fonts` `<style>` actually being non-empty: "this report embeds the
+actual font files it found; check their license before redistributing it" —
+extended rather than duplicated, since embedding raises the stakes from "the
+source page is licensed" to "this file you're holding is."
+
+**Report UI.** A new `<section id='fonts-section' hidden>` (Typography),
+placed after Contrast — hidden by default, unhidden by `renderFonts()` when
+`doc.fonts` is non-empty. `renderFonts()` is called once at load
+(`applyTheme(); render(); renderFonts();`), not from `render()` on every
+theme/filter/format toggle, since fonts aren't theme-scoped the way colors
+are. Each sample renders with `font-family: "<family>", <body font stack>` —
+the real face applies automatically once the browser sees a matching
+`@font-face` in `#site-fonts`; JS doesn't need to know per-usage which faces
+got real bytes. Sample font-size is capped at 40px for layout only (a hero
+heading's true size would blow past the row); the label beside it always
+shows the true declared/resolved value.
+
+**Verified.** New tests: 20 in `tests/test_cssparse.py` (`TestTypography` —
+family-list parsing, generic filtering, shorthand decomposition, weight/size
+resolution, `@font-face` recording including the quoted-`url()`-vs-URLToken
+shape and relative-URL resolution), 15 in `tests/test_extract.py`
+(`TestFonts` — var() resolution, rem-against-root-font-size with and
+without an explicit `html{font-size}` rule, shorthand end-to-end, the two
+selector-drop cases, google/custom/system classification, sort order, the
+multi-subset-collapses-to-one-face case), 7 in `tests/test_sources.py`
+(`TestFontCapture`/`TestFetchBinaries` — `_kind_for`, the `want_fonts` gate,
+`fetch_binaries`'s data-URI skip and silent-failure behavior, both network
+-touching tests mocked so the suite stays offline), 4 in `tests/test_main.py`
+(`TestFontsFlag` — end-to-end `--fonts` against a synthetic HAR carrying
+both a captured font binary and the CSS that references it, and
+`_collect_font_bytes`'s HAR-vs-URL `allow_fetch` gate exercised directly
+with `sources.fetch_binaries` mocked), 8 in `tests/test_emit.py`
+(`TestFontEmbedding` — the `fonts` key's presence/absence, that it never
+carries raw bytes, `_font_mime_for`, `_site_font_faces_css`, the
+`__FONT_FACES_CSS__` placeholder). `test_template_declares_no_unknown_
+placeholder`/`test_every_placeholder_is_still_filled` updated for the new
+placeholder. 273 tests total, all passing; `ruff check .` clean.
+
+Color JSON verified byte-identical (`generated` stripped, `fonts` key
+aside) against pre-change code on `parkersprouse.me.har` — the only frozen
+corpus bundle present in this checkout; the others named throughout this
+document are `.gitignore`d and not on this disk, so the wider breadth check
+this document's own "Two things make this diff readable" section describes
+could not be rerun here. Module, console-script (after `pip install -e .`
+against this checkout — the previously-installed script predated this
+session and had no `--fonts`), and a rebuilt `website_palette_extractor.pyz`
+run under a **clean Python 3.14 venv with none of the three dependencies
+installed** all produced byte-identical JSON. `example/` regenerated
+(`parkersprouse.me.har --images -o example`); only `index.html` and the
+`.json` changed, exactly the `fonts`/`fontFacesCss`-shaped keys, confirmed
+by the same stripped-diff method — `.css`/`.scss`/`.ts`/`.tailwind.js` are
+untouched, matching the design that fonts don't reach the code emitters.
+
+**Not verified: the 3.11–3.14 matrix.** This session's environment has only
+Python 3.14 available (via `pyenv`; no `uv`, no other pyenv versions
+installed, no path to fetch one). Nothing added here is version-sensitive —
+dataclasses, sets, dict/set comprehensions, `urllib.parse`, `base64`, all
+long-stable stdlib, no walrus/match-statement/3.12+-only feature — but the
+matrix itself was not run, and CLAUDE.md's own command for it should be rerun
+in an environment that has the other three interpreters before trusting this
+claim beyond "nothing looks version-sensitive by inspection."
+
+**Also not measured: `extract_fonts`'s own cost against a large, font
+-heavy bundle.** It runs `resolve_vars` over every font-bearing declaration
+in the document, the same per-declaration cost invariant 27 and T25 already
+record timings for on `tailwindcss.com.har` (~47s and ~19s respectively) —
+and Tailwind emits font utilities in bulk, the same shape that made those
+two tasks worth timing at all. `parkersprouse.me.har`, the only bundle
+available in this checkout, is too small (65 color declarations) to say
+anything about that cost either way. Worth timing against a Tailwind-heavy
+bundle before assuming this is free, rather than assuming it from this
+task's own measurements, which cannot see it.
+
+**Known limits, documented rather than silently accepted:**
+
+- Typography is extracted once per document, not per theme.
+- A selector with only `font-size`/`font-weight` and no `font-family` of its
+  own is not attributed to any family — no inheritance walk for typography.
+- A bare `font-family` with neither a size nor a weight on the same selector
+  is not shown as its own row.
+- `em`/`%`/`vw`/`clamp()`/`calc()` font-sizes and an unresolved `var()` show
+  the declared string, never a fabricated px.
+- An inline `style="..."` attribute's font declarations are only captured
+  when the page's inline styles *also* contain a color declaration somewhere
+  — the fix for the stats-leak regression above, traded deliberately rather
+  than reopening the phantom-source problem it fixes.
+- HAR-mode font embedding never performs a new network fetch; only bytes
+  already captured in the HAR are used.
+- One embedded subset per (family, weight, style), not one per Google Fonts
+  unicode-range subset.
+- `@font-face`'s own `syntax`/`font-stretch`/`font-feature-settings` and
+  variable-font axis descriptors are not read.
+
 ---
 
 ## Repo and process

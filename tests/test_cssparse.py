@@ -5,8 +5,13 @@ import tinycss2
 
 from website_palette_extractor.color import find_colors
 from website_palette_extractor.cssparse import (
+    first_named_family,
     is_inert_shadow,
+    parse_font_family_list,
+    parse_font_shorthand,
     parse_stylesheet,
+    resolve_font_size,
+    resolve_font_weight,
     resolve_vars,
     selector_weight,
     split_selector_list,
@@ -514,6 +519,123 @@ class TestPropertyRegistration(unittest.TestCase):
                '@property --x { inherits: false; initial-value: red; }')
         sheet = parse_stylesheet(css, "t")
         self.assertEqual(sheet.properties["--x"], ("false", "red"))
+
+
+class TestTypography(unittest.TestCase):
+    """Font parsing: `@font-face`, family lists, shorthand, weight/size."""
+
+    def test_font_declarations_are_now_kept(self):
+        """Previously dropped entirely – only PROPERTY_ROLE/color-scheme/
+        custom properties survived `_record`'s gate. FONT_PROPERTIES rides
+        the same gate now."""
+        css = ".a { font-family: Inter, sans-serif; font-size: 14px; }"
+        sheet = parse_stylesheet(css, "t")
+        got = {(d.prop, d.value) for d in sheet.declarations}
+        self.assertEqual(got, {
+            ("font-family", "Inter, sans-serif"),
+            ("font-size", "14px"),
+        })
+
+    def test_at_font_face_is_recorded_not_dropped(self):
+        """`_walk`'s own old docstring: an `@font-face` body used to be read
+        for `var()` refs only and then discarded entirely."""
+        css = ('@font-face { font-family: "Open Sans"; '
+              'src: url("a.woff2") format("woff2"); font-weight: 700; }')
+        sheet = parse_stylesheet(css, "t")
+        self.assertEqual(len(sheet.font_faces), 1)
+        face = sheet.font_faces[0]
+        self.assertEqual(face.family, "Open Sans")
+        self.assertEqual(face.weight, "700")
+        self.assertEqual(face.src, [("a.woff2", "woff2")])
+
+    def test_at_font_face_resolves_a_relative_url_against_its_sheet(self):
+        css = '@font-face { font-family: X; src: url(fonts/x.woff2); }'
+        sheet = parse_stylesheet(css, "https://example.com/css/site.css")
+        self.assertEqual(
+            sheet.font_faces[0].src,
+            [("https://example.com/css/fonts/x.woff2", "")],
+        )
+
+    def test_at_font_face_with_no_family_is_not_recorded(self):
+        css = '@font-face { src: url(x.woff2); }'
+        sheet = parse_stylesheet(css, "t")
+        self.assertEqual(sheet.font_faces, [])
+
+    def test_quoted_url_function_is_read_the_same_as_a_url_token(self):
+        """`url("x")` tokenises as a FunctionBlock; `url(x)` as a single
+        URLToken – both are real CSS and must be read the same way."""
+        css = '@font-face { font-family: X; src: url(a.woff2), url("b.woff"); }'
+        sheet = parse_stylesheet(css, "t")
+        self.assertEqual(
+            sheet.font_faces[0].src, [("a.woff2", ""), ("b.woff", "")]
+        )
+
+    def test_parse_font_family_list_joins_unquoted_multiword_names(self):
+        self.assertEqual(
+            parse_font_family_list("Open Sans, sans-serif"),
+            ["Open Sans", "sans-serif"],
+        )
+
+    def test_parse_font_family_list_reads_a_quoted_name(self):
+        self.assertEqual(
+            parse_font_family_list('"My Font", sans-serif'),
+            ["My Font", "sans-serif"],
+        )
+
+    def test_first_named_family_skips_generics(self):
+        self.assertEqual(
+            first_named_family(["-apple-system", "system-ui", "sans-serif"]),
+            None,
+        )
+        self.assertEqual(
+            first_named_family(["Inter", "system-ui", "sans-serif"]), "Inter"
+        )
+
+    def test_resolve_font_weight_reads_keywords_and_numbers(self):
+        self.assertEqual(resolve_font_weight("bold"), 700)
+        self.assertEqual(resolve_font_weight("normal"), 400)
+        self.assertEqual(resolve_font_weight("600"), 600)
+
+    def test_resolve_font_weight_refuses_a_relative_keyword(self):
+        """`lighter`/`bolder` are relative to an inherited weight this tool
+        does not model – guessing a number here would be exactly the kind of
+        invented value this codebase's parsers refuse to produce elsewhere."""
+        self.assertIsNone(resolve_font_weight("lighter"))
+        self.assertIsNone(resolve_font_weight("bolder"))
+
+    def test_resolve_font_size_converts_px_and_rem(self):
+        self.assertEqual(resolve_font_size("18px", 16), ("18px", 18.0))
+        self.assertEqual(resolve_font_size("1.5rem", 16), ("1.5rem", 24.0))
+
+    def test_resolve_font_size_leaves_unresolvable_units_alone(self):
+        """`em` needs an inherited computed size this tool doesn't model;
+        `%`/`vw`/`clamp()` need context it likewise doesn't have. The
+        declared string survives; the px does not get a fabricated value –
+        same discipline as invariant 22's `calc()` evaluator."""
+        for value in ("1.2em", "80%", "4vw", "clamp(1rem, 2vw, 2rem)"):
+            declared, px = resolve_font_size(value, 16)
+            self.assertEqual(declared, value)
+            self.assertIsNone(px)
+
+    def test_parse_font_shorthand_reads_weight_style_size_and_family(self):
+        got = parse_font_shorthand('bold 24px/1.4 "My Font", sans-serif')
+        self.assertEqual(got["weight"], "bold")
+        self.assertEqual(got["size"], "24px")
+        self.assertEqual(got["family"], ["My Font", "sans-serif"])
+        self.assertIsNone(got["style"])
+
+    def test_parse_font_shorthand_reads_an_absolute_size_keyword(self):
+        got = parse_font_shorthand("italic small Georgia, serif")
+        self.assertEqual(got["size"], "small")
+        self.assertEqual(got["style"], "italic")
+        self.assertEqual(got["family"], ["Georgia", "serif"])
+
+    def test_parse_font_shorthand_with_no_size_anchor_finds_nothing(self):
+        """Not a shorthand this grammar can locate a size in at all – every
+        field comes back None rather than a guess."""
+        got = parse_font_shorthand("inherit")
+        self.assertEqual(got, {"family": None, "size": None,
+                               "weight": None, "style": None})
 
 
 if __name__ == "__main__":

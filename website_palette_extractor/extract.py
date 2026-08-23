@@ -21,10 +21,16 @@ from .color import (
     wcag_label,
 )
 from .cssparse import (
+    FONT_PROPERTIES,
     Stylesheet,
+    first_named_family,
     is_inert_shadow,
+    parse_font_family_list,
+    parse_font_shorthand,
     parse_inline_styles,
     parse_stylesheet,
+    resolve_font_size,
+    resolve_font_weight,
     resolve_vars,
     selector_weight,
     split_selector_list,
@@ -213,6 +219,10 @@ class Palette:
     warnings: list[str] = field(default_factory=list)
     stats: dict = field(default_factory=dict)
     image_report: dict | None = None
+    # Typography, extracted once for the whole document rather than per
+    # theme (see `extract_fonts`'s own docstring) – lives on the base
+    # palette only, mirroring `image_report`.
+    fonts: list[dict] = field(default_factory=list)
 
     # Themes. `theme_id` is named for the scope that produced the palette
     # ("base", "light", "dark"); `appearance` is what it actually looks like,
@@ -299,7 +309,21 @@ def collect_sheets(bundle: Bundle, include_third_party: bool = True,
     for asset in bundle.by_kind("html"):
         inline = parse_inline_styles(asset.text, source="[style attributes]",
                                      sheet_order=n)
-        if inline.declarations and keep("[style attributes]"):
+        # Gated on a declaration that isn't one of the new font properties
+        # specifically – not `role != "other"`, which would also exclude
+        # `color-scheme` (its own role is "other" too, T10) and silently
+        # change this gate for sites that carry one, not only font-only
+        # ones. `_record`'s gate now also keeps font declarations
+        # (FONT_PROPERTIES), and most pages have no inline styles at all, so
+        # without this a page whose only `style="..."` attribute sets
+        # `font-size` (no color anywhere inline) would add a phantom
+        # zero-color "[style attributes]" source to `stats.sources` purely as
+        # a side effect of typography extraction. The declaration itself is
+        # not lost to the font pipeline either way *when it shares a sheet
+        # with a real color declaration* – this only misses the narrower case
+        # of a page whose inline styles are font-only. Documented known limit.
+        if (any(d.prop not in FONT_PROPERTIES for d in inline.declarations)
+                and keep("[style attributes]")):
             sheets.append(inline)
             n += 1
 
@@ -1078,6 +1102,206 @@ def _triplet_warning(sheets: list[Stylesheet], table: dict[str, str]) -> str:
     )
 
 
+# ------------------------------------------------------------------ typography
+#
+# A second, independent data dimension alongside color. Extracted once per
+# document rather than once per theme (`extract()` calls `extract_fonts` a
+# single time, outside `_build`'s per-theme loop) – typography rarely changes
+# with a `prefers-color-scheme`/`.dark` scope the way color does, and running
+# a full per-theme pass for it is out of scope for a first version (documented
+# known limit in CLAUDE.md). Colors get per-theme grounds because everything
+# downstream is measured against one; fonts have no equivalent dependency.
+
+def _page_root_font_size(sheets: list[Stylesheet], page: list[PageElement] | None,
+                         layers: dict[str, int], table: dict[str, str]) -> float:
+    """The cascade-resolved `font-size` on `<html>`, in px.
+
+    Same shape as `_page_color_scheme` – the highest cascade-ranked
+    `font-size` declaration that reaches `<html>` specifically (`element=
+    "html"`; not `<body>` – only the root element's computed size is what
+    `rem` is relative to), unscoped only (`d.theme` truthy is skipped), since
+    this needs one document-wide answer the same way the root color-scheme
+    does. Falls back to 16 – CSS's own real initial value for `font-size`,
+    not a guess – when nothing on the page confirms a different one, the same
+    "resolve what has a defined answer, default only to a real spec value"
+    discipline `resolve_font_size` itself follows below.
+    """
+    best = None
+    for sheet in sheets:
+        for d in sheet.declarations:
+            if d.prop != "font-size" or d.theme:
+                continue
+            spec = _page_specificity(d.selector, d.selector, page, element="html")
+            if spec is None:
+                continue
+            key = _cascade_key(d, spec, layers)
+            if best is None or key > best[0]:
+                best = (key, d.value)
+    if not best:
+        return 16.0
+    _declared, px = resolve_font_size(resolve_vars(best[1], table), 16.0)
+    return px if px is not None else 16.0
+
+
+def _latin_face(faces: list):
+    """The face most likely to cover plain ASCII sample text.
+
+    A family can have several `@font-face` blocks at the *same* (weight,
+    style) – Google Fonts ships one block per unicode-range subset (latin,
+    latin-ext, cyrillic, greek, vietnamese…) for every weight, and embedding
+    every subset would balloon the report for no benefit: the report's own
+    sample text ("The quick brown fox") is pure ASCII. Prefer a face with no
+    `unicode-range` restriction at all (covers everything), then one whose
+    range starts at `U+0` (every real "latin" subset does), then just the
+    first one found.
+    """
+    no_range = [f for f in faces if not f.unicode_range]
+    if no_range:
+        return no_range[0]
+    latin = [f for f in faces
+             if f.unicode_range.lower().replace(" ", "").startswith("u+0")]
+    return (latin or faces)[0]
+
+
+def extract_fonts(sheets: list[Stylesheet], table: dict[str, str],
+                  page: list[PageElement] | None,
+                  layers: dict[str, int]) -> list[dict]:
+    """The document's typography, grouped by family.
+
+    A `FontSpec` is one `(family, declared size, resolved weight, style)`
+    combination, built by merging whatever `font-family`/`font-size`/
+    `font-weight`/`font-style`/`font` declarations share one selector within
+    one stylesheet (a selector is never merged across sheets or with another
+    selector's declarations – the same "a rule is a rule" boundary invariant
+    13 already draws for theme-shadowing). **A selector with a size or weight
+    but no `font-family` of its own is dropped** – the family would have to
+    come from a real inheritance walk this pipeline doesn't run for
+    typography, a documented known limit (CLAUDE.md).
+
+    Every value is resolved through `resolve_vars` first – `font-family:
+    var(--font-sans)` is the dominant modern shape (Tailwind v4, shadcn), and
+    skipping this would report zero fonts on most of the corpus.
+
+    Returns a list of `{"family", "source", "totalCount", "usages", "faces"}`
+    dicts. `source` is `"google"` when any matched `@font-face` for that
+    family resolves to a `fonts.gstatic.com` URL, `"custom"` when a face
+    exists but isn't Google-hosted, `"system"` when no face was found at all
+    (the family is referenced by name but never defined – a pre-installed
+    font). Families are sorted by total occurrence count descending (matches
+    the existing "sort report tables by usage count" convention); usages
+    within a family by resolved px descending, then weight ascending, with
+    declared-string-only rows (no resolved px) last.
+    """
+    root_px = _page_root_font_size(sheets, page, layers, table)
+
+    specs: dict[tuple, dict] = {}
+    for sheet in sheets:
+        by_selector: dict[str, dict] = {}
+        for d in sheet.declarations:
+            if d.prop not in FONT_PROPERTIES:
+                continue
+            value = resolve_vars(d.value, table)
+            if not value:
+                continue
+            bucket = by_selector.setdefault(d.selector, {})
+            if d.prop == "font":
+                parts = parse_font_shorthand(value)
+                if parts["family"]:
+                    bucket["family"] = parts["family"]
+                if parts["size"]:
+                    bucket.setdefault("size", parts["size"])
+                if parts["weight"]:
+                    bucket.setdefault("weight", parts["weight"])
+                if parts["style"]:
+                    bucket.setdefault("style", parts["style"])
+            elif d.prop == "font-family":
+                bucket["family"] = parse_font_family_list(value)
+            elif d.prop == "font-size":
+                bucket["size"] = value
+            elif d.prop == "font-weight":
+                bucket["weight"] = value
+            elif d.prop == "font-style":
+                bucket["style"] = value
+
+        for spec in by_selector.values():
+            family = first_named_family(spec.get("family") or [])
+            if not family:
+                continue
+            size_raw = spec.get("size", "")
+            weight_raw = spec.get("weight", "")
+            if not size_raw and not weight_raw:
+                # A bare `font-family` with no size or weight declared on the
+                # same selector says only "this family is referenced
+                # somewhere" – not informative enough to be its own row (it
+                # would show as an unlabelled "? · ?"), so it's dropped
+                # rather than shown empty. The family itself, if it also has
+                # an informative usage elsewhere, still gets reported through
+                # that other selector.
+                continue
+            size_declared, size_px = (
+                resolve_font_size(size_raw, root_px) if size_raw else ("", None)
+            )
+            weight = resolve_font_weight(weight_raw) if weight_raw else None
+            style = (spec.get("style") or "normal").strip().lower()
+            key = (family, size_declared, weight, style)
+            row = specs.setdefault(key, {
+                "family": family, "sizeDeclared": size_declared or None,
+                "sizePx": size_px, "weight": weight,
+                "weightDeclared": weight_raw or None, "style": style,
+                "count": 0,
+            })
+            row["count"] += 1
+
+    faces_by_family: dict[str, list] = {}
+    for sheet in sheets:
+        for face in sheet.font_faces:
+            faces_by_family.setdefault(face.family.strip().lower(), []).append(face)
+
+    families: dict[str, dict] = {}
+    for row in specs.values():
+        fam = row["family"]
+        entry = families.setdefault(fam, {
+            "family": fam, "source": "system", "totalCount": 0,
+            "usages": [], "faces": [],
+        })
+        entry["usages"].append({
+            "size": row["sizeDeclared"], "sizePx": row["sizePx"],
+            "weight": row["weight"], "weightDeclared": row["weightDeclared"],
+            "style": row["style"], "count": row["count"],
+        })
+        entry["totalCount"] += row["count"]
+
+    for fam, entry in families.items():
+        faces = faces_by_family.get(fam.strip().lower(), [])
+        if not faces:
+            continue
+        hosts = {urllib.parse.urlparse(u).netloc.lower()
+                 for f in faces for u, _fmt in f.src}
+        entry["source"] = ("google" if any("gstatic.com" in h for h in hosts)
+                           else "custom")
+        # One face per (weight, style) – see `_latin_face`'s own docstring
+        # for why a family can have several `@font-face` blocks at the same
+        # weight/style and only one is kept.
+        by_weight_style: dict[tuple, list] = {}
+        for f in faces:
+            by_weight_style.setdefault((f.weight, f.style), []).append(f)
+        entry["faces"] = [
+            {"weight": picked.weight, "style": picked.style,
+             "src": [{"url": u, "format": fmt} for u, fmt in picked.src],
+             "unicodeRange": picked.unicode_range}
+            for picked in (_latin_face(g) for g in by_weight_style.values())
+        ]
+
+    result = list(families.values())
+    result.sort(key=lambda e: -e["totalCount"])
+    for e in result:
+        e["usages"].sort(key=lambda u: (
+            -(u["sizePx"] if u["sizePx"] is not None else -1),
+            u["weight"] if u["weight"] is not None else 0,
+        ))
+    return result
+
+
 def _same_palette(a: Palette, b: Palette) -> bool:
     """True when a scope turned out not to change anything worth reporting."""
     return (a.ground.hexa == b.ground.hexa
@@ -1213,6 +1437,8 @@ def extract(bundle: Bundle, *, merge_threshold: float = 0.02,
             f"({pal.ground.hex} and {pal.alternate.ground.hex}), so they are "
             f"labelled by the rule that defines them rather than by appearance."
         )
+
+    pal.fonts = extract_fonts(sheets, table, page, layers)
     return pal
 
 
@@ -1503,7 +1729,19 @@ def _source_stats(sheets: list[Stylesheet]) -> list[dict]:
             "source": s.source,
             "origin": s.origin,
             "thirdParty": s.third_party,
-            "declarations": len(s.declarations),
+            # Excludes only the newly-kept font declarations, not every
+            # `role == "other"` one – `color-scheme`'s role is "other" too
+            # (T10), and it was always counted here (`len(s.declarations)`,
+            # unfiltered, before `_record`'s gate grew to include fonts), so
+            # filtering on role would also drop it and silently change this
+            # count for any site carrying one, not only font-only ones. Not
+            # the same exclusion `n_decls`/`declarationsScanned` makes two
+            # names up (that one deliberately excludes `color-scheme` too,
+            # and always has – see its own comment) – this field's pre-T31
+            # baseline was "everything `_record` kept," and FONT_PROPERTIES
+            # is exactly and only what's new since then.
+            "declarations": sum(1 for d in s.declarations
+                                if d.prop not in FONT_PROPERTIES),
         })
     return out
 

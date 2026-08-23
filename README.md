@@ -143,6 +143,10 @@ no capture, however complete, could confirm or refute a `:hover` color, so
 saying "unused" would be a claim the tool cannot support. The report
 collects these under a **Caveats** section instead of hiding them.
 
+A page with any typography carries a top-level `fonts` key too – additive,
+same promise, `schemaVersion` unchanged. It never holds raw font bytes, even
+with `--fonts`; see [Typography](#typography) below.
+
 ## Light and dark themes
 
 When a site ships two themes, both are extracted and the report gets a toggle.
@@ -200,6 +204,33 @@ You also get a note when a theme's ground had to be inferred – when nothing
 sets a readable background on `html`, `body` or `:root`, usually because the
 page is painted from a wrapper element. Every contrast ratio in that theme is
 measured against the inferred ground, so it is worth knowing.
+
+## Typography
+
+The report also gets a **Typography** section: every font family the
+stylesheet declares, grouped, with the sizes and weights it's used at, an
+occurrence count, and a badge – `Google` for a family served from Google
+Fonts, `Custom` for a self-hosted `@font-face`, no badge when the family is
+referenced by name but never defined in the CSS (a system font, whatever the
+visitor's browser happens to provide). `font-family: var(--font-sans)` is
+resolved the same way a color's `var()` is, and a size in `rem` is resolved
+against the page's own root `font-size` (16px if the page never sets one) –
+`em`, `%`, `vw`, `clamp()` and `calc()` show the value exactly as declared
+rather than a guessed pixel size, the same "never invent a value" rule
+colors follow.
+
+By default the sample text renders in the report's own fallback font –
+metadata only, no extra network access or report size. Pass `--fonts` to
+embed the site's real font files as `data:` URIs and see the actual glyphs:
+for a `.har` target this uses only bytes the browser already fetched at
+capture time (no new network access at all); for a live URL target it also
+fetches the binaries the CSS points to. The JSON stays lean either way –
+`fonts` never carries raw bytes, only metadata, the same way an `--images`
+run never puts raw image bytes in the JSON.
+
+Typography is extracted once for the whole document, not per theme – a site
+whose fonts genuinely change between light and dark is read as whichever the
+cascade resolves, unscoped.
 
 ## What it decides, and why
 
@@ -289,6 +320,8 @@ knowing before you read too much into a status.
 --all                 do not down-weight third-party stylesheets
 --exclude TEXT        skip stylesheets matching TEXT (repeatable)
 --flat                one token per color, ignoring role
+--fonts               also embed the page's real font files in the HTML
+                      report, for accurate Typography-section previews
 --formats LIST        which outputs to write, comma-separated. Any of
                       html, json, css, scss, ts, tailwind (default: all)
 --images              also quantise images (needs pillow + numpy)
@@ -342,6 +375,12 @@ than guessing at a percentage. Relative color syntax (`oklch(from white l c h)`)
 evaluated. `lab()` and `lch()` are read – modern Tailwind emits them after a hex fallback,
 so they win the cascade and skipping them would drop the color entirely.
 
+#### Typography has no inheritance model, and is not per-theme
+A selector that sets `font-size`/`font-weight` but relies on an ancestor for
+its `font-family` is invisible to the Typography section – there is no real
+inheritance walk for it the way there partly is for colors. Fonts are also
+read once for the whole document rather than once per theme.
+
 #### `@supports` is evaluated only far enough to be safe
 A condition can confirm *supported* – a custom property, or a plain `<color>` property whose
 value parses – and otherwise says it cannot tell, in which case the block is read as though it
@@ -383,10 +422,11 @@ A bare system `python3` will fail at the `tinycss2` import rather than at an ass
 [`tests/test_packaging.py`](./tests/test_packaging.py) – one per module in
 [`website_palette_extractor/`](./website_palette_extractor/), plus one for the packaging metadata).
 
-223 tests covering the color maths, cascade ordering, theme scoping, ground
-detection, the merge rules, the status classifications, the CLI's argument
-handling, and the optional image pass. Worth running after any edit – several
-of these exist because the obvious implementation was quietly wrong.
+273 tests covering the color maths, cascade ordering, theme scoping, ground
+detection, the merge rules, the status classifications, typography
+extraction, the CLI's argument handling, and the optional image pass. Worth
+running after any edit – several of these exist because the obvious
+implementation was quietly wrong.
 
 The image tests skip themselves when `pillow`/`numpy` are absent, so the suite
 passes on a core install.

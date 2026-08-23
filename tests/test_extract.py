@@ -1197,5 +1197,192 @@ class TestMatchDetail(unittest.TestCase):
         self.assertEqual(len(ex[0]["matches"]), 2)
 
 
+class TestFonts(unittest.TestCase):
+    """`extract_fonts`: typography, once per document, alongside color."""
+
+    def _fonts_for(self, css: str) -> list[dict]:
+        html = f"<!DOCTYPE html><html><head><style>{css}</style></head>" \
+              "<body><h1>x</h1></body></html>"
+        doc = emit.to_document(extract.extract(sources.load_any(
+            write_fixture(html))))
+        return doc.get("fonts", [])
+
+    def by_family(self, fonts: list[dict], name: str) -> dict:
+        return next(f for f in fonts if f["family"] == name)
+
+    def test_font_family_and_size_are_read(self):
+        fonts = self._fonts_for(
+            "body { background:#fff; color:#111; "
+            "font-family: Montserrat, sans-serif; font-size: 18px; "
+            "font-weight: 900; }"
+        )
+        fam = self.by_family(fonts, "Montserrat")
+        self.assertEqual(fam["source"], "system")
+        self.assertEqual(fam["usages"], [{
+            "size": "18px", "sizePx": 18.0, "weight": 900,
+            "weightDeclared": "900", "style": "normal", "count": 1,
+        }])
+
+    def test_generic_only_stack_reports_no_family(self):
+        """`-apple-system, sans-serif` is a system stack, not a font the site
+        ships -- nothing to report."""
+        fonts = self._fonts_for(
+            "body { background:#fff; color:#111; "
+            "font-family: -apple-system, sans-serif; font-size: 16px; }"
+        )
+        self.assertEqual(fonts, [])
+
+    def test_font_family_through_a_var_is_resolved(self):
+        """`font-family: var(--font-sans)` is the dominant modern shape
+        (Tailwind v4, shadcn) -- skipping resolution here would report zero
+        fonts on most real sites."""
+        fonts = self._fonts_for(
+            ":root { --font-sans: Inter, system-ui, sans-serif; } "
+            "body { background:#fff; color:#111; "
+            "font-family: var(--font-sans); font-size: 16px; }"
+        )
+        self.assertEqual(self.by_family(fonts, "Inter")["usages"][0]["sizePx"],
+                         16.0)
+
+    def test_rem_resolves_against_the_pages_own_root_font_size(self):
+        """Not the browser default (16px) when the page states its own."""
+        fonts = self._fonts_for(
+            "html { font-size: 20px; } "
+            "body { background:#fff; color:#111; "
+            "font-family: Foo, sans-serif; font-size: 1.5rem; }"
+        )
+        self.assertEqual(self.by_family(fonts, "Foo")["usages"][0]["sizePx"],
+                         30.0)
+
+    def test_rem_defaults_to_16px_with_no_root_rule(self):
+        fonts = self._fonts_for(
+            "body { background:#fff; color:#111; "
+            "font-family: Foo, sans-serif; font-size: 1.5rem; }"
+        )
+        self.assertEqual(self.by_family(fonts, "Foo")["usages"][0]["sizePx"],
+                         24.0)
+
+    def test_font_shorthand_is_decomposed(self):
+        fonts = self._fonts_for(
+            "body { background:#fff; color:#111; "
+            'font: bold 24px/1.4 "My Font", sans-serif; }'
+        )
+        fam = self.by_family(fonts, "My Font")
+        self.assertEqual(fam["usages"][0]["sizePx"], 24.0)
+        self.assertEqual(fam["usages"][0]["weight"], 700)
+
+    def test_a_shorthand_only_family_still_matches_its_font_face(self):
+        """`_collect_font_bytes` keys off `faces_by_family`, which keys off
+        the *quoted* `font-family` a `@font-face` declares -- a family whose
+        only usage arrives through the `font` shorthand has to produce the
+        same string `parse_font_family_list` reads out of the shorthand's
+        own family list, or a shorthand-only site would classify `system`
+        and `--fonts` would silently embed nothing for it."""
+        fonts = self._fonts_for(
+            '@font-face { font-family: "My Font"; '
+            'src: url(https://cdn.example.com/myfont.woff2) format("woff2"); '
+            'font-weight: 700; } '
+            "body { background:#fff; color:#111; "
+            'font: bold 24px/1.4 "My Font", sans-serif; }'
+        )
+        fam = self.by_family(fonts, "My Font")
+        self.assertEqual(fam["source"], "custom")
+        self.assertEqual(fam["faces"][0]["src"][0]["url"],
+                         "https://cdn.example.com/myfont.woff2")
+
+    def test_a_selector_with_only_size_and_no_family_is_dropped(self):
+        """A real inheritance walk for typography is out of scope for this
+        pipeline (documented known limit) -- the family would have to come
+        from wherever this selector inherits it, which isn't modelled."""
+        fonts = self._fonts_for(
+            "body { background:#fff; color:#111; } "
+            ".x { font-size: 22px; }"
+        )
+        self.assertEqual(fonts, [])
+
+    def test_a_bare_family_with_no_size_or_weight_is_dropped(self):
+        """Not informative enough to be its own row (it would show as an
+        unlabelled row) -- the family still gets reported if it also has an
+        informative usage elsewhere."""
+        fonts = self._fonts_for(
+            "body { background:#fff; color:#111; } "
+            ".mono { font-family: Menlo, monospace; }"
+        )
+        self.assertEqual(fonts, [])
+
+    def test_a_face_hosted_on_gstatic_is_classified_google(self):
+        fonts = self._fonts_for(
+            '@font-face { font-family: Roboto; '
+            'src: url(https://fonts.gstatic.com/s/roboto/v1.woff2) '
+            'format("woff2"); font-weight: 400; } '
+            "body { background:#fff; color:#111; "
+            "font-family: Roboto, sans-serif; font-size: 16px; }"
+        )
+        fam = self.by_family(fonts, "Roboto")
+        self.assertEqual(fam["source"], "google")
+        self.assertEqual(fam["faces"][0]["src"][0]["url"],
+                         "https://fonts.gstatic.com/s/roboto/v1.woff2")
+
+    def test_a_self_hosted_face_is_classified_custom(self):
+        fonts = self._fonts_for(
+            '@font-face { font-family: Brand; '
+            'src: url(/assets/brand.woff2) format("woff2"); } '
+            "body { background:#fff; color:#111; "
+            "font-family: Brand, sans-serif; font-size: 16px; }"
+        )
+        self.assertEqual(self.by_family(fonts, "Brand")["source"], "custom")
+
+    def test_a_family_with_no_matching_face_is_classified_system(self):
+        fonts = self._fonts_for(
+            "body { background:#fff; color:#111; "
+            "font-family: Georgia, serif; font-size: 16px; }"
+        )
+        self.assertEqual(self.by_family(fonts, "Georgia")["source"], "system")
+
+    def test_families_are_sorted_by_total_usage_count_descending(self):
+        fonts = self._fonts_for(
+            "body { background:#fff; color:#111; "
+            "font-family: Rare, sans-serif; font-size: 16px; } "
+            "h1 { font-family: Common, sans-serif; font-size: 32px; } "
+            "h2 { font-family: Common, sans-serif; font-size: 24px; }"
+        )
+        self.assertEqual([f["family"] for f in fonts[:2]], ["Common", "Rare"])
+
+    def test_multiple_google_subsets_at_one_weight_collapse_to_one_face(self):
+        """Google Fonts ships one `@font-face` block per unicode-range subset
+        for every weight -- embedding every one would balloon the report for
+        no benefit the report's own ASCII sample text needs."""
+        fonts = self._fonts_for(
+            '@font-face { font-family: Roboto; font-weight: 400; '
+            'unicode-range: U+0400-04FF; '
+            'src: url(https://fonts.gstatic.com/cyrillic.woff2); } '
+            '@font-face { font-family: Roboto; font-weight: 400; '
+            'unicode-range: U+0000-00FF; '
+            'src: url(https://fonts.gstatic.com/latin.woff2); } '
+            "body { background:#fff; color:#111; "
+            "font-family: Roboto, sans-serif; font-size: 16px; }"
+        )
+        faces = self.by_family(fonts, "Roboto")["faces"]
+        self.assertEqual(len(faces), 1)
+        self.assertEqual(faces[0]["src"][0]["url"],
+                         "https://fonts.gstatic.com/latin.woff2")
+
+    def test_color_scheme_still_counts_toward_source_stats(self):
+        """`color-scheme`'s own `role` is `"other"` too (T10) -- the same
+        value a font declaration's role falls through to. `stats.sources`
+        counted `color-scheme` before font properties existed (it was
+        `len(s.declarations)`, unfiltered), so excluding every `role ==
+        "other"` declaration to keep font bookkeeping out of this count
+        would silently also drop `color-scheme` and change this number for
+        any site carrying one, not only font-only sites."""
+        html = ("<!DOCTYPE html><html><head><style>"
+               "html { color-scheme: light dark; background:#fff; color:#111; "
+               "font-family: Foo, sans-serif; font-size: 16px; }"
+               "</style></head><body><h1>x</h1></body></html>")
+        doc = emit.to_document(extract.extract(sources.load_any(
+            write_fixture(html))))
+        self.assertEqual(doc["stats"]["sources"][0]["declarations"], 3)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -19,6 +19,7 @@ element moved to `dom.py`, where `cssselect2` answers it against a real tree.
 from __future__ import annotations
 
 import re
+import urllib.parse
 from dataclasses import dataclass, field
 
 import tinycss2
@@ -62,6 +63,23 @@ PROPERTY_ROLE = {
     "scrollbar-color": "ui",
     "text-emphasis-color": "text",
 }
+
+# The properties the typography pipeline reads. Not a role table like
+# PROPERTY_ROLE above -- fonts are not a color role, so these ride into
+# `sheet.declarations` through `_record`'s own `color-scheme` special case
+# (Declaration.role falls through to "other" for them, same as
+# color-scheme, which every existing color-role consumer already skips).
+FONT_PROPERTIES = frozenset({
+    "font-family", "font-weight", "font-size", "font-style", "font",
+})
+
+# CSS's own generic family keywords -- not a font the site ships, so a stack
+# that is only these is a system stack, not a family (extract.first_named_family).
+GENERIC_FAMILIES = frozenset({
+    "serif", "sans-serif", "monospace", "cursive", "fantasy", "system-ui",
+    "ui-serif", "ui-sans-serif", "ui-monospace", "ui-rounded", "math",
+    "emoji", "fangsong", "-apple-system", "blinkmacsystemfont",
+})
 
 
 # ---------------------------------------------------------------- theme scopes
@@ -374,6 +392,27 @@ class Declaration:
 
 
 @dataclass
+class FontFace:
+    """One `@font-face` block – a face the page can render, not a usage.
+
+    `weight`/`style` are the raw declared strings: a variable font's
+    `font-weight: 100 900` is a range, not a single number, so this is kept
+    as text and only compared/resolved by callers that need a number.
+    `src` is `(absolute_url, format)` pairs, `format` being `""` when the
+    `src` didn't carry a `format()` hint. `source` is the stylesheet URL this
+    face was declared in, which is how `extract.py` tells a Google Fonts face
+    (served from a `fonts.googleapis.com`-origin sheet, itself pointing at
+    `fonts.gstatic.com`) from a self-hosted one.
+    """
+    family: str
+    weight: str = "400"
+    style: str = "normal"
+    src: list[tuple[str, str]] = field(default_factory=list)
+    unicode_range: str = ""
+    source: str = ""
+
+
+@dataclass
 class Stylesheet:
     source: str
     origin: str = ""
@@ -390,6 +429,9 @@ class Stylesheet:
     # initial_value), both `None` when the descriptor was absent. Global to
     # the document like `layers` – merged by `extract.property_registrations`.
     properties: dict[str, tuple[str | None, str | None]] = field(default_factory=dict)
+    # `@font-face` blocks found in this sheet. Global to the document like
+    # `layers`/`properties` – merged by `extract.extract_fonts`.
+    font_faces: list[FontFace] = field(default_factory=list)
 
 
 _COMMENT = re.compile(r"/\*.*?\*/", re.S)
@@ -731,6 +773,19 @@ def _walk(sheet: Stylesheet, nodes: list, source: str,
                 if name:
                     sheet.properties[name] = (inherits, initial_value)
                 continue
+            if keyword == "font-face":
+                # `@font-face { font-family: …; src: …; }` declares a face
+                # the page *can* render, not a paint declaration – so, like
+                # `@property` just above, it is parsed directly and the block
+                # is not descended into as ordinary content. Previously this
+                # fell all the way through to the plain `else` below and its
+                # declarations were only ever read for their `var()` refs
+                # (the `_walk` docstring's own note about `selector == ""`)
+                # and then dropped entirely.
+                face = _parse_font_face_body(node, source)
+                if face:
+                    sheet.font_faces.append(face)
+                continue
             if keyword == "supports" and supports_condition(node.prelude) is False:
                 # A confirmed-unsupported `@supports` block (T23) never
                 # applies in the browser this tool models – not even for its
@@ -770,9 +825,12 @@ def _record(sheet: Stylesheet, node, value: str, selector: str, source: str,
     # page-reaching declaration gets, to confirm whether a `light-dark()` site
     # really renders both branches. `Declaration.role` falls through to
     # "other" for it, which `_triplet_warning` and the main color-scan loop
-    # in `extract._build` already know to skip.
+    # in `extract._build` already know to skip. `FONT_PROPERTIES` rides the
+    # same gate for the same reason – `extract.extract_fonts` reads them back
+    # with `resolve_vars`/the cascade the same way, and `Declaration.role`
+    # falls through to "other" for these too.
     if not (prop.startswith("--") or prop in PROPERTY_ROLE
-            or prop == "color-scheme"):
+            or prop == "color-scheme" or prop in FONT_PROPERTIES):
         return
     value = _norm(value)
     if not value:
@@ -792,6 +850,248 @@ def _record(sheet: Stylesheet, node, value: str, selector: str, source: str,
             theme_media=theme_media,
         )
     )
+
+
+# ------------------------------------------------------------------ typography
+#
+# A second, independent data dimension alongside color – parsed here for the
+# same reason color is: `tinycss2` already tokenises it correctly, and the
+# only work left is deciding what a `font-family`/`font-weight`/`font-size`/
+# `font` value *means*, which is this module's job for every other property
+# too. `extract.extract_fonts` is the aggregation half, run once per document
+# rather than once per theme (typography rarely changes with a theme scope –
+# see CLAUDE.md's Themes section).
+
+def parse_font_family_list(value: str) -> list[str]:
+    """Family names in a `font-family` value, in declared order, generics
+    included – callers that want only the site's own fonts filter with
+    `GENERIC_FAMILIES` themselves (`first_named_family`).
+
+    CSS allows a quoted name (`"Open Sans"`) and also an unquoted one that may
+    contain internal whitespace (`Open Sans`, two idents that together spell
+    one name) – consecutive ident tokens between commas are joined with a
+    single space, the same collapsing `_norm` already does elsewhere, rather
+    than trusting the original whitespace run.
+    """
+    tokens = tinycss2.parse_component_value_list(value)
+    names: list[str] = []
+    current: list[str] = []
+
+    def flush() -> None:
+        if current:
+            names.append(" ".join(current))
+            current.clear()
+
+    for t in tokens:
+        if t.type == "whitespace":
+            continue
+        if t.type == "literal" and t.value == ",":
+            flush()
+        elif t.type == "string":
+            flush()
+            names.append(t.value)
+        elif t.type == "ident":
+            current.append(t.value)
+        # Anything else (a stray function, an unexpected token) is simply not
+        # part of a name and is skipped rather than guessed at.
+    flush()
+    return [n for n in names if n]
+
+
+def first_named_family(stack: list[str]) -> str | None:
+    """The first entry in `stack` that isn't a CSS generic keyword, or None.
+
+    A stack that is only generics (`-apple-system, sans-serif`) is a system
+    font stack, not a family the site ships – nothing to report, the same "a
+    scope carrying no color of its own is not a theme" shape of reasoning
+    `extract._scopes_present` already applies elsewhere in this codebase.
+    """
+    for name in stack:
+        if name.strip().lower() not in GENERIC_FAMILIES:
+            return name
+    return None
+
+
+_FONT_WEIGHT_KEYWORDS = {"normal": 400, "bold": 700}
+
+
+def resolve_font_weight(value: str) -> int | None:
+    """A `font-weight` value as a number, or None.
+
+    `lighter`/`bolder` are relative to an inherited weight this tool does not
+    model, so they come back `None` rather than a guessed number – "parsers
+    return None for anything not understood," same as everywhere else in this
+    codebase.
+    """
+    v = value.strip().lower()
+    if v in _FONT_WEIGHT_KEYWORDS:
+        return _FONT_WEIGHT_KEYWORDS[v]
+    try:
+        n = float(v)
+    except ValueError:
+        return None
+    return int(n) if 1 <= n <= 1000 else None
+
+
+_FONT_SIZE_RE = re.compile(r"^(-?[0-9]*\.?[0-9]+)(px|rem)$", re.I)
+
+
+def resolve_font_size(value: str, root_px: float) -> tuple[str, float | None]:
+    """`(declared string, resolved px)` for a `font-size` value.
+
+    Only a literal `<number>px` or `<number>rem` is resolved. `em` needs the
+    *inherited* computed size this tool does not model; `%`, `vw`, `clamp()`
+    and `calc()` need context this tool likewise doesn't have; an unresolved
+    `var()` has already had its one chance in `resolve_vars`. Every one of
+    those comes back with a `None` px and the declared string is shown
+    exactly as written rather than a fabricated number – the same discipline
+    invariant 22's `calc()` evaluator and the bare-channel-triplet limit
+    already hold elsewhere in this codebase: convert what has a defined,
+    computable answer, and leave everything else alone rather than guess.
+    """
+    v = value.strip()
+    m = _FONT_SIZE_RE.match(v)
+    if not m:
+        return v, None
+    n = float(m.group(1))
+    return v, (n if m.group(2).lower() == "px" else n * root_px)
+
+
+_ABSOLUTE_SIZE_KEYWORDS = frozenset({
+    "xx-small", "x-small", "small", "medium", "large", "x-large", "xx-large",
+    "xxx-large", "smaller", "larger",
+})
+_FONT_STYLE_KEYWORDS = frozenset({"italic", "oblique"})
+
+
+def parse_font_shorthand(value: str) -> dict:
+    """Best-effort decomposition of a `font` shorthand value.
+
+    `font: [font-style || font-variant || font-weight]? font-size
+    [/line-height]? font-family` – `tinycss2` does not expand this the way a
+    real cascade engine would, so this walks the token stream for the *size*
+    itself as the anchor (a dimension/percentage token, or an absolute-size
+    keyword): everything after it (past an optional `/line-height`) is the
+    family list, and a weight/style token found *before* it is read if
+    present. A field not confidently found comes back `None` rather than
+    guessed – `family` is still returned whenever the anchor itself is found,
+    even when weight/style aren't.
+
+    Returns `{"family": list[str] | None, "size": str | None,
+    "weight": str | None, "style": str | None}`.
+    """
+    tokens = tinycss2.parse_component_value_list(value)
+    anchor = None
+    for i, t in enumerate(tokens):
+        if t.type in ("dimension", "percentage"):
+            anchor = i
+            break
+        if t.type == "ident" and t.lower_value in _ABSOLUTE_SIZE_KEYWORDS:
+            anchor = i
+            break
+    if anchor is None:
+        return {"family": None, "size": None, "weight": None, "style": None}
+
+    size = tinycss2.serialize([tokens[anchor]]).strip()
+
+    after = tokens[anchor + 1:]
+    # Skip an optional `/line-height` immediately following the size.
+    j = 0
+    while j < len(after) and after[j].type == "whitespace":
+        j += 1
+    if j < len(after) and after[j].type == "literal" and after[j].value == "/":
+        j += 1
+        while j < len(after) and after[j].type == "whitespace":
+            j += 1
+        if j < len(after):
+            j += 1  # the line-height token itself
+    family_value = tinycss2.serialize(after[j:]).strip()
+    family = parse_font_family_list(family_value) if family_value else None
+
+    weight = None
+    style = None
+    for t in tokens[:anchor]:
+        if t.type == "number" and weight is None:
+            # A bare number before the size anchor can only be a font-weight
+            # in this grammar – font-variant/font-stretch are all keywords.
+            weight = tinycss2.serialize([t]).strip()
+        elif t.type == "ident":
+            low = t.lower_value
+            if low in _FONT_STYLE_KEYWORDS and style is None:
+                style = low
+            elif low in ("normal", "bold") and weight is None:
+                weight = low
+
+    return {"family": family, "size": size, "weight": weight, "style": style}
+
+
+def _resolve_face_url(base_url: str, url: str) -> str:
+    if not url or url.lower().startswith("data:"):
+        return url
+    try:
+        return urllib.parse.urljoin(base_url, url)
+    except ValueError:
+        return url
+
+
+def _parse_face_src(tokens: list, base_url: str) -> list[tuple[str, str]]:
+    """`(absolute_url, format)` pairs from an `@font-face` `src` value.
+
+    `local(...)` entries have no URL to embed and are skipped by construction
+    – only a `url` token or a quoted `url(...)` function is recognised.
+    `format(...)` is optional; when absent the pair's format is `""`.
+    """
+    out: list[tuple[str, str]] = []
+    n = len(tokens)
+    for i, t in enumerate(tokens):
+        url = None
+        if t.type == "url":
+            url = t.value
+        elif t.type == "function" and t.lower_name == "url":
+            strs = [a for a in t.arguments if a.type == "string"]
+            url = strs[0].value if strs else None
+        if url is None:
+            continue
+        fmt = ""
+        j = i + 1
+        while j < n and tokens[j].type == "whitespace":
+            j += 1
+        if (j < n and tokens[j].type == "function"
+                and tokens[j].lower_name == "format"):
+            fargs = [a for a in tokens[j].arguments if a.type in ("string", "ident")]
+            if fargs:
+                fmt = fargs[0].value.lower()
+        out.append((_resolve_face_url(base_url, url), fmt))
+    return out
+
+
+def _parse_font_face_body(node, source: str) -> FontFace | None:
+    """One `@font-face` block, or `None` when it declares no usable family."""
+    family = None
+    weight = "400"
+    style = "normal"
+    src: list[tuple[str, str]] = []
+    unicode_range = ""
+    for decl in _contents(node):
+        if decl.type != "declaration":
+            continue
+        prop = decl.lower_name
+        if prop == "font-family":
+            names = parse_font_family_list(_norm(tinycss2.serialize(decl.value)))
+            if names:
+                family = names[0]
+        elif prop == "src":
+            src = _parse_face_src(decl.value, source)
+        elif prop == "font-weight":
+            weight = _norm(tinycss2.serialize(decl.value)) or weight
+        elif prop == "font-style":
+            style = _norm(tinycss2.serialize(decl.value)) or style
+        elif prop == "unicode-range":
+            unicode_range = _norm(tinycss2.serialize(decl.value))
+    if not family:
+        return None
+    return FontFace(family=family, weight=weight, style=style, src=src,
+                    unicode_range=unicode_range, source=source)
 
 
 def _var_name_and_fallback(

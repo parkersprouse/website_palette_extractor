@@ -240,7 +240,7 @@ the previous version's output under the current version's name — the identical
 failure the rule above exists for, on the artifact that had no rule.
 
 ```bash
-python3 -m website_palette_extractor parkersprouse.me.har --images -o example
+python3 -m website_palette_extractor parkersprouse.me.har --images --fonts -o example
 ```
 
 It drifted exactly as predicted, and was caught by regenerating rather than by

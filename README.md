@@ -14,26 +14,26 @@ matched against – which are installed for you. `pillow` and `numpy` are extra 
 only required if you want to use `--images`.
 
 ```bash
-python3 -m website_palette_extractor site.har --images -o "palettes/site"            # from a HAR export (best)
-python3 -m website_palette_extractor https://example.com --images -o "palettes/site" # directly pulling a site
-python3 -m website_palette_extractor ./saved-page/ --images -o "palettes/site"       # local HTML / CSS
+python3 -m website_palette_extractor site.har --images --fonts -o "palettes/site"            # from a HAR export (best)
+python3 -m website_palette_extractor https://example.com --images --fonts -o "palettes/site" # directly pulling a site
+python3 -m website_palette_extractor ./saved-page/ --images --fonts -o "palettes/site"       # local HTML / CSS
 open palettes/site/index.html
 ```
 
 Or if using `uv`:
 ```bash
-uv run -m website_palette_extractor site.har --images -o "palettes/site"            # from a HAR export (best)
-uv run -m website_palette_extractor https://example.com --images -o "palettes/site" # directly pulling a site
-uv run -m website_palette_extractor ./saved-page/ --images -o "palettes/site"       # local HTML / CSS
+uv run -m website_palette_extractor site.har --images --fonts -o "palettes/site"            # from a HAR export (best)
+uv run -m website_palette_extractor https://example.com --images --fonts -o "palettes/site" # directly pulling a site
+uv run -m website_palette_extractor ./saved-page/ --images --fonts -o "palettes/site"       # local HTML / CSS
 open palettes/site/index.html
 ```
 
 There is also `website_palette_extractor.pyz`, which is a version of the app that comes completely self-contained
 with all the necessary dependencies so it can be run with just Python installed:
 ```bash
-python3 website_palette_extractor.pyz site.har --images -o "palettes/site"
+python3 website_palette_extractor.pyz site.har --images --fonts -o "palettes/site"
 # or
-uv run website_palette_extractor.pyz site.har --images -o "palettes/site"
+uv run website_palette_extractor.pyz site.har --images --fonts -o "palettes/site"
 ```
 
 Or the app can be installed, which puts a `website-palette-extractor` command on your path and makes
@@ -396,7 +396,7 @@ anything yourself.
 
 It was generated using the following command:
 ```bash
-python3 -m website_palette_extractor parkersprouse.me.har --images -o example
+python3 -m website_palette_extractor parkersprouse.me.har --images --fonts -o example
 ```
 
 I've included the `.har` in case you want to run it yourself.

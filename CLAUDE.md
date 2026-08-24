@@ -40,10 +40,18 @@ trusting this line:
 
 ```bash
 for v in 3.11 3.12 3.13 3.14; do
-  uv run --python "$v" --with tinycss2 --with cssselect2 --with html5lib \
-    --no-project python -m unittest discover
+  "python$v" -m venv "/tmp/wpe-matrix-$v"
+  "/tmp/wpe-matrix-$v/bin/pip" install --quiet tinycss2 cssselect2 html5lib
+  "/tmp/wpe-matrix-$v/bin/python" -m unittest discover
+  rm -rf "/tmp/wpe-matrix-$v"
 done
 ```
+
+(Assumes `python3.11`…`python3.14` are all on `PATH` — true once each is
+`pyenv install`ed and `pyenv rehash` has run. A throwaway venv per version is
+the direct substitute for what `uv run --python … --with … --no-project` used
+to do in one line: a real interpreter at that exact version, with only these
+three packages, and nothing left behind after.)
 
 **Priority order, set by the owner (2026-07-26): accuracy and breadth first,
 slimness second.** If a dependency makes the tool read more sites correctly,
@@ -172,12 +180,16 @@ the only ones added by hand, because neither is ever in `pyproject.toml`.
 interpreter that has *none* of the dependencies installed —
 
 ```bash
-uv run --python 3.11 --no-project python website_palette_extractor.pyz <target> -o out
+python3.11 -m venv /tmp/wpe-clean && \
+  /tmp/wpe-clean/bin/python website_palette_extractor.pyz <target> -o out; \
+  rm -rf /tmp/wpe-clean
 ```
 
 — because that is the one thing `build.py` cannot check from inside the same
 environment it just built in. On a development machine every interpreter has
 `tinycss2`/`cssselect2` already, so a broken vendoring step is invisible to it.
+A fresh `venv` gets no packages beyond `pip` itself, so it is genuinely clean
+without needing `uv`'s ephemeral-environment shortcut.
 
 The package keeps its own `__main__.py` so `python3 -m website_palette_extractor` works from a
 checkout. Module / console-script / zipapp builds must produce identical JSON
@@ -191,8 +203,11 @@ pipeline).
 `requires-python`). A zipapp carries no `requires-python` of its own, so
 without this an old interpreter used to fail deep inside `extract.py`'s
 `zip(strict=)` calls — on two-theme sites only, looking exactly like a bug in
-the tool — instead of at start-up with a readable message. Verified: `uv run
---python 3.10 --no-project python website_palette_extractor.pyz …` now prints `error:
+the tool — instead of at start-up with a readable message. Verified at the
+time by running the built `.pyz` on a Python 3.10 interpreter with none of
+the dependencies installed (via `uv run --python 3.10 --no-project`, before
+`uv` left this project's workflow — a throwaway venv per the clean
+-interpreter check above is the same check now): it printed `error:
 website-palette-extractor requires Python 3.11+ (running 3.10.20).` and exits 1, instead of
 the `TypeError` `PLAN.md` T1 diagnosed.
 

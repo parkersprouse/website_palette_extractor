@@ -571,6 +571,14 @@
         white-space: nowrap;
       }
 
+      /* Distinguishes "this selector never declared it" from an actual
+         value sitting in the same slot -- see fontMetric() in the script
+         below for why this exists instead of a bare "?". */
+      .font-row__metric--undeclared {
+        font-style: italic;
+        opacity: .75;
+      }
+
       footer {
         margin-top: 2.6rem;
         padding-top: 1.2rem;
@@ -981,6 +989,21 @@
           });
         }
 
+        /* One size/weight cell in the Typography table. `value` is the text
+           to show, or null/undefined when this selector never declared the
+           property at all -- rendered as an explicit, dimmed "not declared"
+           rather than a bare "?", with a title tying it back to the one
+           documented reason (no inheritance walk for fonts) instead of
+           leaving a reader to wonder whether extraction just missed it. */
+        function fontMetric(value, prop) {
+          if (value != null) return el('span', null, value);
+          var s = el('span', 'font-row__metric--undeclared', 'not declared');
+          s.title = 'No ' + prop + ' is set on this selector itself -- ' +
+            "this tool doesn't walk up the DOM to find an inherited value, " +
+            'so this is left unlabelled rather than guessed.';
+          return s;
+        }
+
         function renderFonts() {
           /* Not theme-scoped (extract.extract_fonts runs once for the whole
              document, unlike colors) so this is called once at load, below,
@@ -1022,12 +1045,25 @@
                 (u.sizePx != null ? Math.min(u.sizePx, 40) : 16) + 'px';
               row.appendChild(sample);
 
-              var size = u.sizePx != null
+              /* '?' used to stand in for both "not declared on this
+                 selector" and "couldn't be read" -- indistinguishable to a
+                 reader, and only the first ever actually happens (see
+                 extract_fonts's own docstring: a selector with neither size
+                 nor weight is dropped before it gets here, so at most one of
+                 the two is ever missing on a kept row). Named explicitly
+                 instead, with a tooltip pointing at the documented reason --
+                 no inheritance walk for typography -- rather than leaving a
+                 reader to guess whether this is a bug. */
+              var sizeText = u.sizePx != null
                 ? (Math.round(u.sizePx * 100) / 100) + 'px'
-                : (u.size || '?');
-              var weight = u.weightDeclared != null ? u.weightDeclared
-                : (u.weight != null ? String(u.weight) : '?');
-              row.appendChild(el('div', 'font-row__label', size + ' · ' + weight));
+                : u.size;
+              var weightText = u.weightDeclared != null ? u.weightDeclared
+                : (u.weight != null ? String(u.weight) : null);
+              var label = el('div', 'font-row__label');
+              label.appendChild(fontMetric(sizeText, 'font-size'));
+              label.appendChild(document.createTextNode(' · '));
+              label.appendChild(fontMetric(weightText, 'font-weight'));
+              row.appendChild(label);
               group.appendChild(row);
             });
 

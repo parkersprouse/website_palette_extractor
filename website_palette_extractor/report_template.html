@@ -5,18 +5,6 @@
     <meta name='viewport' content='width=device-width, initial-scale=1'>
     <title>__TITLE__ · palette</title>
     <style>
-      /* Only the faces this report's own CSS can ever select are shipped,
-         and that set is three, not two -- the `.font-row__metric
-         --undeclared` rule below (the Typography section's "not declared"
-         label) renders real italic text, so Inter Variable's italic face
-         belongs here alongside its regular weight. No element renders an
-         explicit Source Code Pro weight other than the browser default
-         (regular, carried by `code`/`.mono` with no font-weight override)
-         -- verified by reading every selector that sets `font-family` or
-         `font-weight` in this file, not assumed. All three faces are
-         `.woff2`, already brotli-compressed, so none costs what the
-         original Nerd Font variant's per-weight `.ttf` files did once
-         inlined as a data URI. PLAN.md T29. */
       @font-face {
         font-family: 'Inter Variable';
         font-style: normal;
@@ -50,18 +38,8 @@
         box-sizing: border-box;
       }
     </style>
-    <!-- The site's own fonts, real bytes embedded as data URIs -- only
-         present when the report was built with --fonts and a face's bytes
-         were actually found (bundle or a live fetch; see emit.py's
-         _site_font_faces_css). Empty otherwise, and the Typography section
-         renders its sample text in the report's own face instead -- see
-         renderFonts() below. A separate <style> tag rather than folding into
-         the one above: the block above is fixed at template-authoring time,
-         this one is per-run generated CSS, same reason __UI_THEMES__ gets
-         its own text substitution rather than being hand-written inline. -->
     <style id='site-fonts'>__FONT_FACES_CSS__</style>
     <style>
-
       __UI_THEMES__ body {
         margin: 0;
         padding: 2rem 1.5rem 5rem;
@@ -453,7 +431,7 @@
       }
 
       /*
-       * T24: always-present, unlike .warn-box -- explains the category even on
+       * always-present, unlike .warn-box -- explains the category even on
        * a site that triggers none of it, the same way STATUS_BLURBS explains
        * every status regardless of which ones a given palette has. Neutral
        * border rather than --ui-accent: this is a standing limit of the method,
@@ -583,7 +561,7 @@
 
       /* Distinguishes "this selector never declared it" from an actual
          value sitting in the same slot -- see fontMetric() in the script
-         below for why this exists instead of a bare "?". */
+         below for why this exists instead of a bare "?" */
       .font-row__metric--undeclared {
         font-style: italic;
         opacity: .75;
@@ -659,7 +637,7 @@
       <section id='pairs-section'>
         <h2>Contrast</h2>
         <p class='blurb'>Every extracted color against the ground, at body size.
-          Ratios below 4.5:1 are marked – that is the WCAG AA floor for normal text.</p>
+          Ratios below 4.5:1 are marked - that is the WCAG AA floor for normal text.</p>
         <div class='pairs' id='pairs'></div>
       </section>
 
@@ -667,7 +645,7 @@
         <h2>Typography</h2>
         <p class='blurb'>Every font family the stylesheet declares, with the
           sizes and weights it's used at. Read from font-family/font-size/
-          font-weight declarations, not a rendered snapshot – a family with
+          font-weight declarations, not a rendered snapshot - a family with
           no <span class='font-badge'>Google</span>/<span
           class='font-badge'>Custom</span> badge is referenced by name but
           never defined in the CSS, so it's whatever the visitor's system
@@ -737,7 +715,7 @@
         var STATUS_ORDER = ['live', 'saved', 'inert', 'unmatched'];
 
         /* Matches body's own font-family declaration above -- the fallback
-           a Typography sample renders in when --fonts wasn't used, or when
+           a Typography sample renders in when `--fonts` wasn't used, or when
            it was but this particular face's bytes weren't found. */
         var BODY_FONT_STACK = "'Inter Variable', system-ui, -apple-system, " +
           "BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif";
@@ -757,7 +735,7 @@
 
         /* Always at least one entry, so everything below has one code path whether
            or not the site shipped a second theme. Each carries its own ground, and
-           every contrast figure in it was measured against that ground – which is
+           every contrast figure in it was measured against that ground - which is
            why switching themes redraws rather than recolours. */
         var THEMES = doc.themes;
         var themeIx = 0;
@@ -839,7 +817,7 @@
           var themeHost = document.getElementById('theme');
           /* Label by appearance, which is what a reader recognises. When both
              themes land on the same side of the light/dark line the appearance is
-             no longer a distinction, so fall back to the rule that defines each –
+             no longer a distinction, so fall back to the rule that defines each -
              two buttons both reading "dark" would be worse than no toggle. */
           var sameLook = THEMES[0].appearance === THEMES[1].appearance;
           THEMES.forEach(function (t, i) {
@@ -898,7 +876,7 @@
         /* ---------- swatches ---------- */
         function swatch(c) {
           var btn = el('button', 'sw');
-          btn.setAttribute('aria-label', 'Copy ' + valueFor(c) + ' – ' + c.name);
+          btn.setAttribute('aria-label', 'Copy ' + valueFor(c) + ' - ' + c.name);
           btn.title = c.usedIn.join(', ');
 
           var chip = el('div', 'chip' + (c.source ? ' alpha' : ''));
@@ -944,8 +922,8 @@
             sec.appendChild(el('h2', null, GROUP_TITLES[g] || g));
             sec.appendChild(el('p', 'blurb', GROUP_BLURBS[g] || ''));
 
-            /* T20: sub-group by status so a reader can see *why* a swatch isn't
-               live without leaving the section – a per-status heading and one-line
+            /* sub-group by status so a reader can see *why* a swatch isn't
+               live without leaving the section - a per-status heading and one-line
                description, right beside the colors it explains. Skipped when the
                section is purely live (the default "rendered only" view, and any
                section with nothing else to explain), so the common case renders
@@ -985,7 +963,7 @@
           host.textContent = '';
           cols.forEach(function (c) {
             var d = el('div', 'pair');
-            /* The active theme's ground, not the document's – the ratio printed
+            /* The active theme's ground, not the document's - the ratio printed
                beside each sample was measured against this exact background. */
             d.style.background = theme().ground;
             var demo = el('div', 'demo', 'Sample text');
@@ -1259,14 +1237,14 @@
                files, which raises the stakes on the sentence above from "the
                source page is licensed" to "this file you're holding is". */
             (document.getElementById('site-fonts').textContent.trim()
-              ? ' – this report embeds the actual font files it found; check ' +
+              ? ' - this report embeds the actual font files it found; check ' +
                 'their license before redistributing it'
               : '') +
             '.';
         }
 
         /* ---------- caveats ---------- */
-        /* T24: always present, unlike #warnings -- explains the category even when
+        /* always present, unlike #warnings -- explains the category even when
            this theme has no example of it, then names the entries it does have.
            Per-theme (dynamicOnly is a per-color flag), so it lives in render()
            rather than the one-time #warnings block above. */
@@ -1278,11 +1256,11 @@
           box.appendChild(el('p', null,
             'A color is marked live once this tool can show its selector on the ' +
             'page it captured. A selector written only for an interaction state ' +
-            '– :hover, :focus, and the like – has no resting state to ' +
+            '- :hover, :focus, and the like - has no resting state to ' +
             "capture: the state doesn't exist until someone is actually " +
             'interacting, so no capture, however complete, can confirm or rule ' +
-            'it out. Those colors stay live – unconfirmed is not the same ' +
-            'as absent – but nothing here has verified they render.'));
+            'it out. Those colors stay live - unconfirmed is not the same ' +
+            'as absent - but nothing here has verified they render.'));
           var dyn = theme().colors.filter(function (c) { return c.dynamicOnly; });
           if (dyn.length) {
             var p2 = el('p', null, dyn.length === 1

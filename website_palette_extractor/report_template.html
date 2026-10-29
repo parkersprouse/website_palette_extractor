@@ -5,32 +5,42 @@
     <meta name='viewport' content='width=device-width, initial-scale=1'>
     <title>__TITLE__ · palette</title>
     <style>
-      /* Only the faces this report's own CSS can ever select are shipped --
-         SauceCodePro Nerd Font Mono is a Nerd Font (thousands of glyphs
-         per weight) and would otherwise cost several MB per unused weight
-         once inlined as a data URI (see below). No element in this
-         template ever renders italic text or an explicit SauceCodePro
-         weight other than the browser default (regular, carried by
-         `code`/`.mono` with no font-weight override) -- verified by
-         reading every selector that sets `font-family` or `font-weight`
-         in this file, not assumed. Inter Variable is a single variable
-         -weight file regardless, so it is not a per-weight cost the same
-         way; only its unused italic face is dropped. PLAN.md T29. */
+      /* Only the faces this report's own CSS can ever select are shipped,
+         and that set is three, not two -- the `.font-row__metric
+         --undeclared` rule below (the Typography section's "not declared"
+         label) renders real italic text, so Inter Variable's italic face
+         belongs here alongside its regular weight. No element renders an
+         explicit Source Code Pro weight other than the browser default
+         (regular, carried by `code`/`.mono` with no font-weight override)
+         -- verified by reading every selector that sets `font-family` or
+         `font-weight` in this file, not assumed. All three faces are
+         `.woff2`, already brotli-compressed, so none costs what the
+         original Nerd Font variant's per-weight `.ttf` files did once
+         inlined as a data URI. PLAN.md T29. */
       @font-face {
         font-family: 'Inter Variable';
         font-style: normal;
         font-display: swap;
         font-weight: 100 900;
-        src: url('__FONT_INTER__') format('truetype');
+        src: url('__FONT_INTER__') format('woff2');
         unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
       }
 
       @font-face {
-        font-family: 'SauceCodePro Nerd Font Mono';
+        font-family: 'Inter Variable';
+        font-style: italic;
+        font-display: swap;
+        font-weight: 100 900;
+        src: url('__FONT_INTER_ITALIC__') format('woff2');
+        unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+      }
+
+      @font-face {
+        font-family: 'Source Code Pro';
         font-style: normal;
         font-display: swap;
         font-weight: 400;
-        src: url('__FONT_MONO__') format('truetype');
+        src: url('__FONT_MONO__') format('woff2');
         unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
       }
 
@@ -74,7 +84,7 @@
 
       code,
       .mono {
-        font-family: 'SauceCodePro Nerd Font Mono', ui-monospace, SFMono-Regular, 'SF Mono', 'Roboto Mono', 'Ubuntu Mono', Menlo, Consolas, monospace;
+        font-family: 'Source Code Pro', ui-monospace, SFMono-Regular, 'SF Mono', 'Roboto Mono', 'Ubuntu Mono', Menlo, Consolas, monospace;
       }
 
       header {

@@ -91,15 +91,16 @@ def _required_packages() -> tuple[str, ...]:
 # future staging change without any of the dependency-vendoring checks
 # noticing, since none of them look inside PACKAGE itself.
 #
-# The two fonts (PLAN.md T29) are read the identical way, by
+# The three vendored fonts (PLAN.md T29) are read the identical way, by
 # emit._font_data_uri, and belong on this same list for the same reason --
-# a report emitted from a .pyz missing either one would raise at import
-# time (report_template.html) or when the module-level _FONT_INTER /
-# _FONT_MONO constants are computed (a font), rather than being caught here.
+# a report emitted from a .pyz missing any one of them would raise at
+# import time (report_template.html) or inside emit_html when that font's
+# `_font_data_uri` call runs, rather than being caught here.
 _REQUIRED_DATA_FILES = (
     f"{PACKAGE}/report_template.html",
-    f"{PACKAGE}/assets/fonts/inter/inter_variable.ttf",
-    f"{PACKAGE}/assets/fonts/sauce_code_pro/sauce_code_pro_mono__regular.ttf",
+    f"{PACKAGE}/assets/fonts/inter/inter_4.1__variable.woff2",
+    f"{PACKAGE}/assets/fonts/inter/inter_4.1_italic__variable.woff2",
+    f"{PACKAGE}/assets/fonts/source_code_pro/source_code_pro__variable.woff2",
 )
 
 

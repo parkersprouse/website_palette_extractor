@@ -78,19 +78,19 @@ class TestEndToEnd(unittest.TestCase):
         json.loads(payload.replace("<\\/", "</"))
 
     def test_fonts_are_inlined_as_data_uris(self):
-        """PLAN.md T29: the two reachable faces ship as `data:` URIs.
+        """PLAN.md T29: the three reachable faces ship as `data:` URIs.
 
         Not just presence of the right prefix -- each one is decoded back
-        from base64 and checked for a real TrueType/OpenType sfnt header
-        (`\\x00\\x01\\x00\\x00` or `OTTO`), so a truncated or mis-encoded
-        blob would fail this rather than pass on string-matching alone.
+        from base64 and checked for a real WOFF2 header (`wOF2`), so a
+        truncated or mis-encoded blob would fail this rather than pass on
+        string-matching alone.
         """
         html = emit.emit_html(self.doc, self.pal)
-        uris = re.findall(r"data:font/ttf;base64,([A-Za-z0-9+/=]+)", html)
-        self.assertEqual(len(uris), 2, "expected exactly two inlined fonts")
+        uris = re.findall(r"data:font/woff2;base64,([A-Za-z0-9+/=]+)", html)
+        self.assertEqual(len(uris), 3, "expected exactly three inlined fonts")
         for encoded in uris:
             font_bytes = base64.b64decode(encoded)
-            self.assertIn(font_bytes[:4], (b"\x00\x01\x00\x00", b"OTTO"))
+            self.assertEqual(font_bytes[:4], b"wOF2")
 
     def test_report_theme_is_readable(self):
         theme = emit._pick_report_theme(self.doc)
@@ -226,7 +226,7 @@ class TestReportTemplateSubstitution(unittest.TestCase):
             "__TITLE__", "__TITLE_HTML__", "__SUBTITLE__", "__UI_THEMES__",
             "__DATA__", "__GROUP_TITLES__", "__GROUP_BLURBS__",
             "__STATUS_TITLES__", "__STATUS_BLURBS__", "__FONT_INTER__",
-            "__FONT_MONO__", "__FONT_FACES_CSS__",
+            "__FONT_INTER_ITALIC__", "__FONT_MONO__", "__FONT_FACES_CSS__",
         }
         self.assertEqual(found, known)
 

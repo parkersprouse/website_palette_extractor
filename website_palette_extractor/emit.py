@@ -464,25 +464,28 @@ def _font_data_uri(relative_path: str) -> str:
     own first draft) is exactly the external reference that invariant
     forbids: separate the HTML from that sibling directory -- move it,
     email it, share just the one file -- and the fonts silently vanish.
-    Only the two faces the report's own CSS can ever select are vendored at
+    Only the faces the report's own CSS can ever select are vendored at
     all (report_template.html's own comment, PLAN.md T29); the rest of each
-    font family's weights were deleted rather than inlined unused, since a
-    Nerd Font's per-weight file is several MB and this project already
-    counts a report's own weight in its size budget (invariant 11's tests
-    diff full HTML, not just structure).
+    font family's weights were deleted rather than inlined unused. All
+    three vendored faces (Inter Variable regular, Inter Variable italic,
+    Source Code Pro) are `.woff2`, chosen over `.ttf` for the same reason
+    any web font ships compressed -- woff2 is already brotli-compressed, so
+    there is no raw-TrueType weight to trade against invariant 11's size
+    budget the way the original Nerd Font variant's per-weight `.ttf`
+    files were.
 
     Called from inside `emit_html`, not eagerly at import time the way
     `_HTML` is -- `_HTML` is ~30KB and free to load unconditionally, but
-    these two files are ~3MB raw between them, and `__main__.py` imports
-    this module even for a `--formats json`-only run that never touches
-    HTML at all. `functools.cache` keeps the "don't re-read and re-encode
-    on a second `emit_html()` call" guarantee module-scope constants would
-    have provided, without paying the cost on every import.
+    `__main__.py` imports this module even for a `--formats json`-only run
+    that never touches HTML at all. `functools.cache` keeps the "don't
+    re-read and re-encode on a second `emit_html()` call" guarantee
+    module-scope constants would have provided, without paying the cost on
+    every import.
     """
     data = importlib.resources.files(__package__).joinpath(
         relative_path
     ).read_bytes()
-    return f"data:font/ttf;base64,{base64.b64encode(data).decode('ascii')}"
+    return f"data:font/woff2;base64,{base64.b64encode(data).decode('ascii')}"
 
 
 _FONT_MIME = {
@@ -498,8 +501,8 @@ def _font_mime_for(url: str, fmt: str) -> str:
     Prefers the format `@font-face` itself declared (`format("woff2")`);
     falls back to the URL's own extension when the declaration didn't carry
     one, and to `font/ttf` failing both – a real, always-accepted value, same
-    spirit as `_font_data_uri`'s own hardcoded `font/ttf` for the report's
-    two vendored faces above.
+    spirit as `_font_data_uri`'s own hardcoded `font/woff2` for the report's
+    own vendored faces above.
     """
     if fmt in _FONT_MIME:
         return _FONT_MIME[fmt]
@@ -604,9 +607,14 @@ def emit_html(doc: dict, pal: Palette, font_bytes: dict[str, bytes] | None = Non
         "__GROUP_BLURBS__": json.dumps(GROUP_BLURBS),
         "__STATUS_TITLES__": json.dumps(STATUS_TITLES),
         "__STATUS_BLURBS__": json.dumps(STATUS_BLURBS, ensure_ascii=False),
-        "__FONT_INTER__": _font_data_uri("assets/fonts/inter/inter_variable.ttf"),
+        "__FONT_INTER__": _font_data_uri(
+            "assets/fonts/inter/inter_4.1__variable.woff2"
+        ),
+        "__FONT_INTER_ITALIC__": _font_data_uri(
+            "assets/fonts/inter/inter_4.1_italic__variable.woff2"
+        ),
         "__FONT_MONO__": _font_data_uri(
-            "assets/fonts/sauce_code_pro/sauce_code_pro_mono__regular.ttf"
+            "assets/fonts/source_code_pro/source_code_pro__variable.woff2"
         ),
         "__FONT_FACES_CSS__": (
             _site_font_faces_css(doc.get("fonts") or [], font_bytes)
